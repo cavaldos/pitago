@@ -113,7 +113,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
-			SettingsMsg, SettingsRefreshMsg:
+			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg:
 		default:
 			return m, nil
 		}
@@ -596,6 +596,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 		}
 		return m, m.pollCmds()
+
+	case MarketMsg:
+		marketInflight = false
+		if msg.Err != nil {
+			m.MarketErr = Short(msg.Err.Error(), 80)
+			m.AddBlock(Block{Kind: "notice", Text: "marketplace failed: " + m.MarketErr, Err: true})
+		} else if msg.Append {
+			m.Market = append(m.Market, msg.Entries...)
+			m.MarketErr = ""
+			marketCacheData, marketCacheAt, marketTotal = m.Market, time.Now(), msg.Total
+			m.Status = "ready"
+		} else {
+			m.Market, m.MarketErr = msg.Entries, ""
+			marketCacheData, marketCacheAt, marketTotal = msg.Entries, time.Now(), msg.Total
+			m.Status = "ready"
+		}
+		m.reloadHubRows(PsecMarket)
+		m.Refresh()
+		return m, nil
+
+	case PluginChangeMsg:
+		pluginCacheAt = time.Time{} // force getPlugins to refetch
+		m.Plugins = getPlugins()
+		if msg.Err != nil {
+			detail := msg.Out
+			if detail == "" {
+				detail = msg.Err.Error()
+			}
+			m.AddBlock(Block{Kind: "notice",
+				Text: fmt.Sprintf("%s %s failed: %s", msg.Action, msg.Spec, detail), Err: true})
+			m.Status = "ready"
+			m.reloadHubRows("")
+			m.Refresh()
+			return m, nil
+		}
+		verb := "installed"
+		if msg.Action == "remove" {
+			verb = "removed"
+		}
+		m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s", verb, msg.Spec)})
+		m.Status = "reloading commands…"
+		m.reloadHubRows("")
+		m.Refresh()
+		return m, func() tea.Msg {
+			cmds, err := m.Pi.GetCommands()
+			return CmdsRefreshMsg{Cmds: cmds, Err: err, Announce: true}
+		}
 
 	case tea.MouseMsg:
 		// Click (release) on the sidebar: PLUGINS header collapses/expands,

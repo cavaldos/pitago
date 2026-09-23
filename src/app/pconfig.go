@@ -22,16 +22,17 @@ import (
 
 // Hub section ids (Dialog.PsecIDs parallels the left pane).
 const (
-	PsecAgent    = "agent"
-	PsecSkill    = "skill"
-	PsecPrompt   = "prompt"
-	PsecExt      = "extension"
-	PsecPlugin   = "plugin"
-	PsecMCP      = "mcp"
-	PsecTool     = "tool"
-	PsecSide     = "side"
-	PsecTheme    = "theme"
-	PsecLogin    = "login"
+	PsecAgent  = "agent"
+	PsecSkill  = "skill"
+	PsecPrompt = "prompt"
+	PsecExt    = "extension"
+	PsecPlugin = "plugin"
+	PsecMarket = "market"
+	PsecMCP    = "mcp"
+	PsecTool   = "tool"
+	PsecSide   = "side"
+	PsecTheme  = "theme"
+	PsecLogin  = "login"
 )
 
 // Payload markers for non-runnable right rows: "@<section>" opens the
@@ -70,6 +71,11 @@ func psecCount(m *Model, id string) int {
 		return ex
 	case PsecPlugin:
 		return len(m.Plugins)
+	case PsecMarket:
+		if m.Market == nil && m.MarketErr == "" {
+			return -1 // not loaded yet: no badge
+		}
+		return len(m.Market)
 	case PsecMCP:
 		return len(m.MCP)
 	case PsecTool:
@@ -81,12 +87,35 @@ func psecCount(m *Model, id string) int {
 // OpenPconfig pushes the two-pane settings hub (focus starts on sections).
 func (m *Model) OpenPconfig() {
 	d := &Dialog{Kind: "pconfig", Title: "Pitago settings",
-		Provs:     []string{"Agent", "Skills", "Prompts", "Extensions", "Plugins", "MCP", "Tools", "Sidebar", "Theme", "Login"},
-		PsecIDs:   []string{PsecAgent, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMCP, PsecTool, PsecSide, PsecTheme, PsecLogin},
+		Provs:     []string{"Agent", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Sidebar", "Theme", "Login"},
+		PsecIDs:   []string{PsecAgent, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecSide, PsecTheme, PsecLogin},
 		ProvFocus: true}
 	m.LoadPsecRows(d)
 	m.Dialogs = append(m.Dialogs, d)
 	m.Refresh()
+}
+
+// reloadHubRows rebuilds the open settings hub's right pane in place
+// (section=="" keeps the current section): async results (market fetch,
+// install/remove) refresh the rows without closing the hub or losing
+// the cursor.
+func (m *Model) reloadHubRows(section string) {
+	if len(m.Dialogs) == 0 || m.Dialogs[0].Kind != "pconfig" {
+		return
+	}
+	d := m.Dialogs[0]
+	if section != "" {
+		for i, id := range d.PsecIDs {
+			if id == section {
+				d.ProvCursor = i
+			}
+		}
+	}
+	cur := d.Cursor
+	m.LoadPsecRows(d)
+	if cur < len(d.FIdx) {
+		d.Cursor = cur
+	}
 }
 
 // CurPsec is the selected section id (left pane cursor).
@@ -179,7 +208,7 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = []string{""}
 		}
 	case PsecPlugin:
-		msg = "Read-only: `pi config` enables/disables package resources, then /reload · Esc closes"
+		msg = "Delete uninstalls the plugin (pi remove) · Marketplace installs new ones · Esc closes"
 		for _, p := range m.Plugins {
 			opts = append(opts, p.Name)
 			descs = append(descs, p.Spec)
@@ -187,8 +216,39 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 		}
 		if len(opts) == 0 {
 			opts = []string{"— no packages —"}
-			descs = []string{"pi install <source> adds one"}
+			descs = []string{"Marketplace installs one"}
 			payload = []string{""}
+		}
+	case PsecMarket:
+		msg = fmt.Sprintf("showing %d of %d · Enter installs (pi install) · type filters · Esc closes",
+			len(m.Market), marketTotal)
+		if m.MarketErr != "" {
+			opts = []string{"— market unavailable —"}
+			descs = []string{Short(m.MarketErr, 60)}
+			payload = []string{""}
+		}
+		for _, e := range m.Market {
+			ver := e.Version
+			if ver != "" && !strings.HasPrefix(ver, "v") {
+				ver = "v" + ver
+			}
+			opts = append(opts, e.Name)
+			if marketInstalled(m, e.Name) {
+				descs = append(descs, "✓ installed · "+shortDesc(ver+" "+e.Desc, 44))
+				payload = append(payload, "")
+			} else {
+				descs = append(descs, shortDesc(strings.TrimSpace(ver+" — "+e.Desc), 48))
+				payload = append(payload, "market:"+e.Name)
+			}
+		}
+		if len(opts) == 0 {
+			opts = []string{"— empty market —"}
+			descs = []string{"fetch failed or registry has no pi packages"}
+			payload = []string{""}
+		} else if marketTotal > len(m.Market) {
+			opts = append(opts, fmt.Sprintf("… load more (%d/%d) …", len(m.Market), marketTotal))
+			descs = append(descs, "Enter loads the next 100")
+			payload = append(payload, "marketmore")
 		}
 	case PsecMCP:
 		msg = "Enter on a connected server fills /mcp · disabled ones change via mcp.json + /reload · Esc closes"
@@ -319,7 +379,7 @@ func pluginDetailLines(m *Model, d *Dialog, w int) []string {
 		ri = d.FIdx[d.Cursor]
 	}
 	if ri < 0 || ri >= len(m.Plugins) {
-		return []string{"  " + toolStyle.Width(w - 2).Render("— no selection —")}
+		return []string{"  " + toolStyle.Width(w-2).Render("— no selection —")}
 	}
 	p := m.Plugins[ri]
 	var lines []string
@@ -367,6 +427,68 @@ func pluginDetailLines(m *Model, d *Dialog, w int) []string {
 		}
 		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(cText).Render(Fit(Short(row, w-2), w-2)))
 	}
+	return lines
+}
+
+// marketDetailLines builds the highlighted market entry's detail column:
+// title + Version · Status · Description + the Enter hint. Same fixed
+// width contract as pluginDetailLines.
+func marketDetailLines(m *Model, d *Dialog, w int) []string {
+	if w < 30 {
+		w = 30
+	}
+	ri := -1
+	if len(d.FIdx) > 0 && d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
+		ri = d.FIdx[d.Cursor]
+	}
+	if ri < 0 || ri >= len(m.Market) {
+		return []string{"  " + toolStyle.Width(w-2).Render("— no selection —")}
+	}
+	e := m.Market[ri]
+	installed := marketInstalled(m, e.Name)
+	var lines []string
+	title := e.Name
+	if installed {
+		title += " ✓"
+	}
+	lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(cText).Render(Fit(title, w-2)))
+	status := "not installed"
+	style := statusBarStyle
+	if installed {
+		status = "installed"
+		style = okStyle
+	}
+	rows := [][2]string{
+		{"Version", orDash(e.Version)},
+		{"Spec", "npm:" + e.Name},
+	}
+	const lw = 11
+	valW := w - 2 - lw - 1
+	if valW < 10 {
+		valW = 10
+	}
+	for _, r := range rows {
+		lab := toolStyle.Render(Fit(r[0], lw))
+		st := lipgloss.NewStyle().Foreground(cText)
+		if r[1] == "—" {
+			st = statusBarStyle
+		}
+		lines = append(lines, "  "+lab+" "+st.Render(Fit(Short(r[1], valW), valW)))
+	}
+	lines = append(lines, "  "+toolStyle.Render(Fit("Status", lw))+" "+style.Render(Fit(status, valW)))
+	lines = append(lines, "  "+toolStyle.Render(Fit("Description", w-2)))
+	if strings.TrimSpace(e.Desc) == "" {
+		lines = append(lines, "  "+statusBarStyle.Render(Fit("—", w-2)))
+	} else {
+		for _, ln := range wrapWords(e.Desc, w-2) {
+			lines = append(lines, "  "+lipgloss.NewStyle().Foreground(cText).Render(Fit(ln, w-2)))
+		}
+	}
+	hint := "Enter: install via pi install"
+	if installed {
+		hint = "already installed"
+	}
+	lines = append(lines, "  "+toolStyle.Render(Fit(hint, w-2)))
 	return lines
 }
 
@@ -424,6 +546,15 @@ func wrapWords(s string, n int) []string {
 		return []string{""}
 	}
 	return out
+}
+
+// psecCursor resolves the highlighted right-pane row to its option index
+// (-1 when the list is empty or the cursor is out of range).
+func psecCursor(d *Dialog) int {
+	if len(d.FIdx) == 0 || d.Cursor < 0 || d.Cursor >= len(d.FIdx) {
+		return -1
+	}
+	return d.FIdx[d.Cursor]
 }
 
 // payloadOf parallels DescOf for the right pane's per-row payload.
@@ -581,6 +712,11 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 					d.ProvCursor = (d.ProvCursor - 1 + n) % n
 				}
 				m.LoadPsecRows(d)
+				// First visit to an unloaded marketplace fetches it in
+				// the background (rows reload when MarketMsg lands).
+				if d.CurPsec() == PsecMarket && !marketFresh() && !marketInflight {
+					return m, m.fetchMarketCmd()
+				}
 			}
 		} else if n := len(d.FIdx); n > 0 {
 			if down {
@@ -599,10 +735,22 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
 		return m, nil
-	case tea.KeyBackspace:
-		if d.Filter != "" {
+	case tea.KeyBackspace, tea.KeyDelete:
+		if km.Type == tea.KeyBackspace && d.Filter != "" {
 			d.Filter = d.Filter[:len(d.Filter)-1]
 			d.Reindex()
+			return m, nil
+		}
+		// Empty filter (forward-delete always): Delete removes the
+		// highlighted plugin (sessions/login parity: ⌫ on empty
+		// filter deletes). Other sections ignore it.
+		if d.CurPsec() == PsecPlugin && !d.ProvFocus {
+			if ri := psecCursor(d); ri >= 0 && ri < len(m.Plugins) {
+				spec := m.Plugins[ri].Spec
+				m.Status = "removing " + spec + "…"
+				m.Refresh()
+				return m, m.ChangePluginCmd("remove", spec)
+			}
 		}
 		return m, nil
 	case tea.KeyEsc:
@@ -665,11 +813,13 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	if rightW < 30 {
 		rightW = 30
 	}
-	// Plugins gets a third DETAILS column (oh-my-pi style, like the
-	// /model picker): list + specs side by side. Narrow terminals keep
-	// the classic two panes (spec lives in the row desc there).
+	// Plugins and Marketplace get a third DETAILS column (oh-my-pi
+	// style, like the /model picker): list + specs side by side. Narrow
+	// terminals keep the classic two panes (spec lives in the row desc).
 	detW := 42
-	detailCol := d.CurPsec() == PsecPlugin && boxW >= 110 && len(m.Plugins) > 0
+	isPlugin := d.CurPsec() == PsecPlugin && len(m.Plugins) > 0
+	isMarket := d.CurPsec() == PsecMarket && len(m.Market) > 0
+	detailCol := boxW >= 110 && (isPlugin || isMarket)
 	listW := rightW
 	if detailCol {
 		listW = rightW - detW - 3
@@ -813,7 +963,12 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 		// Fixed box height: the detail column never stretches the
 		// dialog — overflow folds into a "…(+N more)" marker, like the
 		// scroll markers of the other two panes.
-		detLines := pluginDetailLines(&m, d, detW)
+		var detLines []string
+		if isMarket {
+			detLines = marketDetailLines(&m, d, detW)
+		} else {
+			detLines = pluginDetailLines(&m, d, detW)
+		}
 		if len(detLines) > win {
 			detLines = append(detLines[:win-1],
 				"  "+toolStyle.Width(detW-2).Render(fmt.Sprintf("…(+%d more)", len(detLines)-win+1)))

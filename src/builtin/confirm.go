@@ -93,6 +93,15 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		}
 		m.Refresh()
 		return m, nil
+	case p == "marketmore":
+		m.Status = "loading more plugins…"
+		m.Refresh()
+		return m, m.FetchMarketPageCmd(len(m.Market))
+	case strings.HasPrefix(p, "market:"):
+		spec := "npm:" + strings.TrimPrefix(p, "market:")
+		m.Status = "installing " + spec + "…"
+		m.Refresh()
+		return m, m.ChangePluginCmd("install", spec)
 	case p == "@agent":
 		m.Dialogs = m.Dialogs[1:]
 		m.Status = "loading settings…"
@@ -112,7 +121,9 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	}
 	switch d.CurPsec() {
 	case app.PsecPlugin:
-		m.AddBlock(app.Block{Kind: "notice", Text: "plugins are pi packages — run `pi config` to enable/disable, then /reload"})
+		m.AddBlock(app.Block{Kind: "notice", Text: "Delete uninstalls the plugin — Enter does nothing here"})
+	case app.PsecMarket:
+		m.AddBlock(app.Block{Kind: "notice", Text: "already installed — Enter on a new entry installs it"})
 	case app.PsecMCP:
 		m.AddBlock(app.Block{Kind: "notice", Text: "edit ~/.pi/agent/mcp.json, then /reload"})
 	default:

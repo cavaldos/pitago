@@ -36,8 +36,8 @@ func TestOpenPconfigTwoPane(t *testing.T) {
 		t.Fatalf("expected one pconfig dialog, got %+v", m.Dialogs)
 	}
 	d := m.Dialogs[0]
-	if len(d.Provs) != 10 || len(d.PsecIDs) != 10 {
-		t.Fatalf("left pane needs 10 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
+	if len(d.Provs) != 11 || len(d.PsecIDs) != 11 {
+		t.Fatalf("left pane needs 11 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
 	}
 	if !d.ProvFocus {
 		t.Error("focus should start on the left (sections) pane")

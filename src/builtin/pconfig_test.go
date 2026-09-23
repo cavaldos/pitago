@@ -56,13 +56,69 @@ func TestConfirmPconfigAgentPopsHub(t *testing.T) {
 	}
 }
 
-func TestConfirmPconfigInfoRowStays(t *testing.T) {
+func TestConfirmPconfigPluginEnterDoesNothing(t *testing.T) {
 	m := hubModel()
 	d := m.Dialogs[0]
 	selectPsec(m, d, app.PsecPlugin)
-	mm, _ := confirmPconfig(m, d, d.FIdx[d.Cursor])
+	mm, cmd := confirmPconfig(m, d, d.FIdx[d.Cursor])
 	if len(mm.(*app.Model).Dialogs) != 1 {
-		t.Error("info row should keep the hub open")
+		t.Error("hub should stay open")
+	}
+	if cmd != nil {
+		t.Error("plugin Enter must not uninstall (Delete does that)")
+	}
+}
+
+func TestConfirmPconfigMarketInstalls(t *testing.T) {
+	m := hubModel()
+	m.Market = []app.MarketEntry{{Name: "pi-new", Version: "1.0.0", Desc: "fresh"}}
+	d := m.Dialogs[0]
+	selectPsec(m, d, app.PsecMarket)
+	if len(d.FIdx) == 0 {
+		t.Fatal("market section should have a row")
+	}
+	mm, cmd := confirmPconfig(m, d, d.FIdx[d.Cursor])
+	if len(mm.(*app.Model).Dialogs) != 1 {
+		t.Error("install should keep the hub open")
+	}
+	if cmd == nil {
+		t.Error("market Enter should issue the pi install cmd")
+	}
+	if got := mm.(*app.Model).Status; !strings.Contains(got, "installing npm:pi-new") {
+		t.Errorf("status should name the installed spec, got %q", got)
+	}
+}
+
+func TestConfirmPconfigMarketMoreLoadsPage(t *testing.T) {
+	m := hubModel()
+	m.Market = []app.MarketEntry{{Name: "pi-new", Version: "1.0.0", Desc: "fresh"}}
+	d := m.Dialogs[0]
+	selectPsec(m, d, app.PsecMarket)
+	// trailing more-row (as psecRows builds it past the loaded total)
+	d.Options = append(d.Options, "… load more (1/250) …")
+	d.Descs = append(d.Descs, "Enter loads the next 100")
+	d.Payload = append(d.Payload, "marketmore")
+	d.Reindex()
+	mm, cmd := confirmPconfig(m, d, d.FIdx[len(d.FIdx)-1])
+	if len(mm.(*app.Model).Dialogs) != 1 {
+		t.Error("paging should keep the hub open")
+	}
+	if cmd == nil {
+		t.Error("more row Enter should issue the next-page fetch")
+	}
+}
+
+func TestConfirmPconfigMarketInstalledStays(t *testing.T) {
+	m := hubModel() // pi-lens already in m.Plugins
+	m.Market = []app.MarketEntry{{Name: "pi-lens", Version: "9.9.9", Desc: "have it"}}
+	d := m.Dialogs[0]
+	selectPsec(m, d, app.PsecMarket)
+	mm, cmd := confirmPconfig(m, d, d.FIdx[d.Cursor])
+	if len(mm.(*app.Model).Dialogs) != 1 {
+		t.Error("installed row should keep the hub open")
+	}
+	if cmd != nil {
+		t.Error("installed row must not issue an install cmd")
 	}
 }
 

@@ -25,42 +25,42 @@ type Block = chat.Block
 // Dialog is a modal: extension permission prompt or native picker/settings.
 
 type Dialog struct {
-	ID            string
-	Method        string // select | confirm (extension UI)
-	Kind          string // "ui" | "model" | "thinking" | "settings" | "pconfig" | "login" | "loginDone" | "secret" | "rename" | "sessions" | ...
-	Title         string
-	Message       string
-	Options       []string
-	Descs         []string
-	Providers     []string // model picker: parallel provider per option
-	Models        []pirpc.ModelInfo // model picker: full specs parallel to Options
-	Provs         []string // model picker: left pane (unique providers, [0]="All")
-	ProvConn      map[string]bool // model picker: connected providers (green dot)
-	ProvCursor    int      // model picker: left-pane cursor
-	ProvFocus     bool     // model picker: true = providers focused
-	PsecIDs       []string // pitago-setting: section id parallel to Provs (left pane)
-	Paths         []string // sessions picker: parallel session file per option
-	Scope         string   // sessions picker: "current" | "all" (Tab toggles)
-	Payload       []string // yank picker: full text per option; login: raw keys ("" for action rows)
-	Cursor        int
-	Filter        string // picker filter / secret buffer / rename buffer
-	FIdx          []int
-	FavSet        map[string]bool // model picker: starred provider\x00id (★ column, sorted first)
-	PIdx          []int // login: filtered provider indices into Provs
-	KeyCursor     int   // login: cursor in the right (keys) pane
-	KeyActive     int   // login: active key index within keys (-1 = none)
-	ShowKeys      bool   // login: reveal full keys (s toggles, never persisted)
-	RenameIdx     int    // rename flow: key index being renamed (-1 = none)
-	LoginActions  []string // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
-	LoginOAuth    bool   // login: selected provider has OAuth in pi
-	LoginOAuthExp int64  // login: oauth expiry ms epoch (0 = unknown)
-	LoginOAuthAcct string // login: oauth account id ("" = unknown)
-	OAuthConn     map[string]bool // login: provider -> oauth connected in pi
-	LoginCounts   map[string]int // login: provider -> saved key count
-	Settings      SettingsState
-	LoginProvider string // login flow: provider id
-	LoginEnv      string // login flow: env var
-	UpdateTo      string // update flow: target tag (Kind "update")
+	ID             string
+	Method         string // select | confirm (extension UI)
+	Kind           string // "ui" | "model" | "thinking" | "settings" | "pconfig" | "login" | "loginDone" | "secret" | "rename" | "sessions" | ...
+	Title          string
+	Message        string
+	Options        []string
+	Descs          []string
+	Providers      []string          // model picker: parallel provider per option
+	Models         []pirpc.ModelInfo // model picker: full specs parallel to Options
+	Provs          []string          // model picker: left pane (unique providers, [0]="All")
+	ProvConn       map[string]bool   // model picker: connected providers (green dot)
+	ProvCursor     int               // model picker: left-pane cursor
+	ProvFocus      bool              // model picker: true = providers focused
+	PsecIDs        []string          // pitago-setting: section id parallel to Provs (left pane)
+	Paths          []string          // sessions picker: parallel session file per option
+	Scope          string            // sessions picker: "current" | "all" (Tab toggles)
+	Payload        []string          // yank picker: full text per option; login: raw keys ("" for action rows)
+	Cursor         int
+	Filter         string // picker filter / secret buffer / rename buffer
+	FIdx           []int
+	FavSet         map[string]bool // model picker: starred provider\x00id (★ column, sorted first)
+	PIdx           []int           // login: filtered provider indices into Provs
+	KeyCursor      int             // login: cursor in the right (keys) pane
+	KeyActive      int             // login: active key index within keys (-1 = none)
+	ShowKeys       bool            // login: reveal full keys (s toggles, never persisted)
+	RenameIdx      int             // rename flow: key index being renamed (-1 = none)
+	LoginActions   []string        // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
+	LoginOAuth     bool            // login: selected provider has OAuth in pi
+	LoginOAuthExp  int64           // login: oauth expiry ms epoch (0 = unknown)
+	LoginOAuthAcct string          // login: oauth account id ("" = unknown)
+	OAuthConn      map[string]bool // login: provider -> oauth connected in pi
+	LoginCounts    map[string]int  // login: provider -> saved key count
+	Settings       SettingsState
+	LoginProvider  string // login flow: provider id
+	LoginEnv       string // login flow: env var
+	UpdateTo       string // update flow: target tag (Kind "update")
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -87,7 +87,7 @@ type Model struct {
 	ta           textarea.Model
 	Pi           *pirpc.Client
 	blocks       []Block
-	toasts       []Toast // ephemeral popups (model switch, yank…): never in chat history
+	toasts       []Toast        // ephemeral popups (model switch, yank…): never in chat history
 	tools        map[string]int // toolCallId -> block index
 	curAsst      int
 	curThink     int
@@ -121,10 +121,12 @@ type Model struct {
 	Stats        pirpc.Stats
 	sessBreak    []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
 	queue        pirpc.Queue
-	Todos        []TodoItem  // tracked from todo-tool calls (sidebar)
-	MCP          []McpServer // pi agent-dir MCP snapshot (sidebar)
-	Plugins      []Plugin    // installed pi packages (sidebar PLUGINS toggle)
-	showPlugins  bool        // PLUGINS expanded (click header or /plugins)
+	Todos        []TodoItem      // tracked from todo-tool calls (sidebar)
+	MCP          []McpServer     // pi agent-dir MCP snapshot (sidebar)
+	Plugins      []Plugin        // installed pi packages (sidebar PLUGINS toggle)
+	Market       []MarketEntry   // npm registry pi-package list (marketplace tab)
+	MarketErr    string          // last marketplace fetch error ("" = ok/unloaded)
+	showPlugins  bool            // PLUGINS expanded (click header or /plugins)
 	Side         map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins hide)
 	Dialogs      []*Dialog
 	connErr      string
@@ -228,10 +230,10 @@ type PickerMsg struct {
 	Kind                      string
 	Options, Descs, Providers []string
 	Models                    []pirpc.ModelInfo // model picker: full specs parallel to Options
-	Paths                     []string // sessions picker: parallel session file per option
-	Filter                    string   // sessions picker: pre-typed filter (/resume <arg>)
-	Scope                     string   // sessions picker: "current" | "all"
-	Replace                   bool     // sessions picker: Tab scope swap into the open dialog
+	Paths                     []string          // sessions picker: parallel session file per option
+	Filter                    string            // sessions picker: pre-typed filter (/resume <arg>)
+	Scope                     string            // sessions picker: "current" | "all"
+	Replace                   bool              // sessions picker: Tab scope swap into the open dialog
 	Current                   string
 	Err                       error
 }
@@ -305,16 +307,16 @@ func New(pi *pirpc.Client, cwd string) Model {
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	return Model{
-		ta:        ta,
-		Pi:        pi,
-		tools:     make(map[string]int),
-		curAsst:   -1,
-		curThink:  -1,
-		histIdx:   -1,
-		Status:    "connecting to pi…",
-		cwd:       cwd,
-		ModelLbl:  "…",
-		AutoRetry: true,
+		ta:          ta,
+		Pi:          pi,
+		tools:       make(map[string]int),
+		curAsst:     -1,
+		curThink:    -1,
+		histIdx:     -1,
+		Status:      "connecting to pi…",
+		cwd:         cwd,
+		ModelLbl:    "…",
+		AutoRetry:   true,
 		showPlugins: true, // PLUGINS starts expanded
 	}
 }

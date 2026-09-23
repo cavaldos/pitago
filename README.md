@@ -33,6 +33,7 @@
   <img src="resources/model_management.png" alt="model picker" width="49%" />
   <img src="resources/themes.png" alt="themes (/theme)" width="49%" />
   <img src="resources/notifications.png" alt="toast notifications" width="49%" />
+  <img src="resources/marketplace.png" alt="the marketplace" width="49%" />
 </div>
 
 ## Overview
