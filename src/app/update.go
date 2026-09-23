@@ -249,8 +249,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.state.Model.ContextWindow > 0 {
 				m.ctxWindow = msg.state.Model.ContextWindow
 			}
-			m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
-			m.Refresh()
+		m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
+		if msg.state.SessionFile != "" {
+			m.sessionFile = msg.state.SessionFile
+		}
+		m.Refresh()
 		}
 		return m, nil
 
@@ -322,6 +325,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Status = "ready"
 		m.planOn = false // new session: plan latch is live-only
 		m.Todos = nil
+		// Drop the old session identity: its task store must not leak into
+		// the new session via refreshPiTasks (re-adopted from get_state below).
+		m.sessionFile = ""
 		m.imgAtts = nil // pending chips belong to the old session
 		m.trayFocus = false
 		m.histIdx = -1 // keep sent history across /new, back to live input
