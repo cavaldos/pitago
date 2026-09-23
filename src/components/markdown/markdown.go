@@ -7,9 +7,11 @@
 package markdown
 
 import (
+	"os"
 	"regexp"
 	"strings"
 
+	"pitago/src/gomark"
 	"pitago/src/pimark"
 )
 
@@ -64,8 +66,8 @@ func isMarkdown(s string) bool {
 }
 
 // Render turns markdown into ANSI for the chat column, wrapped to width.
-// Plain text (or any error) returns src unchanged so the caller can keep
-// its old unstyled render.
+// PITAGO_RENDER=go forces the Go renderer (trial). Default tries pi first
+// then falls back to Go so tables still render without node/pi.
 func Render(src string, width int) string {
 	if strings.TrimSpace(src) == "" || !isMarkdown(src) {
 		return src
@@ -73,9 +75,12 @@ func Render(src string, width int) string {
 	if width < 20 {
 		width = 80
 	}
+	if os.Getenv("PITAGO_RENDER") == "go" {
+		return strings.Trim(gomark.Render(src, width), "\n")
+	}
 	out, err := pimark.Render(src, width, pimark.Assistant)
 	if err != nil || strings.TrimSpace(out) == "" {
-		return src
+		return strings.Trim(gomark.Render(src, width), "\n")
 	}
 	return strings.Trim(rtrim(out), "\n")
 }
