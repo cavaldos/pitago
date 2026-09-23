@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	glamour "charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
+	gstyles "charm.land/glamour/v2/styles"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
@@ -21,6 +23,19 @@ var (
 	cache     = map[string]string{}
 )
 
+// darkNoErrorBg is glamour dark without the red error backdrop: lexer Error
+// tokens (stray # @ " etc. in fenced code) keep their text color, no bg.
+// Chroma is a shared pointer in DarkStyleConfig, so copy it before clearing.
+func darkNoErrorBg() ansi.StyleConfig {
+	cfg := gstyles.DarkStyleConfig
+	if cfg.CodeBlock.Chroma != nil {
+		chroma := *cfg.CodeBlock.Chroma
+		chroma.Error.BackgroundColor = nil
+		cfg.CodeBlock.Chroma = &chroma
+	}
+	return cfg
+}
+
 func renderer(width int) (*glamour.TermRenderer, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -28,7 +43,7 @@ func renderer(width int) (*glamour.TermRenderer, error) {
 		return r, nil
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStyles(darkNoErrorBg()),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {

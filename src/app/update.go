@@ -139,9 +139,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Wheel never touches input history: ↑↓ recalls when the input is
-	// empty, wheel scrolls viewports only (sidebar when hovered, chat
-	// otherwise). Early return so no textarea/popup/history path below
-	// can see it.
+	// empty (mouse on only — with mouse off plain ↑↓ may be a wheel
+	// scroll, see the KeyUp/KeyDown cases), wheel scrolls viewports only
+	// (sidebar when hovered, chat otherwise). Early return so no
+	// textarea/popup/history path below can see it.
 	if mm, ok := msg.(tea.MouseMsg); ok && m.ready &&
 		mm.Action == tea.MouseActionPress &&
 		(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown ||
@@ -808,23 +809,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// errors instead of the silent built-in paste.
 			m.histIdx = -1 // pasting edits live input, leaves history browse
 			return m, m.pasteCmd(false)
+		case tea.KeyShiftUp:
+			// Explicit recall: terminals never emit Shift+↑↓ for wheel
+			// (with mouse reporting off wheel arrives as plain ↑↓), so
+			// this is wheel-proof in both mouse modes.
+			if m.tryHistPrev() {
+				return m, nil
+			}
+		case tea.KeyShiftDown:
+			if m.tryHistNext() {
+				return m, nil
+			}
 		case tea.KeyUp:
 			// Empty single-line input → recall previous sent message.
 			// While browsing, ↑ keeps going older (stays at oldest).
-			if m.tryHistPrev() {
+			// Mouse-off guard: with reporting off the terminal turns
+			// wheel scrolls into plain ↑↓ (indistinguishable from keys),
+			// which must scroll the chat, never rewrite the input.
+			if m.Mouse && m.tryHistPrev() {
 				return m, nil
 			}
 		case tea.KeyDown:
 			// While browsing, ↓ goes newer (tray waits — history wins).
 			// Empty input + tray → cursor moves into the [Image N] row.
+			// Same mouse-off guard as ↑ (plain ↓ may be a wheel scroll).
 			if m.histBrowsing() {
-				if m.tryHistNext() {
+				if m.Mouse && m.tryHistNext() {
 					return m, nil
 				}
 			} else if len(m.imgAtts) > 0 && m.onLastLine() {
 				m.enterTray()
 				return m, nil
-			} else if m.tryHistNext() {
+			} else if m.Mouse && m.tryHistNext() {
 				return m, nil
 			}
 		case tea.KeyBackspace:

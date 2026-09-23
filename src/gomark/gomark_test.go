@@ -28,3 +28,18 @@ func TestPassthrough(t *testing.T) {
 		t.Fatalf("empty changed: %q", got)
 	}
 }
+
+// Lexer Error tokens (stray # @ " in fenced code) must not get the red
+// error backdrop (48;5;203 = #F05B5B from glamour dark); content stays.
+func TestNoErrorBackground(t *testing.T) {
+	src := "```go\nsrc/main.go  # entry (@file lookup)\n```\n"
+	out := Render(src, 80)
+	if strings.Contains(out, "\x1b[48;5;203m") {
+		t.Fatalf("error tokens kept red bg:\n%q", out)
+	}
+	for _, want := range []string{"#", "@", "entry"} {
+		if !strings.Contains(strip(out), want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}

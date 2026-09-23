@@ -24,7 +24,8 @@ var shortcutsDb = []ShortcutItem{
 	{"/?", "Open command palette / shortcuts", "Global"},
 
 	// Navigation / Chat
-	{"↑↓", "Scroll chat", "Chat"},
+	{"↑↓", "Scroll chat (recall history when empty, mouse on)", "Chat"},
+	{"Shift+↑↓", "Recall sent message (both mouse modes)", "Chat"},
 	{"PgUp / PgDn", "Scroll chat (page)", "Chat"},
 	{"Home / End", "Jump to top/bottom of chat", "Chat"},
 	{"Ctrl+↑↓", "Scroll sidebar (no mouse)", "Sidebar"},

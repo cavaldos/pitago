@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -8,7 +9,7 @@ import (
 )
 
 func newHistModel(hist []string) Model {
-	m := Model{histIdx: -1}
+	m := Model{histIdx: -1, Mouse: true} // production default is --mouse=true
 	m.ta = textarea.New()
 	m.ta.Focus()
 	m.ta.SetValue("")
@@ -130,5 +131,74 @@ func TestWheelNeverTouchesHistory(t *testing.T) {
 	tm, _ = m.Update(wheel(true))
 	if got := tm.(Model); got.ta.Value() != "m2" || !got.histBrowsing() {
 		t.Fatalf("wheel while browsing must keep m2, got %q browsing=%v", got.ta.Value(), got.histBrowsing())
+	}
+}
+
+// With mouse off the terminal turns wheel scrolls into plain ↑↓: they must
+// scroll the chat, never rewrite the input — in both empty and browsing
+// states. Shift+↑↓ stays the explicit wheel-proof recall.
+func TestMouseOffArrowsScrollNeverRecall(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = false
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = tm.(Model)
+	m.pushHist("m1")
+	m.pushHist("m2")
+	for i := 0; i < 30; i++ {
+		m.AddBlock(Block{Kind: "user", Text: "line " + strings.Repeat("x", 40)})
+	}
+	m.RefreshFollow()
+	top := m.vp.YOffset // at bottom after follow
+	if top <= 0 {
+		t.Fatal("need tall content for the scroll check")
+	}
+	// Empty input: plain ↑ scrolls, does not recall.
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	got := tm.(Model)
+	if got.ta.Value() != "" || got.histBrowsing() {
+		t.Fatalf("mouse-off Up must not recall, got %q browsing=%v", got.ta.Value(), got.histBrowsing())
+	}
+	if got.vp.YOffset >= top {
+		t.Fatal("mouse-off Up should scroll the chat")
+	}
+	m = got
+	// Empty input: plain ↓ scrolls, does not recall newest either.
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got = tm.(Model)
+	if got.ta.Value() != "" || got.histBrowsing() {
+		t.Fatalf("mouse-off Down must not recall, got %q browsing=%v", got.ta.Value(), got.histBrowsing())
+	}
+	// While browsing (via Shift+↑): plain ↑↓ keeps the recalled input.
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
+	got = tm.(Model)
+	if got.ta.Value() != "m2" || !got.histBrowsing() {
+		t.Fatalf("Shift+Up with mouse off should recall m2, got %q browsing=%v", got.ta.Value(), got.histBrowsing())
+	}
+	tm, _ = got.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if kept := tm.(Model); kept.ta.Value() != "m2" || !kept.histBrowsing() {
+		t.Fatalf("mouse-off Up while browsing must keep m2, got %q browsing=%v", kept.ta.Value(), kept.histBrowsing())
+	}
+	tm, _ = got.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if kept := tm.(Model); kept.ta.Value() != "m2" || !kept.histBrowsing() {
+		t.Fatalf("mouse-off Down while browsing must keep m2, got %q browsing=%v", kept.ta.Value(), kept.histBrowsing())
+	}
+	// Shift+↓ navigates newer even with mouse off.
+	tm, _ = got.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
+	if nav := tm.(Model); nav.ta.Value() != "" || nav.histBrowsing() {
+		t.Fatalf("Shift+Down past newest should clear, got %q browsing=%v", nav.ta.Value(), nav.histBrowsing())
+	}
+}
+
+// Mouse on keeps the shell-like behavior: plain ↑↓ recalls when empty.
+func TestMouseOnArrowsRecall(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = true
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = tm.(Model)
+	m.pushHist("m1")
+	m.pushHist("m2")
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := tm.(Model); got.ta.Value() != "m2" {
+		t.Fatalf("mouse-on Up should recall m2, got %q", got.ta.Value())
 	}
 }

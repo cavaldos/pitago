@@ -635,7 +635,7 @@ func (m *Model) ToggleMouse(arg string) tea.Cmd {
 	if on {
 		m.AddBlock(Block{Kind: "notice", Text: "mouse on — click sidebar · wheel scrolls · hold Option/Shift to select text"})
 	} else {
-		m.AddBlock(Block{Kind: "notice", Text: "mouse off — native text selection · sidebar scrolls with Ctrl+↑↓"})
+		m.AddBlock(Block{Kind: "notice", Text: "mouse off — native text selection · ↑↓ scrolls · Shift+↑↓ recalls history · sidebar scrolls with Ctrl+↑↓"})
 	}
 	if !m.ready {
 		return nil

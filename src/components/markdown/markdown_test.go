@@ -3,7 +3,77 @@ package markdown
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
+
+// frameCols returns the display-cell positions of every table frame glyph.
+func frameCols(r string) []int {
+	rs := []rune(r)
+	var out []int
+	for i := range rs {
+		if strings.ContainsRune("│┼┬┴├┤┌┐└┘", rs[i]) {
+			out = append(out, lipgloss.Width(string(rs[:i])))
+		}
+	}
+	return out
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Tables get the old pi-style outer frame (Glamour only draws inner │/─/┼).
+func TestFrameTablesBoxed(t *testing.T) {
+	src := "| Họ tên | Tuổi |\n|---|---|\n| An | 28 |\n| Bình | 7 |"
+	out := Render(src, 80)
+	for _, want := range []string{"┌", "┬", "┐", "├", "┤", "└", "┴", "┘"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing frame %q in:\n%s", want, out)
+		}
+	}
+	var want []int
+	n := 0
+	for _, ln := range strings.Split(out, "\n") {
+		set := frameCols(ln)
+		if len(set) == 0 {
+			continue
+		}
+		n++
+		if want == nil {
+			want = set
+		} else if !equalInts(set, want) {
+			t.Fatalf("frame misaligned in %q vs %v:\n%s", ln, want, out)
+		}
+	}
+	if n < 5 {
+		t.Fatalf("framed %d rows, want >=5:\n%s", n, out)
+	}
+}
+
+// Already-framed tables (pi output, pasted box tables) are never double-framed.
+func TestFrameTablesSkipsFramed(t *testing.T) {
+	src := "┌─────┬─────┐\n│ A   │ B   │\n├───┼───┤\n│ 1   │ 2   │\n└─────┴─────┘"
+	if got := frameTables(src, 80); got != src {
+		t.Fatalf("double-framed:\n%s", got)
+	}
+}
+
+func TestFrameTablesPlainUntouched(t *testing.T) {
+	for _, src := range []string{"hello", "a\nb\nc", "- one\n- two\n", "> quote\n> more\n"} {
+		if got := frameTables(src, 80); got != src {
+			t.Fatalf("changed %q to %q", src, got)
+		}
+	}
+}
 
 func TestRenderFencePiBorder(t *testing.T) {
 	src := "Here is code:\n\n```go\nfunc hello() {}\n```\n"

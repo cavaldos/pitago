@@ -4,6 +4,12 @@ import "strings"
 
 // Input history (shell-like ↑↓ recall when the input is empty).
 //
+// Plain ↑↓ recalls only while mouse reporting is on: with mouse off the
+// terminal turns wheel scrolls into plain ↑↓ (indistinguishable from keys),
+// so plain ↑↓ must scroll instead of rewriting the input. Shift+↑↓ recalls
+// in both modes (terminals never emit it for wheel); wheel (MouseMsg)
+// always scrolls and never touches history.
+//
 // - hist holds sent messages, oldest→newest.
 // - histIdx is -1 for live input, else the browsing index into hist.
 // - Zero-value Model has histIdx==0 with empty hist: histBrowsing stays
