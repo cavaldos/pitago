@@ -1,7 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -237,6 +240,192 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 	return opts, descs, payload, msg
 }
 
+// pluginMeta is the cached package.json snapshot for one npm plugin spec.
+type pluginMeta struct {
+	version, desc string
+	ok            bool
+}
+
+var pluginMetaCache = map[string]pluginMeta{}
+
+// pluginInstallPath maps a package spec to its local dir: "npm:pi-lens" →
+// <agentDir>/npm/node_modules/pi-lens (scoped names keep their @scope/
+// path). Git specs have no stable local path — "" there.
+func pluginInstallPath(spec string) string {
+	name, ok := strings.CutPrefix(spec, "npm:")
+	if !ok || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	if dir := piAgentDir(); dir != "" {
+		return filepath.Join(dir, "npm", "node_modules", name)
+	}
+	return ""
+}
+
+// pluginMetaFor reads version/description from the installed package.json
+// (cached per spec so the render path never hits the disk twice).
+func pluginMetaFor(spec string) (pluginMeta, string) {
+	if m, ok := pluginMetaCache[spec]; ok {
+		return m, pluginInstallPath(spec)
+	}
+	m := pluginMeta{}
+	path := pluginInstallPath(spec)
+	if path != "" {
+		if raw, err := os.ReadFile(filepath.Join(path, "package.json")); err == nil {
+			var pkg struct {
+				Version     string `json:"version"`
+				Description string `json:"description"`
+			}
+			if json.Unmarshal(raw, &pkg) == nil && (pkg.Version != "" || pkg.Description != "") {
+				m = pluginMeta{version: pkg.Version, desc: pkg.Description, ok: true}
+			}
+		}
+	}
+	pluginMetaCache[spec] = m
+	return m, path
+}
+
+// pluginSource labels a spec by its installer prefix (npm:/git:/…).
+func pluginSource(spec string) string {
+	if i := strings.Index(spec, ":"); i >= 0 {
+		return spec[:i]
+	}
+	return "—"
+}
+
+// pluginCommands lists the /commands contributed by one plugin spec
+// (get_commands sourceInfo.source matches the settings.json spec).
+func pluginCommands(m *Model, spec string) []pirpc.RepoCommand {
+	var out []pirpc.RepoCommand
+	for _, c := range m.Cmds {
+		if c.SourceInfo != nil && c.SourceInfo.Source == spec {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// pluginDetailLines builds the highlighted plugin's detail column, each
+// line exactly w cells wide: title + Spec · Source · Version · Description
+// · Path · Commands (name + short desc, like the model picker's DETAILS
+// pane). One dim placeholder when nothing is selected.
+func pluginDetailLines(m *Model, d *Dialog, w int) []string {
+	if w < 30 {
+		w = 30
+	}
+	ri := -1
+	if len(d.FIdx) > 0 && d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
+		ri = d.FIdx[d.Cursor]
+	}
+	if ri < 0 || ri >= len(m.Plugins) {
+		return []string{"  " + toolStyle.Width(w - 2).Render("— no selection —")}
+	}
+	p := m.Plugins[ri]
+	var lines []string
+	lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(cText).Render(Fit(p.Name, w-2)))
+	meta, path := pluginMetaFor(p.Spec)
+	rows := [][2]string{
+		{"Spec", orDash(p.Spec)},
+		{"Source", orDash(pluginSource(p.Spec))},
+		{"Version", orDash(meta.version)},
+		{"Path", orDash(path)},
+	}
+	const lw = 11
+	valW := w - 2 - lw - 1
+	if valW < 10 {
+		valW = 10
+	}
+	for _, r := range rows {
+		lab := toolStyle.Render(Fit(r[0], lw))
+		style := lipgloss.NewStyle().Foreground(cText)
+		if r[1] == "—" {
+			style = statusBarStyle
+		}
+		lines = append(lines, "  "+lab+" "+style.Render(Fit(Short(r[1], valW), valW)))
+	}
+	// Description wraps onto its own lines (values above stay single-row
+	// so the two-pane layout math holds).
+	lines = append(lines, "  "+toolStyle.Render(Fit("Description", w-2)))
+	if strings.TrimSpace(meta.desc) == "" {
+		lines = append(lines, "  "+statusBarStyle.Render(Fit("—", w-2)))
+	} else {
+		for _, ln := range wrapWords(meta.desc, w-2) {
+			lines = append(lines, "  "+lipgloss.NewStyle().Foreground(cText).Render(Fit(ln, w-2)))
+		}
+	}
+	cmds := pluginCommands(m, p.Spec)
+	lines = append(lines, "  "+toolStyle.Render(Fit(fmt.Sprintf("Commands (%d)", len(cmds)), w-2)))
+	if len(cmds) == 0 {
+		lines = append(lines, "  "+statusBarStyle.Render(Fit("— none —", w-2)))
+		return lines
+	}
+	for _, c := range cmds {
+		row := "/" + c.Name
+		if d := strings.Join(strings.Fields(c.Description), " "); d != "" {
+			row += " — " + d
+		}
+		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(cText).Render(Fit(Short(row, w-2), w-2)))
+	}
+	return lines
+}
+
+// wrapWords folds s into lines of at most n display cells (word-boundary,
+// hard-splits one overlong word). Plain strings only — style after.
+func wrapWords(s string, n int) []string {
+	if n < 10 {
+		n = 10
+	}
+	var out []string
+	var cur strings.Builder
+	curW := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+			curW = 0
+		}
+	}
+	for _, word := range strings.Fields(s) {
+		ww := lipgloss.Width(word)
+		if ww > n {
+			// fallback: rune-slice the long word into n-wide pieces
+			runes := []rune(word)
+			for len(runes) > 0 {
+				acc, accW := 0, 0
+				for acc < len(runes) && accW+lipgloss.Width(string(runes[acc])) <= n {
+					accW += lipgloss.Width(string(runes[acc]))
+					acc++
+				}
+				if acc == 0 {
+					acc = 1
+				}
+				out = append(out, string(runes[:acc]))
+				runes = runes[acc:]
+			}
+			continue
+		}
+		add := ww
+		if curW > 0 {
+			add++ // space
+		}
+		if curW+add > n {
+			flush()
+		}
+		if curW > 0 {
+			cur.WriteByte(' ')
+			curW++
+		}
+		cur.WriteString(word)
+		curW += ww
+	}
+	flush()
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
 // payloadOf parallels DescOf for the right pane's per-row payload.
 func payloadOf(d *Dialog, ri int) string {
 	if ri < len(d.Payload) {
@@ -435,9 +624,23 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 	return m, nil
 }
 
+// updatePconfigWheel scrolls the focused pane (wheel down = next row):
+// sections when the left pane has focus (moving reloads the right pane,
+// like ↑↓), contents otherwise. Lets mouse users scroll the hub without
+// touching the chat/sidebar behind it.
+func (m Model) updatePconfigWheel(d *Dialog, down bool) (tea.Model, tea.Cmd) {
+	t := tea.KeyDown
+	if !down {
+		t = tea.KeyUp
+	}
+	return m.updatePconfigDialog(tea.KeyMsg{Type: t}, d)
+}
+
 // renderPconfigDialog draws the two-pane hub: left = sections with counts,
-// right = the selected section's rows. Layout math mirrors the /model
-// picker (fixed scroll windows so the box never resizes while scrolling).
+// right = the selected section's rows. The Plugins section adds a third
+// DETAILS column on wide terminals (like the /model picker). Layout math
+// mirrors the /model picker (fixed scroll windows so the box never
+// resizes while scrolling).
 func (m Model) renderPconfigDialog(d *Dialog) string {
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
@@ -461,6 +664,19 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	rightW := boxW - 8 - leftW - 3
 	if rightW < 30 {
 		rightW = 30
+	}
+	// Plugins gets a third DETAILS column (oh-my-pi style, like the
+	// /model picker): list + specs side by side. Narrow terminals keep
+	// the classic two panes (spec lives in the row desc there).
+	detW := 42
+	detailCol := d.CurPsec() == PsecPlugin && boxW >= 110 && len(m.Plugins) > 0
+	listW := rightW
+	if detailCol {
+		listW = rightW - detW - 3
+		if listW < 20 {
+			listW = 20
+			detW = rightW - listW - 3
+		}
 	}
 	win := m.winH - 14
 	if win < 12 {
@@ -511,18 +727,26 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	}
 
 	// right window (section rows): same fixed-win rule as the left pane.
+	// In plugin detail mode the middle column is name-only — the spec
+	// lives in the DETAILS column (like the /model picker's wide layout).
 	total := len(d.FIdx)
 	start, end, rAbove, rBelow := fixedWin(d.Cursor, total, win)
 	var rightLines []string
 	if rAbove {
-		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d above)", start)))
+		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d above)", start)))
 	}
 	optW := 28
-	if rightW-10 < optW {
-		optW = rightW - 10
+	if listW-10 < optW {
+		optW = listW - 10
 	}
 	if optW < 10 {
 		optW = 10
+	}
+	if detailCol {
+		optW = listW - 4
+		if optW < 10 {
+			optW = 10
+		}
 	}
 	for fi := start; fi < end; fi++ {
 		ri := d.FIdx[fi]
@@ -537,46 +761,92 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 			}
 		}
 		row := Fit(Short(d.Options[ri], optW), optW)
-		if desc := DescOf(d, ri); desc != "" {
-			row += "  " + psecDesc(payloadOf(d, ri), desc, rightW-4-optW-3)
+		if !detailCol {
+			if desc := DescOf(d, ri); desc != "" {
+				row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
+			}
 		}
-		rightLines = append(rightLines, mark+style.Width(rightW-2).Render(row))
+		rightLines = append(rightLines, mark+style.Width(listW-2).Render(row))
 	}
 	if rBelow {
-		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
+		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
 	}
 	if total == 0 {
-		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render("— no match —"))
+		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render("— no match —"))
 	}
 	for len(rightLines) < win {
-		rightLines = append(rightLines, "  "+statusBarStyle.Width(rightW-2).Render(""))
+		rightLines = append(rightLines, "  "+statusBarStyle.Width(listW-2).Render(""))
 	}
 
 	secName := d.CurPsec()
 	if d.ProvCursor >= 0 && d.ProvCursor < len(d.Provs) {
 		secName = d.Provs[d.ProvCursor]
 	}
-	b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("SECTIONS") + " │ " +
-		"  " + sideTitleStyle.Width(rightW-2).Render(strings.ToUpper(secName)+" · "+fmt.Sprintf("%d", total)) + "\n")
-
-	n := len(leftLines)
-	if len(rightLines) > n {
-		n = len(rightLines)
-	}
 	sep := sepStyle.Render("│")
-	for i := 0; i < n; i++ {
-		l, r := "", ""
-		if i < len(leftLines) {
-			l = leftLines[i]
-		} else {
-			l = "  " + statusBarStyle.Width(leftW-2).Render("")
+	if !detailCol {
+		b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("SECTIONS") + " │ " +
+			"  " + sideTitleStyle.Width(listW-2).Render(strings.ToUpper(secName)+" · "+fmt.Sprintf("%d", total)) + "\n")
+
+		n := len(leftLines)
+		if len(rightLines) > n {
+			n = len(rightLines)
 		}
-		if i < len(rightLines) {
-			r = rightLines[i]
-		} else {
-			r = "  " + statusBarStyle.Width(rightW-2).Render("")
+		for i := 0; i < n; i++ {
+			l, r := "", ""
+			if i < len(leftLines) {
+				l = leftLines[i]
+			} else {
+				l = "  " + statusBarStyle.Width(leftW-2).Render("")
+			}
+			if i < len(rightLines) {
+				r = rightLines[i]
+			} else {
+				r = "  " + statusBarStyle.Width(listW-2).Render("")
+			}
+			b.WriteString(l + " " + sep + " " + r + "\n")
 		}
-		b.WriteString(l + " " + sep + " " + r + "\n")
+	} else {
+		b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("SECTIONS") + " │ " +
+			"  " + sideTitleStyle.Width(listW-2).Render(strings.ToUpper(secName)+" · "+fmt.Sprintf("%d", total)) + " │ " +
+			"  " + sideTitleStyle.Width(detW-2).Render("DETAILS") + "\n")
+
+		// Fixed box height: the detail column never stretches the
+		// dialog — overflow folds into a "…(+N more)" marker, like the
+		// scroll markers of the other two panes.
+		detLines := pluginDetailLines(&m, d, detW)
+		if len(detLines) > win {
+			detLines = append(detLines[:win-1],
+				"  "+toolStyle.Width(detW-2).Render(fmt.Sprintf("…(+%d more)", len(detLines)-win+1)))
+		}
+		for len(detLines) < win {
+			detLines = append(detLines, "  "+statusBarStyle.Width(detW-2).Render(""))
+		}
+		n := len(leftLines)
+		if len(rightLines) > n {
+			n = len(rightLines)
+		}
+		if len(detLines) > n {
+			n = len(detLines)
+		}
+		for i := 0; i < n; i++ {
+			l, r, dt := "", "", ""
+			if i < len(leftLines) {
+				l = leftLines[i]
+			} else {
+				l = "  " + statusBarStyle.Width(leftW-2).Render("")
+			}
+			if i < len(rightLines) {
+				r = rightLines[i]
+			} else {
+				r = "  " + statusBarStyle.Width(listW-2).Render("")
+			}
+			if i < len(detLines) {
+				dt = detLines[i]
+			} else {
+				dt = "  " + statusBarStyle.Width(detW-2).Render("")
+			}
+			b.WriteString(l + " " + sep + " " + r + " " + sep + " " + dt + "\n")
+		}
 	}
 
 	foot := "↑↓ sections · → contents · Enter open · Esc close"

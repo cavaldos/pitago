@@ -158,6 +158,8 @@ type Model struct {
 	favModels    []FavEntry
 	favSet       map[string]bool // starred models lookup (see components/favorite)
 	favPath      string          // persisted favorites ("" = don't persist)
+	hist         []string        // sent messages, oldest→newest (↑↓ recall when input empty)
+	histIdx      int             // -1 = live input, else index into hist while browsing
 	ThemeName    string          // active TUI theme (/theme, --theme flag)
 	themePath    string          // persisted theme ("" = don't persist)
 	prefsPath    string          // persisted pitago-local prefs ("" = don't persist)
@@ -308,6 +310,7 @@ func New(pi *pirpc.Client, cwd string) Model {
 		tools:     make(map[string]int),
 		curAsst:   -1,
 		curThink:  -1,
+		histIdx:   -1,
 		Status:    "connecting to pi…",
 		cwd:       cwd,
 		ModelLbl:  "…",
@@ -413,6 +416,8 @@ func (m *Model) submitInput() tea.Cmd {
 	if text == "" && len(m.imgAtts) == 0 {
 		return nil
 	}
+	m.pushHist(text)
+	m.histIdx = -1
 	if b, arg, ok := m.FindBuiltin(text); ok {
 		m.ta.Reset()
 		m.refreshCmds()

@@ -250,8 +250,9 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 	}
 	if msg.secret {
 		for _, d := range m.Dialogs {
-			if d.Kind == "secret" {
+			if d.Kind == "secret" || d.Kind == "input" {
 				d.Filter += strings.TrimSpace(msg.text)
+				m.applyPopupH() // long paste wraps: keep the winH budget
 				m.Refresh()
 				return
 			}
@@ -259,6 +260,7 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 		return
 	}
 	m.insertAtCursor(msg.text)
+	m.histIdx = -1 // pasted edit leaves history browse
 	m.collectDrops() // pasted file paths collapse into [Image N] chips
 	m.refreshCmds()
 	m.refreshAt()

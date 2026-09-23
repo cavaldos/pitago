@@ -61,6 +61,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.scrollLeak(events)
 			}
+			// Mixed burst + real typing: still scroll (don't drop the
+			// wheel), then let the leftover text type normally. Wheel
+			// never touches input history — scrollLeak only moves viewports.
+			if len(m.Dialogs) == 0 {
+				_ = m.scrollLeak(events)
+			}
 			km.Runes = cleaned
 			km.Alt = false // the Alt bit is the eaten ESC, not the user
 			msg = km
@@ -79,6 +85,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// dialog captures all keys while open
 	if len(m.Dialogs) > 0 {
+		// Wheel scrolls the settings hub list (locked to the dialog —
+		// the chat/sidebar behind never moves); every other mouse event
+		// stays swallowed while a dialog is open.
+		if mm, ok := msg.(tea.MouseMsg); ok {
+			if d := m.Dialogs[0]; d.Kind == "pconfig" && len(d.Provs) > 0 &&
+				mm.Action == tea.MouseActionPress &&
+				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
+				return m.updatePconfigWheel(d, mm.Button == tea.MouseButtonWheelDown)
+			}
+			return m, nil
+		}
 		if km, ok := msg.(tea.KeyMsg); ok {
 			// Alt+M toggles mouse even with a dialog open (filter boxes
 			// would otherwise swallow it as the letter "m").
@@ -102,6 +119,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Wheel never touches input history: ↑↓ recalls when the input is
+	// empty, wheel scrolls viewports only (sidebar when hovered, chat
+	// otherwise). Early return so no textarea/popup/history path below
+	// can see it.
+	if mm, ok := msg.(tea.MouseMsg); ok && m.ready &&
+		mm.Action == tea.MouseActionPress &&
+		(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown ||
+			mm.Button == tea.MouseButtonWheelLeft || mm.Button == tea.MouseButtonWheelRight) {
+		var c tea.Cmd
+		if m.overSide(mm.X) {
+			m.sideVp, c = m.sideVp.Update(msg)
+		} else {
+			m.vp, c = m.vp.Update(msg)
+		}
+		m.Refresh()
+		return m, c
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = msg.Width, msg.Height
@@ -122,7 +157,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.Height = vpH
 			m.sideVp.Width = sideInnerW
 			m.syncSideH() // reserves the quit-arm footer line while armed
-			if m.cmdOpen || m.atOpen || m.isInlineUI() {
+			if m.cmdOpen || m.atOpen || m.isInlineUI() || m.inputOpen() {
 				// Resizing with a popup open must keep the winH budget:
 				// shrink the chat like a keystroke would (and clamp the
 				// popup scroll offset to its new window).
@@ -162,8 +197,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.MCP = getMcpServers()
 		m.Plugins = getPlugins()
 		m.sessionFile = msg.state.SessionFile
+		m.refreshPiTasks() // store file covers /tasks-menu edits (no RPC)
 		m.blocks = nil
 		m.tools = make(map[string]int)
+		m.hist = nil
+		m.histIdx = -1
 		m.restore(msg.msgs)
 		m.Status = "ready"
 		m.planOn = false // fresh connect: plan latch is live-only
@@ -286,6 +324,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Todos = nil
 		m.imgAtts = nil // pending chips belong to the old session
 		m.trayFocus = false
+		m.histIdx = -1 // keep sent history across /new, back to live input
 		m.applyPopupH()
 		m.sessStart = time.Now()
 		m.turnStart = time.Time{}
@@ -648,11 +687,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlV:
 			// Owned here (not the textarea): multi-backend read + visible
 			// errors instead of the silent built-in paste.
+			m.histIdx = -1 // pasting edits live input, leaves history browse
 			return m, m.pasteCmd(false)
+		case tea.KeyUp:
+			// Empty single-line input → recall previous sent message.
+			// While browsing, ↑ keeps going older (stays at oldest).
+			if m.tryHistPrev() {
+				return m, nil
+			}
 		case tea.KeyDown:
-			// Last input line + tray → cursor moves into the [Image N] row.
-			if len(m.imgAtts) > 0 && m.onLastLine() {
+			// While browsing, ↓ goes newer (tray waits — history wins).
+			// Empty input + tray → cursor moves into the [Image N] row.
+			if m.histBrowsing() {
+				if m.tryHistNext() {
+					return m, nil
+				}
+			} else if len(m.imgAtts) > 0 && m.onLastLine() {
 				m.enterTray()
+				return m, nil
+			} else if m.tryHistNext() {
 				return m, nil
 			}
 		case tea.KeyBackspace:
@@ -687,6 +740,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ModelCycleMsg{Label: label, Err: err}
 			}
 		case tea.KeyEsc:
+			if m.histBrowsing() && !m.thinking {
+				m.clearHistInput()
+				return m, nil
+			}
 			if m.thinking {
 				m.Status = "cancelling…"
 				m.Refresh()
@@ -720,8 +777,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Mouse events never reach the textarea (it has no mouse handling —
 	// feeding them in only risks echoing reports as text), just viewports.
 	if _, isMouse := msg.(tea.MouseMsg); !isMouse {
+		oldVal := ""
+		wasBrowsing := m.histBrowsing()
+		if wasBrowsing {
+			oldVal = m.ta.Value()
+		}
 		m.ta, cmd = m.ta.Update(msg)
 		cmds = append(cmds, cmd)
+		if wasBrowsing && m.ta.Value() != oldVal {
+			m.histIdx = -1 // edited a recalled message → back to live input
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.Paste {
 			m.collectDrops() // terminal drop/paste: long paths → [Image N] chips
 		}
@@ -814,7 +879,14 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 			m.blocks[i].ToolResult = diffOfDetails(p.Result.Details)
 		}
 		if isTodoTool(p.ToolName) {
-			m.updateTodosFromRaw(rawField(ev.Raw, "details"), rawField(ev.Raw, "result"))
+			m.updateTodosFromRaw(p.Result.Details, rawField(p.Result.Details, "todos"),
+				rawField(ev.Raw, "details"), rawField(ev.Raw, "result"),
+				json.RawMessage(joinText(p.Result.Content)))
+			// pi-tasks single-task ops (no full list): fold in place.
+			m.applyPiTaskResult(p.ToolName, m.blocks[i].ToolArgsRaw, m.blocks[i].ToolResult)
+			if isPiTaskStoreTool(p.ToolName) {
+				m.refreshPiTasks() // store file is fresh on disk by now
+			}
 		}
 	case "agent_settled":
 		m.thinking = false
@@ -822,6 +894,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.pendSpeed = true
 		m.MCP = getMcpServers()
 		m.Plugins = getPlugins()
+		m.refreshPiTasks()
 		m.Refresh()
 		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
 	case "agent_end":
@@ -979,9 +1052,17 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 			text = diffOfDetails(msg.Details)
 		}
 		if isTodoTool(msg.ToolName) {
-			m.updateTodosFromRaw(msg.Content)
-			if strings.HasPrefix(strings.TrimSpace(text), "{") || strings.HasPrefix(strings.TrimSpace(text), "[") {
-				m.updateTodosFromRaw(json.RawMessage(strings.TrimSpace(text)))
+			m.updateTodosFromRaw(msg.Details, msg.Content)
+			if t := strings.TrimSpace(text); t != "" {
+				m.updateTodosFromRaw(json.RawMessage(t))
+			}
+			argsRaw := ""
+			if i, ok := m.tools[msg.ToolCallID]; ok {
+				argsRaw = m.blocks[i].ToolArgsRaw
+			}
+			m.applyPiTaskResult(msg.ToolName, argsRaw, text)
+			if isPiTaskStoreTool(msg.ToolName) {
+				m.refreshPiTasks()
 			}
 		}
 		if i, ok := m.tools[msg.ToolCallID]; ok {
@@ -1013,6 +1094,7 @@ func (m *Model) restore(msgs []pirpc.AgentMessage) {
 			if t := withImages(strings.TrimSpace(pirpc.TextOf(msg.Content)), pirpc.ImageCount(msg.Content)); t != "" {
 				m.AddBlock(Block{Kind: "user", Text: t})
 			}
+			m.pushHist(strings.TrimSpace(pirpc.TextOf(msg.Content)))
 		case "assistant":
 			for _, b := range pirpc.BlocksOf(msg.Content) {
 				switch b.Type {
@@ -1121,16 +1203,35 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		d.Reindex()
 		m.Dialogs = append(m.Dialogs, d)
 		m.applyPopupH()
+	case req.Method == "input":
+		// free-text prompt (e.g. pi-tasks createTask subject/description):
+		// a real typing dialog, Esc cancels, Enter submits.
+		title := req.Title
+		if title == "" {
+			title = "Input"
+		}
+		d := &Dialog{
+			ID: req.ID, Method: req.Method, Kind: "input",
+			Title: title, Message: req.Message, Filter: req.Text,
+		}
+		m.Dialogs = append(m.Dialogs, d)
+		m.applyPopupH()
 	case req.Method == "notify":
 		m.AddBlock(Block{Kind: "notice", Text: req.Message, Err: req.NotifyType == "error"})
 	case req.Method == "setStatus":
 		m.extStat = stripANSI(req.StatusText)
 	case req.Method == "set_editor_text":
 		m.ta.SetValue(req.Text)
+		m.histIdx = -1
 	case req.Method == "setWidget":
 		// skipped: pi extension widgets don't render in this TUI
 		_ = req
 	}
+	// Any fresh extension prompt arrives after the extension ran code that
+	// may have rewritten its store file (e.g. pi-tasks createTask writes
+	// between the description answer and the reopened menu), so sync the
+	// sidebar here — answering time is one step too early.
+	m.refreshPiTasks()
 	m.Refresh()
 	return m
 }
@@ -1169,9 +1270,11 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyBackspace:
-		if (isFilterKind(d.Kind) || d.Kind == "secret" || d.Kind == "rename") && d.Filter != "" {
-			d.Filter = d.Filter[:len(d.Filter)-1]
+		if (isFilterKind(d.Kind) || d.Kind == "secret" || d.Kind == "rename" || d.Kind == "input") && d.Filter != "" {
+			r := []rune(d.Filter) // rune-wise: byte trim corrupts Vietnamese
+			d.Filter = string(r[:len(r)-1])
 			d.Reindex()
+			m.applyPopupH() // unwrapped lines give rows back to the chat
 			return m, nil
 		}
 		if d.Kind == "sessions" {
@@ -1189,13 +1292,15 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyCtrlV:
-		if d.Kind == "secret" {
-			return m, m.pasteCmd(true) // paste API key into /login
+		if d.Kind == "secret" || d.Kind == "input" {
+			return m, m.pasteCmd(true) // paste into the dialog buffer
 		}
 		return m, nil
 	case tea.KeyEsc:
 		if d.Kind == "ui" {
 			m.answerDialog(d, -1)
+		} else if d.Kind == "input" {
+			m.answerInput(d, true)
 		} else {
 			m.Dialogs = m.Dialogs[1:]
 			m.Refresh()
@@ -1214,6 +1319,20 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.confirmDialog(d)
 	}
+	if km.Type == tea.KeySpace {
+		// space arrives as its own key (not Runes): typing contexts take
+		// it literally, option lists keep ignoring it.
+		if isFilterKind(d.Kind) {
+			d.Filter += " "
+			d.Reindex()
+			return m, nil
+		}
+		if d.Kind == "secret" || d.Kind == "rename" || d.Kind == "input" {
+			d.Filter += " "
+			m.applyPopupH() // long input wraps: keep the winH budget
+			return m, nil
+		}
+	}
 	if km.Type == tea.KeyRunes {
 		if isFilterKind(d.Kind) {
 			// type to filter the picker
@@ -1221,8 +1340,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d.Reindex()
 			return m, nil
 		}
-		if d.Kind == "secret" || d.Kind == "rename" {
+		if d.Kind == "secret" || d.Kind == "rename" || d.Kind == "input" {
 			d.Filter += km.String()
+			m.applyPopupH() // long input wraps: keep the winH budget
 			return m, nil
 		}
 		s := strings.ToLower(km.String())
@@ -1381,6 +1501,12 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 			return RenameKeyMsg{Provider: prov, Env: env, Idx: idx, Name: name}
 		}
 	}
+	if d.Kind == "input" {
+		// free-text prompt: Enter submits the typed value (even empty —
+		// the extension treats empty as back/cancel).
+		m.answerInput(d, false)
+		return m, nil
+	}
 	if len(d.FIdx) == 0 {
 		return m, nil
 	}
@@ -1389,6 +1515,17 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		return fn(&m, d, ri)
 	}
 	return m, nil
+}
+
+// answerInput replies to an extension free-text input dialog (Enter submits
+// the typed value, Esc cancels). Either way the extension resumes — e.g.
+// pi-tasks createTask advances to the description prompt or back to its menu.
+func (m *Model) answerInput(d *Dialog, cancelled bool) {
+	m.Dialogs = m.Dialogs[1:]
+	_ = m.Pi.Fire(extension.InputResponse(d.ID, d.Filter, cancelled))
+	m.refreshPiTasks() // /tasks-menu writes land in the store file
+	m.applyPopupH()
+	m.Refresh()
 }
 
 // answerDialog replies to an extension permission dialog

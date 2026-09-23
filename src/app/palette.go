@@ -47,7 +47,7 @@ func (m *Model) refreshCmds() {
 // must stay <= winH. Tall screens keep palette.Win; the box never grows
 // past it (see components/palette).
 func (m Model) cmdWin() int {
-	boxMax := m.winH - 1 - 3 - (6 + m.chipH()) - m.atPopupH() - m.uiPopupH()
+	boxMax := m.winH - 1 - 3 - (6 + m.chipH()) - m.atPopupH() - m.uiPopupH() - m.inputPopupH()
 	win := boxMax - 2 - 1 - 2 // border + footer + both scroll hints
 	if win > palette.Win {
 		win = palette.Win
@@ -94,7 +94,7 @@ func (m *Model) applyPopupH() {
 	if !m.ready {
 		return
 	}
-	h := m.baseVpH - m.popupH() - m.atPopupH() - m.uiPopupH() - m.chipH()
+	h := m.baseVpH - m.popupH() - m.atPopupH() - m.uiPopupH() - m.inputPopupH() - m.chipH()
 	if h < 3 {
 		h = 3
 	}
@@ -286,6 +286,16 @@ func (m Model) uiPopupH() int {
 		return 0
 	}
 	return lipgloss.Height(m.renderUIDialogPopup())
+}
+
+// inputPopupH reserves viewport rows for the floating free-text dialog so
+// the frame stays exactly winH (header + chat + popup + input). Measured
+// live so long input that wraps to more lines still fits.
+func (m Model) inputPopupH() int {
+	if !m.inputOpen() {
+		return 0
+	}
+	return lipgloss.Height(m.renderInputBox())
 }
 
 // uiWin caps visible option rows so title + message + options + footer +

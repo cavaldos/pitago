@@ -60,7 +60,7 @@ func SavePrefs(path string, p Prefs) error {
 // toggled: MCP + Plugins start hidden, everything else shows.
 func DefaultSideVisible(key string) bool {
 	switch key {
-	case SidePlugins, SideMCP:
+	case SidePlugins, SideMCP, SideCommands:
 		return false
 	}
 	return true

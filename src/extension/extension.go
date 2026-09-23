@@ -37,9 +37,11 @@ func Summarize(cmds []pirpc.RepoCommand) (ext, prompt, skill, builtin int) {
 }
 
 // ShouldAutoCancel reports UI requests pitago answers without asking:
-// free-text input/editor fall back to agent defaults/timeout.
+// the editor falls back to agent defaults/timeout (free-text input gets a
+// real dialog instead — extensions like pi-tasks drive creation flows
+// through ui.input, which must not resolve empty).
 func ShouldAutoCancel(method string) bool {
-	return method == "input" || method == "editor"
+	return method == "editor"
 }
 
 // TitleFor fills the dialog title default per method.
@@ -82,6 +84,19 @@ func Response(id, method string, choice int, opts []string) pirpc.Command {
 		}
 	case "confirm":
 		cmd.Confirmed = boolPtr(choice == 0)
+	}
+	return cmd
+}
+
+// InputResponse builds the extension_ui_response for a free-text input
+// dialog: Esc cancels, Enter submits the typed value (possibly empty — the
+// extension decides what empty means).
+func InputResponse(id, value string, cancelled bool) pirpc.Command {
+	cmd := pirpc.Command{Type: "extension_ui_response", ID: id}
+	if cancelled {
+		cmd.Cancelled = boolPtr(true)
+	} else {
+		cmd.Value = &value
 	}
 	return cmd
 }

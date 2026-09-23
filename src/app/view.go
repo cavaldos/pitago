@@ -852,13 +852,17 @@ func (m Model) renderDialog() string {
 		b.WriteString(statusBarStyle.Render("filter: "+d.Filter+"▌") + "\n")
 	}
 	// Adaptive box: wide terminals get a wider dialog (settings rows
-	// carry long values), small ones keep the old 62-cell box.
+	// carry long values), small ones keep the old 62-cell box. Free-text
+	// input stays a compact popup regardless of terminal width.
 	boxW := m.winW - 10
 	if boxW < 62 {
 		boxW = 62
 	}
 	if boxW > 100 {
 		boxW = 100
+	}
+	if d.Kind == "input" {
+		boxW = 60
 	}
 	if d.Kind == "secret" {
 		b.WriteString("\n")
@@ -868,6 +872,10 @@ func (m Model) renderDialog() string {
 		b.WriteString("\n")
 		b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
 		b.WriteString("\n" + toolStyle.Render("Enter rename · empty clears · Esc back to /login"))
+	} else if d.Kind == "input" {
+		b.WriteString("\n")
+		b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+		b.WriteString("\n" + toolStyle.Render("Enter save · Esc cancel"))
 	} else {
 		b.WriteString("\n")
 		rowW := boxW - 10 // cursor mark + dialog padding + border
@@ -924,7 +932,9 @@ func (m Model) renderDialog() string {
 		}
 	}
 	foot := "↑↓ select · Enter confirm · Esc cancel"
-	if isFilterKind(d.Kind) {
+	if d.Kind == "input" {
+		foot = "type · Enter save · Esc cancel"
+	} else if isFilterKind(d.Kind) {
 		foot = "type to filter · " + foot
 	}
 	if d.Kind == "sessions" {
@@ -1480,12 +1490,12 @@ func (m Model) View() string {
 	if !m.ready {
 		return "starting…"
 	}
-	if len(m.Dialogs) > 0 && !m.isInlineUI() {
+	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" {
 		return m.renderDialog()
 	}
 	inlineUI := m.isInlineUI()
 	body := lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), m.renderInput())
-	if m.cmdOpen || m.atOpen || inlineUI {
+	if m.cmdOpen || m.atOpen || inlineUI || m.inputOpen() {
 		parts := []string{m.vp.View()}
 		if inlineUI {
 			// extension menu (plan-mode) floats above chat like /commands;
@@ -1499,6 +1509,11 @@ func (m Model) View() string {
 				parts = append(parts, m.renderAtPopup())
 			}
 		}
+		if m.inputOpen() {
+			// free-text prompt floats above the input like /commands popups:
+			// chat + sidebar stay visible behind it.
+			parts = append(parts, m.renderInputBox())
+		}
 		parts = append(parts, m.renderInput())
 		body = lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
@@ -1508,6 +1523,31 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", m.renderSidebar())
 	}
 	return left
+}
+
+// inputOpen reports a free-text extension prompt on top (floated above
+// the input, not fullscreen like option dialogs).
+func (m Model) inputOpen() bool {
+	return len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind == "input"
+}
+
+// renderInputBox draws the free-text dialog as a bare compact box for the
+// floating path in View (renderDialog keeps its own copy for direct use).
+func (m Model) renderInputBox() string {
+	d := m.Dialogs[0]
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
+	if d.Message != "" {
+		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+	b.WriteString("\n" + toolStyle.Render("type · Enter save · Esc cancel"))
+	boxW := 60
+	if mw := m.mainW() - 4; mw < boxW && mw > 20 {
+		boxW = mw
+	}
+	return dlgStyle.Width(boxW).Render(b.String())
 }
 
 // utils ------------------------------------------------------------------------

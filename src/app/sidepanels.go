@@ -13,9 +13,10 @@ import (
 	"pitago/src/pirpc"
 )
 
-// Sidebar panels mirroring pi-sidebar-tui (MCP Servers + Todos), fed over
-// pi's RPC surface: todos are tracked from todo-tool calls (any tool with
-// "todo" in the name), MCP servers are read from the pi agent dir files.
+// Sidebar panels mirroring pi-sidebar-tui (MCP Servers + Todos). Todos come
+// from two sources: todo/task tool calls over pi's RPC (manage_todo_list,
+// Task*), plus the pi-tasks store file on disk (covers /tasks-menu edits,
+// which emit no RPC). MCP servers are read from the pi agent dir files.
 
 // Sidebar section keys for the /pitago-setting Sidebar tab (persisted in
 // prefs.json under "side"; MCP + Plugins start hidden, the rest show).
@@ -138,15 +139,35 @@ type Plugin struct {
 const todosShowMax = 10 // cap like pi-sidebar-tui's default todosMax
 
 func isTodoTool(name string) bool {
-	return strings.Contains(strings.ToLower(name), "todo")
+	l := strings.ToLower(name)
+	return strings.Contains(l, "todo") || strings.Contains(l, "task")
+}
+
+// isPiTaskStoreTool reports the Task* family whose state lives in the
+// pi-tasks store file (manage_todo_list keeps message-only state, so live
+// file refreshes apply to Task* events only).
+func isPiTaskStoreTool(name string) bool {
+	return strings.Contains(strings.ToLower(name), "task")
+}
+
+// todoContent picks the display text across todo shapes:
+// pi-sidebar-tui (content/text), manage_todo_list (title), pi-tasks (subject).
+func todoContent(m map[string]any) string {
+	for _, k := range []string{"content", "text", "title", "subject", "name", "label"} {
+		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // parseTodos extracts a todo list from a todo tool's payload. Handles the
-// two shapes pi-sidebar-tui handles: the full list in the tool input
-// (bare array, or object with todos/items/list key) and the list in the
-// tool result details (e.g. {todos:[{text,done}]}). Returns ok=false when
-// no todo array is present (action-only payloads), so callers can tell
-// "no list" apart from an empty list.
+// full list in the tool input (bare array, or object with
+// todos/todoList/items/list/tasks key) and the list in the tool result
+// details (e.g. {todos:[{text,done}]} or manage_todo_list's
+// {todos:[{title,status}]}). Returns ok=false when no todo array is present
+// (action-only payloads), so callers can tell "no list" apart from an
+// empty list.
 func parseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 	t := strings.TrimSpace(string(raw))
 	if t == "" || t == "null" {
@@ -154,6 +175,11 @@ func parseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
+		// pi-tasks TaskList returns plain text ("#1 [pending] subject"):
+		// fall back to line parsing so the sidebar still shows something.
+		if out, ok := parseTodoLines(t); ok {
+			return out, true
+		}
 		return nil, false
 	}
 	var arr []any
@@ -161,7 +187,7 @@ func parseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 	case []any:
 		arr = x
 	case map[string]any:
-		for _, k := range []string{"todos", "items", "list"} {
+		for _, k := range []string{"todos", "todoList", "items", "list", "tasks"} {
 			if a, ok := x[k].([]any); ok {
 				arr = a
 				break
@@ -179,12 +205,16 @@ func parseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 		if !ok {
 			continue
 		}
-		var content string
-		if s, ok := m["content"].(string); ok && s != "" {
-			content = s
-		} else if s, ok := m["text"].(string); ok && s != "" {
-			content = s
-		} else {
+		// Content-block envelopes ({"type":"text","text":...}) share the
+		// "text" key with todo items — never read them as todos.
+		if t, _ := m["type"].(string); t != "" {
+			switch strings.ToLower(strings.ReplaceAll(t, "_", "")) {
+			case "text", "thinking", "image", "toolcall", "toolresult":
+				continue
+			}
+		}
+		content := todoContent(m)
+		if content == "" {
 			continue
 		}
 		id := fmt.Sprint(i)
@@ -194,28 +224,85 @@ func parseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 			id = strings.TrimSuffix(fmt.Sprintf("%v", f), ".0")
 		}
 		sub, _ := m["subAction"].(string)
+		if sub == "" {
+			sub, _ = m["activeForm"].(string)
+		}
 		out = append(out, TodoItem{ID: id, Content: content, Status: normTodoStatus(m), SubAct: sub})
+	}
+	// A non-empty array with zero todo-like entries is not a todo list
+	// (e.g. a content-block envelope) — report "no list" so callers don't
+	// wipe the sidebar. A truly empty array is a valid empty list.
+	if len(arr) > 0 && len(out) == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// parseTodoLines parses pi-tasks TaskList text ("#1 [pending] subject",
+// one per line) into items. ok=false when no line matches. Only lines
+// starting with an id marker ("#1", "1.", "1:") count, so single-task
+// confirmations ("Task #1 created...", "Updated task #1 ...") don't parse.
+func parseTodoLines(t string) ([]TodoItem, bool) {
+	var out []TodoItem
+	for _, line := range strings.Split(t, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// strip leading "#1", "1.", "1:" markers (required: TaskList rows
+		// always carry one; confirmations like "Task #1 created" don't
+		// start with one and must not match)
+		rest := line
+		if strings.HasPrefix(rest, "#") {
+			rest = strings.TrimSpace(rest[1:])
+		}
+		i := 0
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			continue
+		}
+		id := rest[:i]
+		rest = strings.TrimSpace(rest[i:])
+		rest = strings.TrimLeft(rest, ".):")
+		rest = strings.TrimSpace(rest)
+		status := TodoPending
+		content := rest
+		if j := strings.Index(content, "["); j >= 0 {
+			if k := strings.Index(content[j:], "]"); k >= 0 {
+				status = normTodoStatusStr(content[j+1 : j+k])
+				after := strings.TrimSpace(content[j+k+1:])
+				if after != "" {
+					content = after
+				}
+			}
+		}
+		// drop trailing "[blocked by ...]" notes, keep the subject
+		if j := strings.Index(content, " [blocked by"); j >= 0 {
+			content = strings.TrimSpace(content[:j])
+		}
+		if content == "" {
+			continue
+		}
+		out = append(out, TodoItem{ID: id, Content: content, Status: status})
+	}
+	if out == nil {
+		return nil, false
 	}
 	return out, true
 }
 
 func normTodoStatus(m map[string]any) TodoStatus {
 	if s, ok := m["status"].(string); ok {
-		switch s {
-		case "in_progress", "active":
-			return TodoInProgress
-		case "completed", "done":
-			return TodoCompleted
-		default:
-			return TodoPending
-		}
+		return normTodoStatusStr(s)
 	}
 	for _, k := range []string{"done", "completed"} {
 		if b, ok := m[k].(bool); ok && b {
 			return TodoCompleted
 		}
 	}
-	for _, k := range []string{"in_progress", "active"} {
+	for _, k := range []string{"in_progress", "in-progress", "active"} {
 		if b, ok := m[k].(bool); ok && b {
 			return TodoInProgress
 		}
@@ -223,20 +310,51 @@ func normTodoStatus(m map[string]any) TodoStatus {
 	return TodoPending
 }
 
-// restoreTodos rebuilds the todo list from get_messages history: the state
-// is the LAST todo-tool payload in the branch (mirrors pi-sidebar-tui's
-// reconstructTodosFromBranch; RPC has no details field, so tool inputs
-// and tool-result text that parses as a list both count).
+// normTodoStatusStr unifies status spellings across extensions:
+// in_progress/in-progress/active, completed/done, pending/not-started/...
+func normTodoStatusStr(s string) TodoStatus {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), "-", "_")) {
+	case "in_progress", "active", "inprogress", "working", "started":
+		return TodoInProgress
+	case "completed", "done", "complete", "finished":
+		return TodoCompleted
+	default:
+		return TodoPending
+	}
+}
+
+// restoreTodos rebuilds the todo list from get_messages history.
+// manage_todo_list carries a FULL snapshot in each result details (last one
+// wins); pi-tasks TaskList carries a full list as text (last one wins);
+// TaskCreate/TaskUpdate carry single-task deltas replayed in order on top.
 func restoreTodos(msgs []pirpc.AgentMessage) []TodoItem {
-	var last []TodoItem
+	type callArgs struct {
+		name string
+		args string
+	}
+	argsByID := map[string]callArgs{}
+	for _, msg := range msgs {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, b := range pirpc.BlocksOf(msg.Content) {
+			if b.Type == "toolCall" && b.ID != "" && isTodoTool(b.Name) {
+				argsByID[b.ID] = callArgs{name: b.Name, args: string(b.Arguments)}
+			}
+		}
+	}
+	var cur []TodoItem
 	found := false
+	applyFull := func(t []TodoItem) {
+		cur, found = t, true
+	}
 	for _, msg := range msgs {
 		switch msg.Role {
 		case "assistant":
 			for _, b := range pirpc.BlocksOf(msg.Content) {
 				if b.Type == "toolCall" && isTodoTool(b.Name) && len(b.Arguments) > 0 {
 					if t, ok := parseTodos(b.Arguments); ok {
-						last, found = t, true
+						applyFull(t)
 					}
 				}
 			}
@@ -244,23 +362,62 @@ func restoreTodos(msgs []pirpc.AgentMessage) []TodoItem {
 			if !isTodoTool(msg.ToolName) {
 				continue
 			}
+			if len(msg.Details) > 0 {
+				if t, ok := parseTodos(msg.Details); ok {
+					applyFull(t)
+					continue
+				}
+			}
 			if t, ok := parseTodos(msg.Content); ok {
-				last, found = t, true
+				applyFull(t)
 				continue
 			}
+			text := ""
+			matchedBlock := false
 			for _, b := range pirpc.BlocksOf(msg.Content) {
 				if b.Type == "text" {
 					if t, ok := parseTodos(json.RawMessage(strings.TrimSpace(b.Text))); ok {
-						last, found = t, true
+						applyFull(t)
+						matchedBlock = true
+					}
+					if text == "" {
+						text = b.Text
 					}
 				}
+			}
+			if matchedBlock {
+				continue
+			}
+			// TaskList-style plain text also parses via parseTodos fallback.
+			if text == "" {
+				text = strings.TrimSpace(pirpc.TextOf(msg.Content))
+			}
+			if text != "" {
+				if t, ok := parseTodos(json.RawMessage(text)); ok {
+					applyFull(t)
+					continue
+				}
+			}
+			// single-task delta (TaskCreate/TaskUpdate): needs call args
+			ca := argsByID[msg.ToolCallID]
+			name := msg.ToolName
+			args := ""
+			if ca.name != "" {
+				name, args = ca.name, ca.args
+			}
+			if text == "" {
+				text = strings.TrimSpace(pirpc.TextOf(msg.Content))
+			}
+			sm := &Model{Todos: cur}
+			if sm.applyPiTaskResult(name, args, text) {
+				cur, found = sm.Todos, true
 			}
 		}
 	}
 	if !found {
 		return nil
 	}
-	return last
+	return cur
 }
 
 // updateTodosFromRaw tries each candidate payload in order and keeps the
@@ -277,6 +434,116 @@ func (m *Model) updateTodosFromRaw(cands ...json.RawMessage) {
 	}
 }
 
+// pi-tasks single-task ops carry no full list (TaskCreate returns
+// "Task #1 created...", TaskUpdate returns "Updated task #1 ..."), so they
+// are applied in place to keep the sidebar live between TaskList refreshes.
+
+// piTaskName matches the @tintinweb/pi-tasks tool names (case-insensitive).
+func piTaskName(name, want string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), want)
+}
+
+// parseTaskID extracts the numeric id from "Task #12 ..." / "#12 [...]".
+func parseTaskID(text string) string {
+	if i := strings.Index(text, "#"); i >= 0 {
+		j := i + 1
+		for j < len(text) && text[j] >= '0' && text[j] <= '9' {
+			j++
+		}
+		if j > i+1 {
+			return text[i+1 : j]
+		}
+	}
+	return ""
+}
+
+// applyPiTaskResult folds one pi-tasks single-task result into m.Todos.
+// argsRaw is the tool-call arguments JSON, resultText the tool result text.
+// Returns true when the tool was a single-task op (handled or no-op).
+func (m *Model) applyPiTaskResult(toolName, argsRaw, resultText string) bool {
+	switch {
+	case piTaskName(toolName, "TaskCreate"):
+		var args struct {
+			Subject     string `json:"subject"`
+			Description string `json:"description"`
+			ActiveForm  string `json:"activeForm"`
+		}
+		_ = json.Unmarshal([]byte(argsRaw), &args)
+		subj := strings.TrimSpace(args.Subject)
+		if subj == "" {
+			// fall back to the result echo ("Task #1 created successfully: <subj>")
+			if i := strings.Index(resultText, ":"); i >= 0 {
+				subj = strings.TrimSpace(resultText[i+1:])
+			}
+		}
+		if subj == "" {
+			return true
+		}
+		id := parseTaskID(resultText)
+		if id == "" {
+			id = fmt.Sprint(len(m.Todos) + 1)
+		}
+		for _, t := range m.Todos {
+			if t.ID == id {
+				return true // already tracked (e.g. replayed)
+			}
+		}
+		sub := strings.TrimSpace(args.ActiveForm)
+		m.Todos = append(m.Todos, TodoItem{ID: id, Content: subj, Status: TodoPending, SubAct: sub})
+		return true
+	case piTaskName(toolName, "TaskUpdate"):
+		var args struct {
+			TaskID      string `json:"taskId"`
+			Status      string `json:"status"`
+			Subject     string `json:"subject"`
+			Description string `json:"description"`
+			ActiveForm  string `json:"activeForm"`
+		}
+		_ = json.Unmarshal([]byte(argsRaw), &args)
+		id := strings.TrimSpace(args.TaskID)
+		if id == "" {
+			id = parseTaskID(resultText)
+		}
+		if id == "" {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(args.Status), "deleted") {
+			kept := m.Todos[:0]
+			for _, t := range m.Todos {
+				if t.ID != id {
+					kept = append(kept, t)
+				}
+			}
+			m.Todos = kept
+			return true
+		}
+		for i, t := range m.Todos {
+			if t.ID == id {
+				if s := strings.TrimSpace(args.Status); s != "" {
+					m.Todos[i].Status = normTodoStatusStr(s)
+				}
+				if s := strings.TrimSpace(args.Subject); s != "" {
+					m.Todos[i].Content = s
+				}
+				if s := strings.TrimSpace(args.ActiveForm); s != "" {
+					m.Todos[i].SubAct = s
+				}
+				return true
+			}
+		}
+		// unknown id (e.g. created before sidebar tracked): add if we know enough
+		if s := strings.TrimSpace(args.Subject); s != "" {
+			st := TodoPending
+			if a := strings.TrimSpace(args.Status); a != "" {
+				st = normTodoStatusStr(a)
+			}
+			m.Todos = append(m.Todos, TodoItem{ID: id, Content: s, Status: st})
+		}
+		return true
+	}
+	return false
+}
+
 // rawField pulls one top-level field out of an event envelope
 // (e.g. details/result/input that typed structs drop).
 func rawField(raw json.RawMessage, key string) json.RawMessage {
@@ -285,6 +552,168 @@ func rawField(raw json.RawMessage, key string) json.RawMessage {
 		return nil
 	}
 	return env[key]
+}
+
+// pi-tasks file store --------------------------------------------------------
+// @tintinweb/pi-tasks persists tasks to disk (see its task-paths.ts), and
+// tasks made via the /tasks menu never emit toolCall messages — the RPC
+// alone can't see them. So the sidebar reads the same files the extension
+// reads (like MCP/plugins do), with RPC deltas as the live supplement.
+
+// piTaskSessionID derives pi's session id from its session file basename
+// (<timestamp>_<id>.jsonl). Empty when the name carries no id.
+func piTaskSessionID(sessionFile string) string {
+	base := filepath.Base(sessionFile)
+	if i := strings.LastIndex(base, "."); i >= 0 {
+		base = base[:i]
+	}
+	i := strings.LastIndex(base, "_")
+	if i < 0 {
+		return ""
+	}
+	if id := base[i+1:]; id != "" && id != "-" {
+		return id
+	}
+	return ""
+}
+
+// piTasksProjectKey mirrors pi-tasks projectKey(cwd).
+func piTasksProjectKey(cwd string) string {
+	p := strings.TrimPrefix(filepath.Clean(cwd), "/")
+	p = strings.TrimPrefix(p, "\\")
+	var b strings.Builder
+	b.WriteString("--")
+	for _, r := range p {
+		if r == '/' || r == '\\' || r == ':' {
+			b.WriteByte('-')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	b.WriteString("--")
+	return b.String()
+}
+
+// piTasksScope merges the global + project tasks-config.json (default session).
+func piTasksScope(cwd, agentDir string) string {
+	scope := ""
+	if agentDir != "" {
+		if v, _ := readJSONFile(filepath.Join(agentDir, "tasks-config.json"))["taskScope"].(string); v != "" {
+			scope = v
+		}
+	}
+	if cwd != "" {
+		if v, _ := readJSONFile(filepath.Join(cwd, ".pi", "tasks-config.json"))["taskScope"].(string); v != "" {
+			scope = v
+		}
+	}
+	if scope == "" {
+		scope = "session"
+	}
+	return scope
+}
+
+// loadPiTaskFile parses one store file: ok=false when missing/unreadable,
+// ok=true with the list (possibly empty) when it parses.
+func loadPiTaskFile(path string) ([]TodoItem, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var data struct {
+		Tasks []map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil || data.Tasks == nil {
+		return nil, false
+	}
+	out := make([]TodoItem, 0, len(data.Tasks))
+	for i, m := range data.Tasks {
+		subj, _ := m["subject"].(string)
+		subj = strings.TrimSpace(subj)
+		if subj == "" {
+			if d, _ := m["description"].(string); strings.TrimSpace(d) != "" {
+				subj = strings.TrimSpace(strings.SplitN(d, "\n", 2)[0])
+			} else {
+				subj = todoContent(m)
+			}
+		}
+		if subj == "" {
+			continue
+		}
+		id := fmt.Sprint(i + 1)
+		if s, ok := m["id"].(string); ok && s != "" {
+			id = s
+		} else if f, ok := m["id"].(float64); ok {
+			id = strings.TrimSuffix(fmt.Sprintf("%v", f), ".0")
+		}
+		sub, _ := m["activeForm"].(string)
+		if sub == "" {
+			sub, _ = m["subAction"].(string)
+		}
+		out = append(out, TodoItem{ID: id, Content: subj, Status: normTodoStatus(m), SubAct: strings.TrimSpace(sub)})
+	}
+	return out, true
+}
+
+// readPiTasks loads the pi-tasks store for this session. ok=false when no
+// store file exists (memory scope / extension absent) — callers keep the
+// RPC-tracked list then. An existing file is authoritative, even when empty.
+func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
+	if v := strings.TrimSpace(os.Getenv("PI_TASKS")); v == "off" {
+		return nil, false
+	}
+	agentDir := piAgentDir()
+	switch piTasksScope(cwd, agentDir) {
+	case "memory":
+		return nil, false
+	case "project":
+		if cwd != "" {
+			return loadPiTaskFile(filepath.Join(cwd, ".pi", "tasks", "tasks.json"))
+		}
+		return nil, false
+	}
+	var cands []string
+	if v := strings.TrimSpace(os.Getenv("PI_TASKS")); v != "" {
+		switch {
+		case strings.HasPrefix(v, "/"):
+			cands = append(cands, v)
+		case strings.HasPrefix(v, "~/"):
+			if h, err := os.UserHomeDir(); err == nil {
+				cands = append(cands, filepath.Join(h, v[2:]))
+			}
+		case strings.HasPrefix(v, "."):
+			if cwd != "" {
+				cands = append(cands, filepath.Join(cwd, v))
+			}
+		default:
+			cands = append(cands, v)
+		}
+	}
+	if id := piTaskSessionID(sessionFile); id != "" {
+		if cwd != "" {
+			cands = append(cands, filepath.Join(cwd, ".pi", "tasks", "tasks-"+id+".json"))
+		}
+		if agentDir != "" && cwd != "" {
+			cands = append(cands, filepath.Join(agentDir, "tasks", "sessions", piTasksProjectKey(cwd), "tasks-"+id+".json"))
+		}
+	}
+	if cwd != "" {
+		cands = append(cands, filepath.Join(cwd, ".pi", "tasks", "tasks.json"))
+	}
+	for _, p := range cands {
+		if t, ok := loadPiTaskFile(p); ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// refreshPiTasks syncs the sidebar from the pi-tasks store file (covers
+// /tasks-menu edits that emit no RPC). No file → keeps live RPC state.
+func (m *Model) refreshPiTasks() {
+	if t, ok := readPiTasks(m.cwd, m.sessionFile); ok {
+		m.Todos = t
+	}
 }
 
 // MCP servers ---------------------------------------------------------------

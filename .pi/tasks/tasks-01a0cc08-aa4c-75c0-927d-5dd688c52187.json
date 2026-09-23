@@ -1,0 +1,141 @@
+{
+  "nextId": 15,
+  "tasks": [
+    {
+      "id": "1",
+      "subject": "Làm rõ mục tiêu và phạm vi",
+      "description": "Xác định kết quả mong muốn, yêu cầu chính, ràng buộc và tiêu chí hoàn thành của công việc.",
+      "status": "pending",
+      "activeForm": "Đang làm rõ mục tiêu và phạm vi",
+      "metadata": {
+        "agentType": "general-purpose"
+      },
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790129591236,
+      "updatedAt": 1790129591236
+    },
+    {
+      "id": "2",
+      "subject": "Khảo sát mã nguồn và yêu cầu",
+      "description": "Đọc tài liệu, mã nguồn và quy ước liên quan; xác định các tệp và luồng cần thay đổi.",
+      "status": "pending",
+      "activeForm": "Đang khảo sát mã nguồn và yêu cầu",
+      "metadata": {
+        "agentType": "general-purpose"
+      },
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790129591237,
+      "updatedAt": 1790129591237
+    },
+    {
+      "id": "3",
+      "subject": "Triển khai thay đổi",
+      "description": "Thực hiện thay đổi theo phạm vi đã thống nhất, giữ phạm vi nhỏ và tránh sửa đổi ngoài ý muốn.",
+      "status": "pending",
+      "activeForm": "Đang triển khai thay đổi",
+      "metadata": {
+        "agentType": "general-purpose"
+      },
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790129591238,
+      "updatedAt": 1790129591238
+    },
+    {
+      "id": "4",
+      "subject": "Kiểm thử và rà soát",
+      "description": "Chạy kiểm thử phù hợp, kiểm tra lỗi và xác nhận thay đổi đáp ứng tiêu chí hoàn thành.",
+      "status": "pending",
+      "activeForm": "Đang kiểm thử và rà soát",
+      "metadata": {
+        "agentType": "general-purpose"
+      },
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790129591239,
+      "updatedAt": 1790129591239
+    },
+    {
+      "id": "5",
+      "subject": "Hoàn tất và báo cáo kết quả",
+      "description": "Tổng hợp kết quả, nêu rõ các tệp đã thay đổi, kiểm thử đã chạy, giới hạn và bước tiếp theo nếu còn.",
+      "status": "pending",
+      "activeForm": "Đang hoàn tất và báo cáo",
+      "metadata": {
+        "agentType": "general-purpose"
+      },
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790129591240,
+      "updatedAt": 1790129591240
+    },
+    {
+      "id": "7",
+      "subject": "hello",
+      "description": "testasff",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790131094599,
+      "updatedAt": 1790131094599
+    },
+    {
+      "id": "10",
+      "subject": "hello sadf sf sf ",
+      "description": "sfd asf sadf asdf ",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790131179585,
+      "updatedAt": 1790131179585
+    },
+    {
+      "id": "11",
+      "subject": "test",
+      "description": "afsfas sfsaf ",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790131933677,
+      "updatedAt": 1790131933677
+    },
+    {
+      "id": "12",
+      "subject": "sfasfd",
+      "description": "asdfasdf",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790131940112,
+      "updatedAt": 1790131940112
+    },
+    {
+      "id": "13",
+      "subject": "hello hello",
+      "description": "hello hello",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790132229663,
+      "updatedAt": 1790132229663
+    },
+    {
+      "id": "14",
+      "subject": "sdf asdf sdf asdfadsfasdfhkfas dfasdjkfhakjsdhfkjahsdkfjhkasjdfhkjashdfkjahsdfkhasdkfhsdfjkashjfkhajskdfhjkasdhfjkhasdjkfhajksdhfajkshdfjkahsdfjkhasdjkfhasjdkhf",
+      "description": "adsfasdfasdfadsfasddsaf asfasf asdfasdfgasfja sdjkhfgajhsgfjhasgdfhj gashj gfash dgfhjasgfhjgasfgasjgfagsdfhagsdfhgasdfhgashjdf",
+      "status": "pending",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790132249455,
+      "updatedAt": 1790132249455
+    }
+  ]
+}

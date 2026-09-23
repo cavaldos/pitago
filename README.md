@@ -2,7 +2,7 @@
 
 <div align="center">
 <pre>
-████  ███ █████  ███   ███   ███
+████  ███ █████  ███  ███   ███
 █   █  █    █   █   █ █     █   █
 ████   █    █   █████ █  ██ █   █
 █      █    █   █   █ █   █ █   █
@@ -223,7 +223,7 @@ script/release.sh v0.0.1
 | `Alt+1…5`      | Jump straight to a recent model                                                                  |
 | `Tab`          | Complete `/command` or `@file`                                                                   |
 | `@`            | Mention a file (fuzzy finder, like pi — Tab/Enter completes, text goes to pi raw; `@*.png/.jpg/.gif/.webp` also sends vision) |
-| `↑↓ PgUp PgDn` | Scroll chat (when input is single-line) |
+| `↑↓ PgUp PgDn` | Empty input: recall sent messages (`↑` older · `↓` newer · `Esc` clear) · otherwise scroll chat (single-line input) |
 | `Alt+↑↓ PgUp PgDn Home End` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll sidebar (keyboard, always works) |
 | `Mouse wheel` | On by default: hover sidebar to scroll it, chat otherwise; `--mouse=false` disables |
 

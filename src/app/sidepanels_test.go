@@ -38,6 +38,91 @@ func TestParseTodosShapes(t *testing.T) {
 	if !ok || len(got) != 0 {
 		t.Fatalf("empty list = %v,%v", got, ok)
 	}
+	// manage_todo_list: todoList key + title + dash statuses
+	in = `{"operation":"write","todoList":[{"id":1,"title":"Design API","description":"d","status":"not-started"},{"id":2,"title":"Auth","description":"d","status":"in-progress"},{"id":3,"title":"Tests","description":"d","status":"completed"}]}`
+	got, ok = parseTodos(json.RawMessage(in))
+	if !ok || len(got) != 3 || got[0].Content != "Design API" {
+		t.Fatalf("parse todoList+title = %v,%v", got, ok)
+	}
+	if got[0].Status != TodoPending || got[1].Status != TodoInProgress || got[2].Status != TodoCompleted {
+		t.Fatalf("dash statuses = %v %v %v", got[0].Status, got[1].Status, got[2].Status)
+	}
+	// pi-tasks: subject + tasks key, TaskList text fallback
+	got, ok = parseTodos(json.RawMessage(`{"tasks":[{"id":"1","subject":"Do thing","status":"pending"}]}`))
+	if !ok || len(got) != 1 || got[0].Content != "Do thing" {
+		t.Fatalf("parse tasks+subject = %v,%v", got, ok)
+	}
+	got, ok = parseTodos(json.RawMessage("#1 [pending] Fix bug\n#2 [in_progress] Write tests"))
+	if !ok || len(got) != 2 || got[1].Status != TodoInProgress {
+		t.Fatalf("parse TaskList text = %v,%v", got, ok)
+	}
+	// confirmations are not lists ("Task #1 created...", "Updated task #1 ...")
+	for _, s := range []string{"Task #1 created successfully: Fix bug", "Updated task #1 status", "No tasks found"} {
+		if _, ok = parseTodos(json.RawMessage(s)); ok {
+			t.Fatalf("confirmation %q must not parse", s)
+		}
+	}
+	// content-block envelopes are not todo lists either
+	if _, ok = parseTodos(json.RawMessage(`[{"type":"text","text":"hello"}]`)); ok {
+		t.Fatal("content blocks must not parse as todos")
+	}
+}
+
+func TestPiTaskDeltas(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.applyPiTaskResult("TaskCreate", `{"subject":"Fix bug","description":"d"}`, "Task #1 created successfully: Fix bug")
+	m.applyPiTaskResult("TaskCreate", `{"subject":"Write tests","description":"d"}`, "Task #2 created successfully: Write tests")
+	if len(m.Todos) != 2 || m.Todos[0].Content != "Fix bug" {
+		t.Fatalf("after creates = %+v", m.Todos)
+	}
+	m.applyPiTaskResult("TaskUpdate", `{"taskId":"1","status":"in_progress"}`, "Updated task #1 status")
+	if m.Todos[0].Status != TodoInProgress {
+		t.Fatalf("after update = %+v", m.Todos[0])
+	}
+	m.applyPiTaskResult("TaskUpdate", `{"taskId":"2","status":"deleted"}`, "Updated task #2 status")
+	if len(m.Todos) != 1 || m.Todos[0].ID != "1" {
+		t.Fatalf("after delete = %+v", m.Todos)
+	}
+}
+
+func TestReadPiTasksFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".pi", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"nextId":3,"tasks":[{"id":"1","subject":"Fix bug","status":"in_progress","activeForm":"Fixing bug"},{"id":"2","subject":"Docs","status":"completed"}]}`
+	sess := "2026-09-23T01-38-19-902Z_abc123"
+	if err := os.WriteFile(filepath.Join(dir, ".pi", "tasks", "tasks-abc123.json"), []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := readPiTasks(dir, "/tmp/x_"+sess+".jsonl")
+	if !ok || len(got) != 2 {
+		t.Fatalf("read session file = %v,%v", got, ok)
+	}
+	if got[0].Content != "Fix bug" || got[0].Status != TodoInProgress || got[0].SubAct != "Fixing bug" {
+		t.Fatalf("item0 = %+v", got[0])
+	}
+	if got[1].Status != TodoCompleted {
+		t.Fatalf("item1 = %+v", got[1])
+	}
+	// missing store → ok=false (caller keeps RPC state)
+	if _, ok := readPiTasks(t.TempDir(), ""); ok {
+		t.Fatal("missing store must report ok=false")
+	}
+	// project-scope fallback
+	dir2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir2, ".pi", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, ".pi", "tasks", "tasks.json"), []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := readPiTasks(dir2, ""); !ok || len(got) != 2 {
+		t.Fatalf("read project file = %v,%v", got, ok)
+	}
+	if id := piTaskSessionID("/tmp/x_" + sess + ".jsonl"); id != "abc123" {
+		t.Fatalf("session id = %q", id)
+	}
 }
 
 func TestReadMcpServers(t *testing.T) {
