@@ -11,9 +11,9 @@ func TestRenderFencePiBorder(t *testing.T) {
 	if !strings.Contains(out, "hello") {
 		t.Fatalf("render lost code content: %q", out)
 	}
-	// pi keeps the fence border (gray ```go), unlike Glamour which strips it.
-	if !strings.Contains(out, "```go") {
-		t.Fatalf("render lost pi fence border: %q", out)
+	// Glamour strips the ```go fence and highlights in-place (dark style).
+	if !strings.Contains(out, "\x1b[") {
+		t.Fatalf("render lost highlight: %q", out)
 	}
 }
 

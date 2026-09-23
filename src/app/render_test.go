@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"pitago/src/pimark"
 	"pitago/src/pirpc"
 )
 
@@ -67,16 +66,13 @@ func TestRenderToolResult(t *testing.T) {
 	if strings.Contains(plain, "\x1b[38;2;") {
 		t.Fatalf("plain got truecolor highlight: %q", plain)
 	}
-	// code gets pi's highlight (without the bridge it falls back to dim,
-	// still containing the text)
+	// code gets Chroma highlight (in-process, always available)
 	code := renderToolResult("bash", "done", "```go⏎func main() {}⏎```")
 	if !strings.Contains(code, "func") {
 		t.Fatalf("code lost text: %q", code)
 	}
-	if pimark.Available() {
-		if !strings.Contains(code, "\x1b[") {
-			t.Fatalf("code not highlighted: %q", code)
-		}
+	if !strings.Contains(code, "\x1b[") {
+		t.Fatalf("code not highlighted: %q", code)
 	}
 	// bash shows the last 5 lines, no ⏎ collapsing
 	multi := renderToolResult("bash", "done", "l1\nl2\nl3\nl4\nl5\nl6\nl7")

@@ -86,6 +86,40 @@ func TestGutterBox(t *testing.T) {
 	}
 }
 
+// Regression (screenshot: table opening an assistant reply): gutter()
+// prefixed "● " to the first row only, pushing it 2 cells past the body
+// rows. Table-led replies keep the 2-cell gutter so every column aligns.
+func TestAssistantTableRowsAligned(t *testing.T) {
+	m := Model{blocks: []Block{{Kind: "assistant", Text: "| Cột 1 | Cột 2 |\n|---|---|\n| Ô 1 | Ô 2 |\n| Ô 3 | Ô 4 |"}}}
+	m.vp = viewport.New(100, 20)
+	rows := strings.Split(stripANSI(m.renderBlocks()), "\n")
+	// Compare cell widths (not bytes): Vietnamese glyphs are multibyte.
+	before := func(r string) int {
+		if i := strings.Index(r, "│"); i >= 0 {
+			return lipgloss.Width(r[:i])
+		}
+		if i := strings.Index(r, "┼"); i >= 0 {
+			return lipgloss.Width(r[:i])
+		}
+		return -1
+	}
+	pos, found := -1, 0
+	for _, r := range rows {
+		i := before(r)
+		if i < 0 {
+			continue
+		}
+		found++
+		if pos < 0 {
+			pos = i
+		} else if i != pos {
+			t.Fatalf("table col misaligned: %q vs col %d\n%s", r, pos, strings.Join(rows, "\n"))
+		}
+	}
+	if found < 3 {
+		t.Fatalf("table rendered %d bordered rows, want >=3:\n%s", found, strings.Join(rows, "\n"))
+	}
+}
 // Regression (screenshot: "hello" vs "continue"): a user box rendered
 // through the flush-left gutter came out with the top border sticking 2
 // cells past the sides. Every rendered row must share one visual width.

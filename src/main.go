@@ -77,7 +77,9 @@ func main() {
 	}
 	defer pi.Close()
 	defer pimark.Close()
-	pimark.Prewarm() // warm pi's render bridge so first message isn't slow
+	if os.Getenv("PITAGO_RENDER") == "pi" {
+		pimark.Prewarm() // warm pi's render bridge so first message isn't slow
+	}
 
 	m := app.New(pi, cwd)
 	m.AppVersion = version

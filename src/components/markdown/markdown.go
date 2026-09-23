@@ -1,9 +1,6 @@
-// Package markdown renders chat output with pi's OWN renderer: assistant
-// messages go through pi's Markdown (marked + highlight.js, dark theme),
-// code through pi's highlightCode. No Glamour/Chroma — colors, fence
-// borders and the no-auto-detect rule match pi exactly. Pure (no TUI state)
-// except the shared node bridge; every entry point falls back to its input
-// so rendering never fails (and stays hermetic without node/pi).
+// Package markdown renders chat output in-process with Go (Glamour v2 +
+// Chroma, dark theme). No node/pi needed, so tables render on every machine.
+// PITAGO_RENDER=pi opts back into pi's own renderer for comparison.
 package markdown
 
 import (
@@ -66,8 +63,7 @@ func isMarkdown(s string) bool {
 }
 
 // Render turns markdown into ANSI for the chat column, wrapped to width.
-// PITAGO_RENDER=go forces the Go renderer (trial). Default tries pi first
-// then falls back to Go so tables still render without node/pi.
+// Default is Go (Glamour); PITAGO_RENDER=pi opts into pi's bridge.
 func Render(src string, width int) string {
 	if strings.TrimSpace(src) == "" || !isMarkdown(src) {
 		return src
@@ -75,26 +71,34 @@ func Render(src string, width int) string {
 	if width < 20 {
 		width = 80
 	}
-	if os.Getenv("PITAGO_RENDER") == "go" {
-		return strings.Trim(gomark.Render(src, width), "\n")
+	if os.Getenv("PITAGO_RENDER") == "pi" {
+		out, err := pimark.Render(src, width, pimark.Assistant)
+		if err != nil || strings.TrimSpace(out) == "" {
+			return strings.Trim(rtrim(gomark.Render(src, width)), "\n")
+		}
+		return strings.Trim(rtrim(out), "\n")
 	}
-	out, err := pimark.Render(src, width, pimark.Assistant)
-	if err != nil || strings.TrimSpace(out) == "" {
-		return strings.Trim(gomark.Render(src, width), "\n")
-	}
-	return strings.Trim(rtrim(out), "\n")
+	return strings.Trim(rtrim(gomark.Render(src, width)), "\n")
 }
 
-// Highlight colors code with pi's highlightCode (highlight.js + pi theme).
-// Unknown/empty lang falls back to pi's mdCodeBlock color (no auto-detect,
-// unlike Chroma); any error falls back to code unchanged.
+// Highlight colors code with Chroma (no auto-detect, like pi's rule).
+// PITAGO_RENDER=pi opts into pi's highlightCode.
 func Highlight(lang, code string) string {
 	if code == "" {
 		return code
 	}
-	out, err := pimark.Highlight(code, lang)
-	if err != nil || out == "" {
-		return code
+	if os.Getenv("PITAGO_RENDER") == "pi" {
+		out, err := pimark.Highlight(code, lang)
+		if err != nil || out == "" {
+			if goOut := gomark.Highlight(code, lang); goOut != "" {
+				return goOut
+			}
+			return code
+		}
+		return rtrim(out)
 	}
-	return rtrim(out)
+	if out := gomark.Highlight(code, lang); out != "" {
+		return out
+	}
+	return code
 }

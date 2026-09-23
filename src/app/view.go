@@ -52,8 +52,16 @@ func gutter(icon, body string) string {
 	return strings.Join(out, "\n")
 }
 
+// startsPreformatted reports whether source opens with a markdown table or
+// fenced code block. Those render as column-aligned rows, so the gutter
+// icon must not shift only the first row (see gutterBox).
+func startsPreformatted(s string) bool {
+	t := strings.TrimLeft(s, " \t\n")
+	return strings.HasPrefix(t, "|") || strings.HasPrefix(t, "```")
+}
+
 // gutterBox is gutter for bordered/full-bleed blocks (user box, tool
-// Box): continuation lines get a blank 2-cell gutter so every row stays
+// Box, table/code-led assistant replies): continuation lines get a blank 2-cell gutter so every row stays
 // exactly as wide as the first ("● "+box) and the left/right borders
 // stay vertically aligned. Without it the top border sticks out 2 cells
 // past the sides (flush-left continuation = w-2 vs first line w).
@@ -174,6 +182,9 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 	case "assistant":
 		icon = statusBarStyle.Render("●")
 		body = renderMarkdown(bl.Text, cw) + "\n\n"
+		// Table/fence-led replies render as aligned rows: keep the 2-cell
+		// gutter so "● " doesn't push the first row 2 cells past the rest.
+		boxed = startsPreformatted(bl.Text)
 	case "thinking":
 		t := bl.Text
 		if len(t) > 300 {
@@ -256,9 +267,8 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 	return gutter(icon, body), false
 }
 
-// renderMarkdown renders assistant output with pi's own Markdown (headings,
-// lists, bold, fenced code with pi's highlight.js theme) wrapped to the chat
-// width. Plain text comes back unchanged from markdown.Render and keeps the
+// renderMarkdown renders assistant output with the Go renderer (Glamour
+// tables/lists/bold, Chroma fenced code) wrapped to the chat width. Plain text comes back unchanged from markdown.Render and keeps the
 // old unstyled render.
 func renderMarkdown(src string, width int) string {
 	if out := markdown.Render(src, width); out != src {

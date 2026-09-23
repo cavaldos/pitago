@@ -2,8 +2,8 @@
 // library resolves and compiles together. Import paths matter here: the Charm
 // v2 modules moved from github.com/charmbracelet/* to charm.land/*.
 //
-// Chat markdown/code renders with pi's own renderer (see src/pimark), so no
-// Go markdown/highlight library is pinned here.
+// Chat markdown renders with pi first then Glamour v2 fallback
+// (see src/pimark, src/gomark).
 //
 //	tea      // event loop + state management (Bubble Tea v2)
 //	bubbles  // textarea, viewport, spinner, list (Bubbles v2)
