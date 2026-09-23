@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -190,5 +191,45 @@ func TestEscCloseDialogRefreshesTasks(t *testing.T) {
 	}
 	if len(m2.Todos) != 1 || m2.Todos[0].ID != "7" || m2.Todos[0].Content != "fresh" {
 		t.Fatalf("close should re-read the store, got %+v", m2.Todos)
+	}
+}
+
+// Pi keeps working behind an open dialog: non-dialog events stay live
+// (status/turn/todos), only a second dialog request waits instead of
+// stacking.
+func TestPiEventsLiveBehindDialog(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.thinking = true
+	m.Status = "pi is running…"
+	m.pet.status = petWorking
+	m.pet.inTurn = true
+	m.extStat = "Working"
+	m.Dialogs = []*Dialog{{Kind: "palette"}}
+	uiReq := func(raw string) tea.Msg {
+		return piEventMsg{Event: pirpc.Event{Type: "extension_ui_request", Raw: json.RawMessage(raw)}}
+	}
+	// setStatus passes through; the dialog stays put.
+	um, _ := m.Update(uiReq(`{"id":"1","method":"setStatus","statusText":"Idle"}`))
+	m2 := um.(Model)
+	if m2.extStat != "Idle" {
+		t.Fatalf("setStatus behind dialog should land, got %q", m2.extStat)
+	}
+	if len(m2.Dialogs) != 1 {
+		t.Fatal("live events must not disturb the dialog")
+	}
+	// agent_settled passes through: no more stuck Working.
+	um, _ = m2.Update(piEventMsg{Event: pirpc.Event{Type: "agent_settled", Raw: json.RawMessage(`{}`)}})
+	m3 := um.(Model)
+	if m3.thinking || m3.Status != "ready" {
+		t.Fatalf("settle behind dialog should land, thinking=%v status=%q", m3.thinking, m3.Status)
+	}
+	if m3.pet.status != petIdle {
+		t.Fatalf("pet should decay to idle, got %v", m3.pet.status)
+	}
+	// a second dialog request still waits instead of stacking.
+	um, _ = m3.Update(uiReq(`{"id":"2","method":"select","title":"T","options":["a"]}`))
+	m4 := um.(Model)
+	if len(m4.Dialogs) != 1 || len(m4.Dialogs[0].Options) != 0 {
+		t.Fatalf("second dialog must not stack: %+v", m4.Dialogs)
 	}
 }

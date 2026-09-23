@@ -9,7 +9,11 @@
 // builtin re-implementations in src/builtin.
 package extension
 
-import "pitago/src/pirpc"
+import (
+	"encoding/json"
+
+	"pitago/src/pirpc"
+)
 
 // Sources an extension-provided command can come from.
 const (
@@ -86,6 +90,24 @@ func Response(id, method string, choice int, opts []string) pirpc.Command {
 		cmd.Confirmed = boolPtr(choice == 0)
 	}
 	return cmd
+}
+
+// IsDialogRequest reports extension_ui_request methods that open a dialog
+// (select/confirm/input). Anything else (notify/setStatus/setWidget/…)
+// never disrupts input routing. Unreadable payloads stay on the safe side
+// (true = hold behind the open dialog, the historical behavior).
+func IsDialogRequest(raw json.RawMessage) bool {
+	var req struct {
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return true
+	}
+	switch req.Method {
+	case "select", "confirm", "input":
+		return true
+	}
+	return false
 }
 
 // InputResponse builds the extension_ui_response for a free-text input

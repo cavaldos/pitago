@@ -112,12 +112,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return nm, cmd
 		}
-		// Async results stay swallowed while a dialog is open — except
-		// paste (Ctrl+V into the /login key field must land), the
-		// quit/esc disarms (an arm must always expire, even behind a dialog),
-		// the pet clock (elapsed/face animation is UI-only and must not
+		// A dialog captures keys and mouse, but pi keeps working behind it:
+		// its events stay live (status/notify/pet/turn/todos) — except a
+		// second dialog request, which waits for the open one instead of
+		// stacking. Other async results stay swallowed — except paste
+		// (Ctrl+V into the /login key field must land), the quit/esc
+		// disarms (an arm must always expire, even behind a dialog), the
+		// pet clock (elapsed/face animation is UI-only and must not
 		// freeze), and the /login stay-open pipeline (save/rename → respawn →
 		// reconnect must complete without closing the picker).
+		if em, ok := msg.(piEventMsg); ok {
+			if em.Event.Type != "extension_ui_request" ||
+				!extension.IsDialogRequest(em.Event.Raw) {
+				return m.handleEvent(em.Event)
+			}
+			return m, nil
+		}
 		switch msg.(type) {
 		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg, escDisarmMsg,
 			petTickMsg, petFlashMsg,

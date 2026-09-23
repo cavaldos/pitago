@@ -471,10 +471,12 @@ func (m Model) buildSidebarContent() string {
 		if sess == "" {
 			sess = "…"
 		}
-		b.WriteString(statusBarStyle.Render(Short(sess, inner)) + "\n")
+		b.WriteString(statusBarStyle.Render(Short(pirpc.Shorten(sess), inner)) + "\n")
 		file := m.sessionFile
 		if file == "" {
 			file = "In-memory"
+		} else {
+			file = pirpc.Shorten(file)
 		}
 		b.WriteString(statusBarStyle.Render(Short(file, inner)) + "\n")
 		b.WriteString(sep() + "\n")
@@ -631,7 +633,7 @@ func (m Model) buildSidebarContent() string {
 				b.WriteString(toolStyle.Render(fmt.Sprintf("?%d untracked", m.ws.untracked)) + "\n")
 			}
 		}
-		b.WriteString(toolStyle.Render(Short(m.cwd, inner)) + "\n")
+		b.WriteString(toolStyle.Render(Short(pirpc.Shorten(m.cwd), inner)) + "\n")
 	}
 	return b.String()
 }
@@ -702,9 +704,9 @@ func (m Model) statsLine() string {
 }
 
 func (m Model) renderHeader() string {
-	left := Short(m.cwd, 48)
+	left := Short(pirpc.Shorten(m.cwd), 48)
 	if m.session != "" {
-		left = Short(m.session+" · "+m.cwd, 48)
+		left = Short(m.session+" · "+pirpc.Shorten(m.cwd), 48)
 	}
 	// Status lives on the pet row (sidebar) — header keeps cwd/session only.
 	return headerStyle.Render(left)

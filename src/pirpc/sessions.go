@@ -200,12 +200,14 @@ func DeleteSession(path string) error {
 }
 
 // Shorten renders a path like pi's All scope (~/ for home).
+// Windows-safe: matches both / and \ separators; never errors,
+// returns p unchanged when home is unknown or doesn't match.
 func Shorten(p string) string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		if p == home {
 			return "~"
 		}
-		if strings.HasPrefix(p, home+string(filepath.Separator)) {
+		if strings.HasPrefix(p, home+"/") || strings.HasPrefix(p, home+"\\") {
 			return "~" + p[len(home):]
 		}
 	}
