@@ -42,9 +42,9 @@ func tallModel(t *testing.T) Model {
 	m.ws = wsData{ok: true, branch: "main", files: []wsFile{
 		{"a.go", 1, 0}, {"b.go", 2, 1}, {"c.go", 3, 0}, {"d.go", 0, 4}, {"e.go", 5, 5},
 	}, more: 30, untracked: 2}
-	// MCP + Plugins hide by default: opt the fixture in so the tall
+	// MCP + Plugins + Commands hide by default: opt the fixture in so the tall
 	// sidebar exercises every section.
-	m.Side = map[string]bool{SidePlugins: true, SideMCP: true}
+	m.Side = map[string]bool{SidePlugins: true, SideMCP: true, SideCommands: true}
 	m.Plugins = []Plugin{
 		{Spec: "npm:pi-lens", Name: "pi-lens"},
 		{Spec: "npm:pi-foo", Name: "pi-foo"},

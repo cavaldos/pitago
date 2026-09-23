@@ -57,7 +57,7 @@ func SavePrefs(path string, p Prefs) error {
 }
 
 // DefaultSideVisible is the sidebar visibility for sections the user never
-// toggled: MCP + Plugins start hidden, everything else shows.
+// toggled: MCP + Plugins + Commands start hidden, everything else shows.
 func DefaultSideVisible(key string) bool {
 	switch key {
 	case SidePlugins, SideMCP, SideCommands:

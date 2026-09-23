@@ -22,3 +22,4 @@ Thumbs.db
 *.out
 coverage.html
 coverage.txt
+.pi/

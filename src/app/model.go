@@ -127,7 +127,7 @@ type Model struct {
 	Market       []MarketEntry   // npm registry pi-package list (marketplace tab)
 	MarketErr    string          // last marketplace fetch error ("" = ok/unloaded)
 	showPlugins  bool            // PLUGINS expanded (click header or /plugins)
-	Side         map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins hide)
+	Side         map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
 	Dialogs      []*Dialog
 	connErr      string
 	AutoRetry    bool          // no RPC getter; tracked locally (default on)

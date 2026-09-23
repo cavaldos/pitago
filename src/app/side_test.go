@@ -8,20 +8,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Fresh models hide MCP + Plugins (Sidebar tab default) but keep the core
-// sections: hiding must drop the whole block, not just its rows.
+// Fresh models hide MCP + Plugins + Commands (Sidebar tab default) but keep
+// the core sections: hiding must drop the whole block, not just its rows.
 func TestSideDefaultsHidden(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.winW, m.winH, m.ready = 120, 30, true // mainW=81, sidebar x>=82
 	m.MCP = []McpServer{{Name: "alpha", Connected: true}}
 	m.Plugins = []Plugin{{Spec: "npm:pi-lens", Name: "pi-lens"}}
 	out := m.buildSidebarContent()
-	for _, want := range []string{"MCP Servers", "PLUGINS", "alpha", "pi-lens"} {
+	for _, want := range []string{"MCP Servers", "PLUGINS", "COMMANDS", "alpha", "pi-lens"} {
 		if strings.Contains(out, want) {
 			t.Errorf("default sidebar must hide %q", want)
 		}
 	}
-	for _, want := range []string{"SESSION", "RECENT MODELS", "COMMANDS", "Todos"} {
+	for _, want := range []string{"SESSION", "RECENT MODELS", "Todos"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("default sidebar must show %q", want)
 		}

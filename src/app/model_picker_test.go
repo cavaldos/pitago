@@ -104,6 +104,7 @@ func TestSortProvsConn(t *testing.T) {
 
 // Green dot: models listed, saved key, or preset env all count as connected.
 func TestProvConnSources(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir()) // isolate from ~/.pi/agent/auth.json
 	t.Setenv("GROQ_API_KEY", "gsk-test")
 	conn := provConn(t.TempDir(), []string{"opencode"})
 	if !conn["opencode"] {

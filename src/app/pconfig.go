@@ -286,7 +286,7 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = []string{""}
 		}
 	case PsecSide:
-		msg = "Enter shows/hides a sidebar section · MCP + Plugins start hidden · Esc closes"
+		msg = "Enter shows/hides a sidebar section · MCP + Plugins + Commands start hidden · Esc closes"
 		for _, k := range sideOrder {
 			state := "shown"
 			if !m.SideVisible(k) {

@@ -28,13 +28,13 @@ func TestPrefsRoundTrip(t *testing.T) {
 }
 
 func TestSideDefaults(t *testing.T) {
-	var p Prefs // nothing ever toggled: MCP + Plugins hide, the rest show
-	for _, k := range []string{"mcp", "plugins"} {
+	var p Prefs // nothing ever toggled: MCP + Plugins + Commands hide, the rest show
+	for _, k := range []string{"mcp", "plugins", "commands"} {
 		if p.SideVisible(k) {
 			t.Errorf("%s should hide by default", k)
 		}
 	}
-	for _, k := range []string{"pet", "session", "model", "stats", "cost", "recent", "commands", "todos", "workspace"} {
+	for _, k := range []string{"pet", "session", "model", "stats", "cost", "recent", "todos", "workspace"} {
 		if !p.SideVisible(k) {
 			t.Errorf("%s should show by default", k)
 		}
