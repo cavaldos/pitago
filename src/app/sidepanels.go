@@ -613,6 +613,169 @@ func piTasksScope(cwd, agentDir string) string {
 	return scope
 }
 
+// Native task settings (the /pitago-setting hub's Tasks tab). /tasks →
+// Settings can't cross RPC — pi stubs ui.custom as a no-op, so picking it
+// just bounces back to the menu — so pitago edits the same
+// tasks-config.json files the extension reads instead.
+
+// taskSettingDef is one Tasks-hub row: label + display values to cycle.
+type taskSettingDef struct {
+	key   string
+	label string
+	vals  []string
+	def   string
+}
+
+// taskSettings mirrors the scalar pi-tasks settings (glyphs stay
+// config-file-only, as the extension documents).
+var taskSettings = []taskSettingDef{
+	{key: "taskScope", label: "Task storage", vals: []string{"memory", "session", "session-global", "project"}, def: "session"},
+	{key: "autoCascade", label: "Auto-cascade agent tasks", vals: []string{"off", "on"}, def: "off"},
+	{key: "collapseCompleted", label: "Collapse completed tasks", vals: []string{"off", "on"}, def: "off"},
+	{key: "showAll", label: "Show all tasks in widget", vals: []string{"off", "on"}, def: "off"},
+	{key: "maxVisible", label: "Max visible tasks in widget", vals: []string{"5", "10", "15", "20", "30", "50", "100"}, def: "10"},
+	{key: "sortOrder", label: "Widget sort order", vals: []string{"id", "status", "active", "recent", "oldest"}, def: "id"},
+	{key: "hiddenAt", label: "Hidden tasks position", vals: []string{"bottom", "top"}, def: "bottom"},
+	{key: "autoClearCompleted", label: "Auto-clear completed tasks", vals: []string{"never", "on_list_complete", "on_task_complete"}, def: "on_list_complete"},
+}
+
+// tasksBoolKey reports the on/off rows stored as JSON bools.
+func tasksBoolKey(key string) bool {
+	switch key {
+	case "autoCascade", "collapseCompleted", "showAll":
+		return true
+	}
+	return false
+}
+
+// tasksDisplay stringifies one raw config value for its row.
+func tasksDisplay(v any, def string) string {
+	switch t := v.(type) {
+	case nil:
+		return def
+	case string:
+		if strings.TrimSpace(t) == "" {
+			return def
+		}
+		return t
+	case bool:
+		if t {
+			return "on"
+		}
+		return "off"
+	case float64:
+		return strings.TrimSuffix(fmt.Sprintf("%v", t), ".0")
+	case []any:
+		return "custom" // array sort spec shows read-only; cycling replaces it
+	}
+	return def
+}
+
+// loadTasksSettings merges global + project tasks-config.json over defaults.
+func loadTasksSettings(cwd, agentDir string) map[string]string {
+	var global, project map[string]any
+	if agentDir != "" {
+		global = readJSONFile(filepath.Join(agentDir, "tasks-config.json"))
+	}
+	if cwd != "" {
+		project = readJSONFile(filepath.Join(cwd, ".pi", "tasks-config.json"))
+	}
+	out := map[string]string{}
+	for _, d := range taskSettings {
+		v, ok := project[d.key]
+		if !ok {
+			v, ok = global[d.key]
+		}
+		if !ok {
+			out[d.key] = d.def
+			continue
+		}
+		out[d.key] = tasksDisplay(v, d.def)
+	}
+	return out
+}
+
+// tasksTyped converts a display value back to its JSON type.
+func tasksTyped(key, disp string) any {
+	if tasksBoolKey(key) {
+		return disp == "on"
+	}
+	if key == "maxVisible" {
+		n := 10
+		fmt.Sscanf(disp, "%d", &n)
+		return n
+	}
+	return disp
+}
+
+// tasksEqual compares a typed value against a raw JSON value.
+func tasksEqual(key string, typed any, raw any) bool {
+	if raw == nil {
+		return false
+	}
+	if key == "maxVisible" {
+		n, _ := typed.(int)
+		if f, ok := raw.(float64); ok {
+			return int(f) == n
+		}
+		return false
+	}
+	if tasksBoolKey(key) {
+		b, _ := typed.(bool)
+		rb, ok := raw.(bool)
+		return ok && rb == b
+	}
+	rs, _ := raw.(string)
+	ts, _ := typed.(string)
+	return rs == ts
+}
+
+// CycleTasksSetting advances one Tasks-hub row and persists it as a project
+// override (keys matching the global file stay inherited, like the
+// extension's save). No cwd → no-op (nowhere to write a project file).
+func (m *Model) CycleTasksSetting(key string) {
+	var def *taskSettingDef
+	for i := range taskSettings {
+		if taskSettings[i].key == key {
+			def = &taskSettings[i]
+			break
+		}
+	}
+	if def == nil || m.cwd == "" {
+		return
+	}
+	agentDir := piAgentDir()
+	vals := loadTasksSettings(m.cwd, agentDir)
+	next := def.vals[0] // unknown cur (e.g. custom sort) restarts at first
+	for i, v := range def.vals {
+		if v == vals[key] {
+			next = def.vals[(i+1)%len(def.vals)]
+			break
+		}
+	}
+	var global map[string]any
+	if agentDir != "" {
+		global = readJSONFile(filepath.Join(agentDir, "tasks-config.json"))
+	}
+	path := filepath.Join(m.cwd, ".pi", "tasks-config.json")
+	existing := readJSONFile(path)
+	if existing == nil {
+		existing = map[string]any{}
+	}
+	typed := tasksTyped(key, next)
+	if rv, ok := global[key]; ok && tasksEqual(key, typed, rv) {
+		delete(existing, key)
+	} else {
+		existing[key] = typed
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	raw, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
 // loadPiTaskFile parses one store file: ok=false when missing/unreadable,
 // ok=true with the list (possibly empty) when it parses.
 func loadPiTaskFile(path string) ([]TodoItem, bool) {

@@ -30,6 +30,7 @@ const (
 	PsecMarket = "market"
 	PsecMCP    = "mcp"
 	PsecTool   = "tool"
+	PsecTasks  = "tasks"
 	PsecSide   = "side"
 	PsecTheme  = "theme"
 	PsecLogin  = "login"
@@ -87,12 +88,35 @@ func psecCount(m *Model, id string) int {
 // OpenPconfig pushes the two-pane settings hub (focus starts on sections).
 func (m *Model) OpenPconfig() {
 	d := &Dialog{Kind: "pconfig", Title: "Pitago settings",
-		Provs:     []string{"Agent", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Sidebar", "Theme", "Login"},
-		PsecIDs:   []string{PsecAgent, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecSide, PsecTheme, PsecLogin},
+		Provs:     []string{"Agent", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Tasks", "Sidebar", "Theme", "Login"},
+		PsecIDs:   []string{PsecAgent, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecTasks, PsecSide, PsecTheme, PsecLogin},
 		ProvFocus: true}
 	m.LoadPsecRows(d)
 	m.Dialogs = append(m.Dialogs, d)
 	m.Refresh()
+}
+
+// tasksSettingsJump reports the /tasks-menu Settings row.
+func tasksSettingsJump(d *Dialog, choice int) bool {
+	return d != nil && d.Kind == "ui" && d.Title == "Tasks" &&
+		choice >= 0 && choice < len(d.Options) && d.Options[choice] == "Settings"
+}
+
+// openTasksSettings opens the hub focused on the native Tasks tab
+// (right pane focused, ready to cycle values).
+func (m *Model) openTasksSettings() {
+	m.OpenPconfig()
+	if n := len(m.Dialogs); n > 0 {
+		if hd := m.Dialogs[n-1]; hd.Kind == "pconfig" {
+			for i, id := range hd.PsecIDs {
+				if id == PsecTasks {
+					hd.ProvCursor = i
+				}
+			}
+			hd.ProvFocus = false
+			m.LoadPsecRows(hd)
+		}
+	}
 }
 
 // reloadHubRows rebuilds the open settings hub's right pane in place
@@ -284,6 +308,17 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			opts = []string{"— no tool calls yet —"}
 			descs = []string{"tools appear here as the agent works"}
 			payload = []string{""}
+		}
+	case PsecTasks:
+		// Native replacement for /tasks → Settings: the extension's custom
+		// panel can't cross RPC (pi stubs ui.custom), so the values cycle
+		// here and persist to the project .pi/tasks-config.json.
+		msg = "Enter cycles a value · project .pi/tasks-config.json · Esc closes"
+		vals := loadTasksSettings(m.cwd, piAgentDir())
+		for _, td := range taskSettings {
+			opts = append(opts, td.label)
+			descs = append(descs, vals[td.key]+" · Enter: next")
+			payload = append(payload, "tasks:"+td.key)
 		}
 	case PsecSide:
 		msg = "Enter shows/hides a sidebar section · MCP + Plugins + Commands start hidden · Esc closes"
@@ -681,6 +716,7 @@ func toolStats(m *Model) []toolStat {
 func (m *Model) FillCommand(name string) {
 	m.Dialogs = nil
 	m.ta.SetValue("/" + name + " ")
+	m.refreshPiTasks()
 	m.refreshCmds()
 	m.refreshAt()
 	m.Refresh()
@@ -755,8 +791,9 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		return m, nil
 	case tea.KeyEsc:
 		m.Dialogs = m.Dialogs[1:]
+		m.refreshPiTasks()
 		m.Refresh()
-		return m, nil
+		return m, m.ReconcileTurnCmd()
 	case tea.KeyEnter:
 		if d.ProvFocus {
 			d.ProvFocus = false

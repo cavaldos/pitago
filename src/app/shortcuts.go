@@ -18,6 +18,7 @@ type ShortcutItem struct {
 var shortcutsDb = []ShortcutItem{
 	// Global / System
 	{"Ctrl+C", "Quit (double-press within 3s)", "Global"},
+	{"Esc", "Cancel running turn (double-press within 3s)", "Global"},
 	{"Ctrl+Shift+/", "Open shortcuts page", "Global"},
 	{"/?", "Open command palette / shortcuts", "Global"},
 

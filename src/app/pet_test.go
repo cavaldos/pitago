@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 	"time"
+
+	"pitago/src/pirpc"
 )
 
 func TestPetSetNoop(t *testing.T) {
@@ -144,5 +146,58 @@ func TestPetLabel(t *testing.T) {
 				t.Fatalf("empty face %v tick %d", st, i)
 			}
 		}
+	}
+}
+
+// A settle swallowed behind an open dialog must not stick the pet: the
+// clock keeps ticking behind dialogs, and closing one re-checks get_state.
+func TestPetTickPassesDialog(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.pet.status = petWorking
+	m.pet.since = time.Now()
+	m.Dialogs = []*Dialog{{Kind: "palette"}}
+	um, _ := m.Update(petTickMsg{})
+	m2 := um.(Model)
+	if m2.pet.tick != 1 {
+		t.Fatalf("tick behind dialog should advance, got %d", m2.pet.tick)
+	}
+	if len(m2.Dialogs) != 1 {
+		t.Fatal("tick must not disturb the dialog")
+	}
+}
+
+func TestStateRefreshSettlesMissedTurn(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.thinking = true
+	m.Status = "pi is running…"
+	m.pet.status = petWorking
+	m.pet.inTurn = true
+	um, _ := m.Update(stateRefreshMsg{state: pirpc.State{SessionFile: "/tmp/x.jsonl"}})
+	m2 := um.(Model)
+	if m2.thinking || m2.Status != "ready" {
+		t.Fatalf("idle pi should settle a stuck turn, thinking=%v status=%q", m2.thinking, m2.Status)
+	}
+	if m2.pet.status != petIdle || m2.pet.inTurn {
+		t.Fatalf("pet should decay to idle: %+v", m2.pet)
+	}
+	// A running turn must not be disturbed.
+	m3 := New(nil, t.TempDir())
+	m3.thinking = true
+	m3.pet.status = petWorking
+	um, _ = m3.Update(stateRefreshMsg{state: pirpc.State{SessionFile: "/tmp/x.jsonl", IsStreaming: true}})
+	m4 := um.(Model)
+	if !m4.thinking || m4.pet.status != petWorking {
+		t.Fatal("streaming turn must stay working")
+	}
+}
+
+func TestReconcileTurnCmdQuietWhenIdle(t *testing.T) {
+	var m Model
+	if m.ReconcileTurnCmd() != nil {
+		t.Fatal("idle must not fetch")
+	}
+	m.thinking = true
+	if m.ReconcileTurnCmd() != nil {
+		t.Fatal("disconnected must not fetch")
 	}
 }

@@ -103,15 +103,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				(km.Runes[0] == 'm' || km.Runes[0] == 'M') {
 				return m, m.ToggleMouse("")
 			}
-			return m.updateDialog(km)
+			nm, cmd := m.updateDialog(km)
+			if km.Type == tea.KeyEsc {
+				if um, ok := nm.(Model); ok {
+					um.escArm = time.Time{} // Esc closed a dialog: reset cancel arm
+					return um, cmd
+				}
+			}
+			return nm, cmd
 		}
 		// Async results stay swallowed while a dialog is open — except
 		// paste (Ctrl+V into the /login key field must land), the
-		// quit disarm (an arm must always expire, even behind a dialog),
-		// and the /login stay-open pipeline (save/rename → respawn →
+		// quit/esc disarms (an arm must always expire, even behind a dialog),
+		// the pet clock (elapsed/face animation is UI-only and must not
+		// freeze), and the /login stay-open pipeline (save/rename → respawn →
 		// reconnect must complete without closing the picker).
 		switch msg.(type) {
-		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg,
+		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg, escDisarmMsg,
+			petTickMsg, petFlashMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
 			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg:
 		default:
@@ -252,6 +261,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
 		if msg.state.SessionFile != "" {
 			m.sessionFile = msg.state.SessionFile
+			// New identity → new store file: re-read now, otherwise the
+			// sidebar keeps the old session's list until the next tool
+			// event or menu step (looks like a "delayed" update).
+			m.refreshPiTasks()
+		}
+		if !msg.state.IsStreaming && m.thinking {
+			// A settle swallowed behind an open dialog: the turn really
+			// ended. (A just-sent prompt self-heals: agent_start
+			// re-anchors the pet and flips the status back.)
+			m.thinking = false
+			m.Status = "ready"
+			m.Refresh()
+			return m, m.petSettled()
 		}
 		m.Refresh()
 		}
@@ -294,6 +316,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 		}
 		return m, nil
+	case escDisarmMsg:
+		if msg.gen == m.escGen {
+			m.escArm = time.Time{}
+			if m.thinking {
+				m.Status = "pi is running…"
+				m.Refresh()
+			}
+		}
+		return m, nil
 	case petTickMsg:
 		// 500ms loop while busy/flashing: face animation + elapsed counter.
 		if m.pet.status.Busy() || m.pet.status.Flashing() {
@@ -321,6 +352,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.curAsst, m.curThink = -1, -1
 		m.asstDelta, m.thinkDelta = false, false
 		m.thinking = false
+		m.escArm = time.Time{} // new session drops a stale cancel arm
 		m.pet = petState{}
 		m.Status = "ready"
 		m.planOn = false // new session: plan latch is live-only
@@ -641,14 +673,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == "remove" {
 			verb = "removed"
 		}
-		m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s", verb, msg.Spec)})
-		m.Status = "reloading commands…"
+		m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s — reconnecting pi to load it…", verb, msg.Spec)})
 		m.reloadHubRows("")
 		m.Refresh()
-		return m, func() tea.Msg {
-			cmds, err := m.Pi.GetCommands()
-			return CmdsRefreshMsg{Cmds: cmds, Err: err, Announce: true}
-		}
+		return m, m.RespawnPi()
 
 	case tea.MouseMsg:
 		// Click (release) on the sidebar: PLUGINS header collapses/expands,
@@ -706,15 +734,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.atOpen && m.handleAtKey(msg) {
+			if msg.Type == tea.KeyEsc {
+				m.escArm = time.Time{} // Esc closed a popup: reset cancel arm
+			}
 			return m, nil
 		}
 		if m.cmdOpen && m.handleCmdKey(msg) {
+			if msg.Type == tea.KeyEsc {
+				m.escArm = time.Time{} // Esc closed a popup: reset cancel arm
+			}
 			return m, nil
 		}
 		// trayFocus: nav keys stay in the tray, everything else exits it
 		// and processes normally (typing lands in the input, Enter sends).
 		if m.trayFocus {
 			if cmd, done := m.handleTrayKey(msg); done {
+				if msg.Type == tea.KeyEsc {
+					m.escArm = time.Time{} // Esc left the tray: reset cancel arm
+				}
 				return m, cmd
 			}
 			m.exitTray()
@@ -723,7 +760,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			// Double-press to quit within 3s: a stray Ctrl+C only arms
 			// (warning pinned to the sidebar corner) and auto-disarms.
-			// Esc stays the mid-turn cancel key.
+			// Esc is the double-press mid-turn cancel key (same window).
 			if m.quitArmed() {
 				return m, tea.Quit
 			}
@@ -793,22 +830,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ModelCycleMsg{Label: label, Err: err}
 			}
 		case tea.KeyEsc:
-			if m.histBrowsing() && !m.thinking {
+			// History browse wins even mid-turn: first Esc leaves the
+			// recalled message, it never aborts the turn.
+			if m.histBrowsing() {
 				m.clearHistInput()
+				m.escArm = time.Time{}
 				return m, nil
 			}
 			if m.thinking {
-				m.Status = "cancelling…"
-				m.Refresh()
-				return m, func() tea.Msg {
-					steer, follow, _ := m.Pi.ClearQueue()
-					restored := append(steer, follow...)
-					if len(restored) > 0 {
-						_ = restored // returned text, shown as notice for brevity
+				// Double-press within 3s to cancel (Ctrl+C parity):
+				// a stray Esc only arms + auto-disarms.
+				if m.escArmed() {
+					m.escArm = time.Time{}
+					m.Status = "cancelling…"
+					m.Refresh()
+					return m, func() tea.Msg {
+						steer, follow, _ := m.Pi.ClearQueue()
+						restored := append(steer, follow...)
+						if len(restored) > 0 {
+							_ = restored // returned text, shown as notice for brevity
+						}
+						_, err := m.Pi.Abort()
+						return sentAckMsg{err: err}
 					}
-					_, err := m.Pi.Abort()
-					return sentAckMsg{err: err}
 				}
+				m.escArm = time.Now()
+				m.escGen++
+				m.Status = "press Esc again to cancel…"
+				m.Refresh()
+				return m, escDisarmCmd(m.escGen)
 			}
 			return m, nil
 		case tea.KeyEnter:
@@ -868,11 +918,19 @@ func quitDisarmCmd(gen int) tea.Cmd {
 	})
 }
 
+// escDisarmCmd expires the Esc cancel arm after the window (Ctrl+C parity).
+func escDisarmCmd(gen int) tea.Cmd {
+	return tea.Tick(escArmWindow, func(time.Time) tea.Msg {
+		return escDisarmMsg{gen: gen}
+	})
+}
+
 func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	var pcmd tea.Cmd
 	switch ev.Type {
 	case "agent_start":
 		m.thinking = true
+		m.escArm = time.Time{} // fresh turn drops a stale cancel arm
 		m.Status = "pi is running…"
 		pcmd = m.petAnchor()
 	case "turn_start":
@@ -943,6 +1001,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		}
 	case "agent_settled":
 		m.thinking = false
+		m.escArm = time.Time{} // turn over: cancel arm no longer applies
 		m.Status = "ready"
 		m.pendSpeed = true
 		m.MCP = getMcpServers()
@@ -979,6 +1038,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.AddBlock(Block{Kind: "notice", Text: "extension error: " + p.Error, Err: true})
 	case "pi_exited":
 		m.thinking = false
+		m.escArm = time.Time{}
 		m.pet = petState{}
 		if m.respawning {
 			break // intentional reconnect, respawnMsg will follow
@@ -1356,7 +1416,11 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.answerInput(d, true)
 		} else {
 			m.Dialogs = m.Dialogs[1:]
+			// Events stay swallowed while a dialog is open: re-sync
+			// the sidebar in case task writes landed meanwhile.
+			m.refreshPiTasks()
 			m.Refresh()
+			return m, m.ReconcileTurnCmd()
 		}
 		return m, nil
 	case tea.KeyTab:
@@ -1367,8 +1431,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if d.Kind == "shortcuts" { // help page: Enter closes like Esc
 			m.Dialogs = m.Dialogs[1:]
+			m.refreshPiTasks()
 			m.Refresh()
-			return m, nil
+			return m, m.ReconcileTurnCmd()
 		}
 		return m.confirmDialog(d)
 	}
@@ -1479,8 +1544,9 @@ func (m Model) updateModelDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 		return m, nil
 	case tea.KeyEsc:
 		m.Dialogs = m.Dialogs[1:]
+		m.refreshPiTasks()
 		m.Refresh()
-		return m, nil
+		return m, m.ReconcileTurnCmd()
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
 		d.Reindex()
@@ -1533,7 +1599,18 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		if len(d.FIdx) == 0 {
 			return m, nil
 		}
-		m.answerDialog(d, d.FIdx[d.Cursor])
+		choice := d.FIdx[d.Cursor]
+		// /tasks → Settings can't cross RPC (pi stubs ui.custom as a
+		// no-op, so answering it would just bounce back to the menu):
+		// answer cancelled so the extension menu exits cleanly, and open
+		// the native Tasks tab instead.
+		if tasksSettingsJump(d, choice) {
+			m.answerDialog(d, -1)
+			m.openTasksSettings()
+			m.Refresh()
+			return m, nil
+		}
+		m.answerDialog(d, choice)
 		return m, nil
 	}
 	if d.Kind == "secret" {
@@ -1565,7 +1642,16 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 	}
 	ri := d.FIdx[d.Cursor]
 	if fn, ok := m.confirm[d.Kind]; ok {
-		return fn(&m, d, ri)
+		before := len(m.Dialogs)
+		nm, cmd := fn(&m, d, ri)
+		// A picker just closed mid-turn: re-check get_state so a settle
+		// swallowed behind it can't stick the pet on Working....
+		if um, ok := nm.(Model); ok && len(um.Dialogs) < before && um.thinking {
+			if rc := um.ReconcileTurnCmd(); rc != nil {
+				return um, tea.Batch(cmd, rc)
+			}
+		}
+		return nm, cmd
 	}
 	return m, nil
 }
@@ -1997,8 +2083,9 @@ func (m Model) updateLoginDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 		return m, nil
 	case tea.KeyEsc:
 		m.Dialogs = m.Dialogs[1:]
+		m.refreshPiTasks()
 		m.Refresh()
-		return m, nil
+		return m, m.ReconcileTurnCmd()
 	case tea.KeyCtrlL:
 		return m, nil
 	case tea.KeyCtrlP:

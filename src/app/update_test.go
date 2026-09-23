@@ -144,3 +144,51 @@ func TestStateRefreshAdoptsSessionFile(t *testing.T) {
 		t.Fatalf("sessionFile = %q", m.sessionFile)
 	}
 }
+
+// Adopting a new session identity must re-read the store at once: otherwise
+// the sidebar keeps the old (or empty) list until the next tool event or
+// menu step, which looks like a "delayed" create/clear/delete.
+func TestStateRefreshAdoptsAndReadsTasks(t *testing.T) {
+	dir := t.TempDir()
+	m := New(nil, dir)
+	m.sessionFile = "/tmp/x_2026-09-23T01-38-19-902Z_oldid123.jsonl"
+	m.Todos = []TodoItem{{ID: "1", Content: "Old task", Status: TodoPending}}
+	if err := os.MkdirAll(filepath.Join(dir, ".pi", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fresh := `{"tasks":[{"id":"9","subject":"New task","status":"in_progress"}]}`
+	if err := os.WriteFile(filepath.Join(dir, ".pi", "tasks", "tasks-newid456.json"), []byte(fresh), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	um, _ := m.Update(stateRefreshMsg{state: pirpc.State{SessionFile: "/tmp/x_newid456.jsonl"}})
+	m = um.(Model)
+	if len(m.Todos) != 1 || m.Todos[0].ID != "9" || m.Todos[0].Content != "New task" {
+		t.Fatalf("todos after identity adopt = %+v, want the new session file", m.Todos)
+	}
+}
+
+// Events stay swallowed while a dialog is open, so closing one must
+// re-sync the sidebar: task writes that landed meanwhile (e.g. an
+// auto-clear during a picked-over turn) surface on close, not "later".
+func TestEscCloseDialogRefreshesTasks(t *testing.T) {
+	dir := t.TempDir()
+	m := New(nil, dir)
+	m.sessionFile = "/tmp/x_sid999.jsonl"
+	m.Todos = []TodoItem{{ID: "1", Content: "stale", Status: TodoPending}}
+	if err := os.MkdirAll(filepath.Join(dir, ".pi", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fresh := `{"tasks":[{"id":"7","subject":"fresh","status":"pending"}]}`
+	if err := os.WriteFile(filepath.Join(dir, ".pi", "tasks", "tasks-sid999.json"), []byte(fresh), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.Dialogs = []*Dialog{{Kind: "palette"}}
+	um, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m2 := um.(Model)
+	if len(m2.Dialogs) != 0 {
+		t.Fatalf("esc should close the picker, got %d dialogs", len(m2.Dialogs))
+	}
+	if len(m2.Todos) != 1 || m2.Todos[0].ID != "7" || m2.Todos[0].Content != "fresh" {
+		t.Fatalf("close should re-read the store, got %+v", m2.Todos)
+	}
+}

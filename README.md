@@ -208,7 +208,7 @@ script/release.sh v0.0.1
 | Key            | Action                                                                                           |
 | -------------- | ------------------------------------------------------------------------------------------------ |
 | `Enter`        | Send (idle) / steer (while running)                                                              |
-| `Esc`          | Cancel running turn (clear queue + abort)                                                        |
+| `Esc×2`        | Cancel running turn (double-press within 3s — 1st press only arms)                               |
 | `Ctrl+C`       | Quit (press twice within 3s — warning pins to the sidebar corner)                  |
 | `Ctrl+N`       | New session                                                                                      |
 | `Ctrl+P`       | Cycle model                                                                                      |
@@ -256,7 +256,7 @@ Type `/` to open the command popup. Two kinds:
 - `/thinking` — toggle thinking level
 - `/tree` — session tree, pi-style rows (read-only over RPC)
 - `/settings` — agent settings, pi parity (22 rows: model · thinking · steering · follow-up · auto-compact · auto-retry · theme + skill commands · show images · image width · auto-resize · block images · transport · http timeout · cache warming · hide thinking · cache-miss notices · project trust · quiet startup · telemetry · autocomplete max · tree filter; file rows save to `~/.pi/agent/settings.json` and reconnect pi; dialog shows pi-style position `(6/33)`)
-- `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, theme, login
+- `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login
 - `/login` / `/logout` — manage logins: API keys + pi OAuth/subscriptions (`/login`: left providers, right keys + auth — `Enter` use/add, `⌫` delete/disconnect, `s` show/hide key, `r` rename, `Ctrl+P` model picker, `Esc` close; stays open, pi reconnects behind)
 - `/reload` — reload extensions
 - `/new` — new session

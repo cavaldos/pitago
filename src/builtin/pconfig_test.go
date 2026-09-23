@@ -165,3 +165,43 @@ func TestConfirmPconfigSideToggle(t *testing.T) {
 		t.Fatalf("row should refresh to shown, got %q", m2.Dialogs[0].Descs[mi])
 	}
 }
+
+func TestConfirmPconfigTasksCycle(t *testing.T) {
+	t.Setenv("PI_AGENT_DIR", t.TempDir())
+	m := app.New(nil, t.TempDir())
+	m.OpenPconfig()
+	d := m.Dialogs[0]
+	pm := &m
+	selectPsec(pm, d, app.PsecTasks)
+	ri := -1
+	for _, fi := range d.FIdx {
+		if d.Payload[fi] == "tasks:taskScope" {
+			ri = fi
+		}
+	}
+	if ri < 0 {
+		t.Fatal("no taskScope row")
+	}
+	// cursor sits on the row: cycling must keep it there, hub stays open
+	d.Cursor = 0
+	for i, fi := range d.FIdx {
+		if fi == ri {
+			d.Cursor = i
+		}
+	}
+	wantCursor := d.Cursor
+	mm, cmd := confirmPconfig(pm, d, ri)
+	m2 := mm.(*app.Model)
+	if cmd != nil {
+		t.Error("tasks cycle is local, no cmd expected")
+	}
+	if len(m2.Dialogs) != 1 {
+		t.Fatal("tasks cycle should keep the hub open")
+	}
+	if got := m2.Dialogs[0].Cursor; got != wantCursor {
+		t.Fatalf("cycle moved cursor to %d, want %d", got, wantCursor)
+	}
+	if !strings.Contains(m2.Dialogs[0].Descs[ri], "session-global") {
+		t.Fatalf("row should refresh to session-global, got %q", m2.Dialogs[0].Descs[ri])
+	}
+}

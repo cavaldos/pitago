@@ -170,11 +170,17 @@ type Model struct {
 	expandTools  bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
 	quitArm      time.Time // first Ctrl+C timestamp (second press within window quits)
 	quitGen      int       // arm generation (stale disarm ticks ignored)
+	escArm       time.Time // first Esc timestamp while running (second press within window cancels)
+	escGen       int       // arm generation (stale disarm ticks ignored)
 	mouseLeakAt  time.Time // last SGR mouse-report burst (split fragments within window are residue)
 }
 
 // quitArmWindow is the double-press window for Ctrl+C quit.
 const quitArmWindow = 3 * time.Second
+
+// escArmWindow is the double-press window for Esc cancel (Ctrl+C parity:
+// one press arms, second press within the window aborts the running turn).
+const escArmWindow = 3 * time.Second
 
 // mouseFragWindow is how long after an SGR mouse-report burst a lone
 // coordinate fragment ("65;99;18M") still counts as split-read residue.
@@ -216,6 +222,8 @@ type wsMsg struct {
 type sentAckMsg struct{ err error }
 
 type quitDisarmMsg struct{ gen int } // quit-arm window elapsed
+
+type escDisarmMsg struct{ gen int } // esc-arm window elapsed
 
 type SessionResetMsg struct{ Err error }
 
@@ -395,6 +403,7 @@ func (m *Model) setToolArgs(i int, name, raw string) {
 
 func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) tea.Cmd {
 	m.thinking = true
+	m.escArm = time.Time{} // fresh turn drops a stale cancel arm
 	m.Status = "pi is running…"
 	m.RefreshFollow()
 	return func() tea.Msg {
@@ -457,6 +466,16 @@ func (m Model) fetchStateOnce() tea.Cmd {
 		st, err := m.Pi.GetState()
 		return stateRefreshMsg{state: st, err: err}
 	}
+}
+
+// ReconcileTurnCmd re-checks get_state after a dialog closes mid-turn: a
+// settle swallowed behind the dialog would otherwise stick the pet on
+// Working... forever. Quiet (nil) when idle or disconnected.
+func (m Model) ReconcileTurnCmd() tea.Cmd {
+	if !m.thinking || m.Pi == nil {
+		return nil
+	}
+	return m.fetchStateOnce()
 }
 
 // workspace git status ------------------------------------------------------

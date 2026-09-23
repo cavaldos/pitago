@@ -727,7 +727,11 @@ func (m Model) renderInput() string {
 			border = cGreen
 			title = spinFrame(m.pet.tick) + " " + m.inputStatus()
 		}
-		left = "↵ steer · Esc cancel"
+		if m.escArmed() {
+			left = "press Esc again to cancel"
+		} else {
+			left = "↵ steer · Esc×2 cancel"
+		}
 	} else if plan {
 		border = cPlan
 		title = "PLAN"
@@ -785,6 +789,12 @@ func (m Model) inputStatus() string {
 // quitArmWindow, so a second one quits.
 func (m Model) quitArmed() bool {
 	return !m.quitArm.IsZero() && time.Since(m.quitArm) < quitArmWindow
+}
+
+// escArmed reports a live cancel arm: one Esc landed within escArmWindow
+// while running, so a second one aborts the turn.
+func (m Model) escArmed() bool {
+	return !m.escArm.IsZero() && time.Since(m.escArm) < escArmWindow
 }
 
 // syncSideH reserves one sidebar line for the quit-arm footer while armed.

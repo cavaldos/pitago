@@ -1,7 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,8 +39,8 @@ func TestOpenPconfigTwoPane(t *testing.T) {
 		t.Fatalf("expected one pconfig dialog, got %+v", m.Dialogs)
 	}
 	d := m.Dialogs[0]
-	if len(d.Provs) != 11 || len(d.PsecIDs) != 11 {
-		t.Fatalf("left pane needs 11 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
+	if len(d.Provs) != 12 || len(d.PsecIDs) != 12 {
+		t.Fatalf("left pane needs 12 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
 	}
 	if !d.ProvFocus {
 		t.Error("focus should start on the left (sections) pane")
@@ -366,5 +369,141 @@ func TestPsecDescStateColors(t *testing.T) {
 	// truncation still applies before styling (no ANSI to cut)
 	if got := stripANSI(psecDesc("side:mcp", "shown · Enter: toggle", 8)); got != "— "+Short("shown · Enter: toggle", 8) {
 		t.Fatalf("truncated desc wrong: %q", got)
+	}
+}
+
+// The Tasks tab replaces /tasks → Settings (whose custom panel can't cross
+// RPC, so picking it bounces back to the menu): rows show merged
+// global+project values and cycle into project overrides.
+func TestTasksHubRowsAndPersist(t *testing.T) {
+	agentDir := t.TempDir()
+	t.Setenv("PI_AGENT_DIR", agentDir)
+	cwd := t.TempDir()
+	m := &Model{cwd: cwd}
+	m.OpenPconfig()
+	d := m.Dialogs[0]
+	ti := -1
+	for i, id := range d.PsecIDs {
+		if id == PsecTasks {
+			ti = i
+		}
+	}
+	if ti < 0 {
+		t.Fatal("hub needs a Tasks section")
+	}
+	d.ProvCursor = ti
+	m.LoadPsecRows(d)
+	if len(d.Options) != len(taskSettings) {
+		t.Fatalf("tasks rows = %d, want %d", len(d.Options), len(taskSettings))
+	}
+	valOf := func(key string) string {
+		for i, p := range d.Payload {
+			if p == "tasks:"+key {
+				return d.Descs[i]
+			}
+		}
+		return ""
+	}
+	if got := valOf("taskScope"); !strings.HasPrefix(got, "session ") {
+		t.Fatalf("taskScope should default to session, got %q", got)
+	}
+	// cycle persists a project override
+	m.CycleTasksSetting("taskScope")
+	m.LoadPsecRows(d)
+	if got := valOf("taskScope"); !strings.HasPrefix(got, "session-global ") {
+		t.Fatalf("taskScope should cycle to session-global, got %q", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(cwd, ".pi", "tasks-config.json"))
+	if err != nil {
+		t.Fatalf("project config should be written: %v", err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(raw, &saved); err != nil || saved["taskScope"] != "session-global" {
+		t.Fatalf("project config wrong: %s / %v", raw, err)
+	}
+	// cycling onto the global value drops the override
+	if err := os.WriteFile(filepath.Join(agentDir, "tasks-config.json"), []byte(`{"taskScope":"project"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.CycleTasksSetting("taskScope") // session-global -> project (= global): dropped
+	m.LoadPsecRows(d)
+	if got := valOf("taskScope"); !strings.HasPrefix(got, "project ") {
+		t.Fatalf("taskScope should follow global project, got %q", got)
+	}
+	raw, _ = os.ReadFile(filepath.Join(cwd, ".pi", "tasks-config.json"))
+	saved = nil
+	_ = json.Unmarshal(raw, &saved)
+	if _, ok := saved["taskScope"]; ok {
+		t.Fatalf("override matching global should be dropped, got %s", raw)
+	}
+	// bool + number rows persist typed (true / 15, not "on" / "15")
+	m.CycleTasksSetting("autoCascade")
+	m.CycleTasksSetting("maxVisible") // 10 -> 15
+	raw, _ = os.ReadFile(filepath.Join(cwd, ".pi", "tasks-config.json"))
+	saved = nil
+	_ = json.Unmarshal(raw, &saved)
+	if saved["autoCascade"] != true {
+		t.Fatalf("autoCascade should persist as bool, got %s", raw)
+	}
+	if saved["maxVisible"] != float64(15) {
+		t.Fatalf("maxVisible should persist as number, got %s", raw)
+	}
+	// custom array sort specs show read-only; Enter replaces with a preset
+	if err := os.WriteFile(filepath.Join(cwd, ".pi", "tasks-config.json"), []byte(`{"sortOrder":[{"field":"status"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.LoadPsecRows(d)
+	if got := valOf("sortOrder"); !strings.HasPrefix(got, "custom ") {
+		t.Fatalf("array sort should show custom, got %q", got)
+	}
+	m.CycleTasksSetting("sortOrder")
+	m.LoadPsecRows(d)
+	if got := valOf("sortOrder"); !strings.HasPrefix(got, "id ") {
+		t.Fatalf("cycling custom should restart at id, got %q", got)
+	}
+}
+
+// Picking Settings in the /tasks menu must jump to the native Tasks tab
+// (answering it would bounce back: pi stubs ui.custom in RPC mode).
+func TestTasksSettingsJumpMatch(t *testing.T) {
+	menu := &Dialog{Kind: "ui", Title: "Tasks",
+		Options: []string{"View all tasks (1)", "Create task", "Settings"}}
+	if !tasksSettingsJump(menu, 2) {
+		t.Error("Settings row in the Tasks menu should jump")
+	}
+	for i, tc := range []struct {
+		d      *Dialog
+		choice int
+	}{
+		{menu, 0}, // View all tasks: normal answer
+		{menu, 1}, // Create task: normal answer
+		{menu, 3}, // out of range
+		{menu, -1},
+		{&Dialog{Kind: "ui", Title: "Other", Options: []string{"Settings"}}, 0},
+		{&Dialog{Kind: "input", Title: "Tasks", Options: []string{"Settings"}}, 0},
+		{nil, 0},
+	} {
+		if tasksSettingsJump(tc.d, tc.choice) {
+			t.Errorf("case %d should answer normally", i)
+		}
+	}
+}
+
+func TestOpenTasksSettingsFocusesTab(t *testing.T) {
+	t.Setenv("PI_AGENT_DIR", t.TempDir())
+	m := &Model{cwd: t.TempDir()}
+	m.openTasksSettings()
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Kind != "pconfig" {
+		t.Fatalf("should open one hub dialog, got %+v", m.Dialogs)
+	}
+	d := m.Dialogs[0]
+	if d.CurPsec() != PsecTasks {
+		t.Fatalf("hub should focus the Tasks tab, got %q", d.CurPsec())
+	}
+	if d.ProvFocus {
+		t.Error("right pane should start focused, ready to cycle values")
+	}
+	if len(d.Options) != len(taskSettings) {
+		t.Fatalf("tasks rows = %d, want %d", len(d.Options), len(taskSettings))
 	}
 }

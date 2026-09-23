@@ -983,7 +983,7 @@ func All() []app.Builtin {
 			return loadSettings(m)
 		}),
 		{
-			Name: "pitago-setting", Desc: "Open Pitago settings hub (agent · skills · plugins · MCP · tools · sidebar)", Usage: "/pitago-setting",
+			Name: "pitago-setting", Desc: "Open Pitago settings hub (agent · skills · plugins · MCP · tools · tasks · sidebar)", Usage: "/pitago-setting",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
 				m.OpenPconfig()
@@ -1031,12 +1031,13 @@ func All() []app.Builtin {
 			return m.OpenThinking()
 		}),
 		pi("reload", "Reload keybindings, extensions, skills, prompts, themes, and context files", "/reload", func(m *app.Model, arg string) tea.Cmd {
-			m.Status = "reloading commands…"
-			m.Refresh()
-			return func() tea.Msg {
-				cmds, err := m.Pi.GetCommands()
-				return app.CmdsRefreshMsg{Cmds: cmds, Err: err, Announce: true}
-			}
+			// No "reload" RPC exists (pi returns "Unknown command"), and a
+			// plain GetCommands re-reads the already-loaded list — a `pi
+			// install` done outside (or in the hub) never appears until the
+			// process restarts. Respawn keeps the session and reloads
+			// everything, like the /login stay-open pattern.
+			m.AddBlock(app.Block{Kind: "notice", Text: "reloading extensions — reconnecting pi…"})
+			return m.RespawnPi()
 		}),
 		pi("login", "<provider> — Configure provider authentication", "/login [provider]", func(m *app.Model, arg string) tea.Cmd {
 			return openLogin(m, arg)
