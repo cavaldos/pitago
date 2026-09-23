@@ -31,6 +31,9 @@ func equalInts(a, b []int) bool {
 	return true
 }
 
+// stripAnsiForTest drops SGR escapes so tests compare visible cells.
+func stripAnsiForTest(s string) string { return ansiSeq.ReplaceAllString(s, "") }
+
 // Tables get the old pi-style outer frame (Glamour only draws inner │/─/┼).
 func TestFrameTablesBoxed(t *testing.T) {
 	src := "| Họ tên | Tuổi |\n|---|---|\n| An | 28 |\n| Bình | 7 |"
@@ -59,7 +62,40 @@ func TestFrameTablesBoxed(t *testing.T) {
 	}
 }
 
-// Already-framed tables (pi output, pasted box tables) are never double-framed.
+// Fit to content: a narrow column (No) stays narrow beside a wide one.
+func TestFrameTablesFitContent(t *testing.T) {
+	src := "| No | Nội dung chi tiết |\n|---|---|\n| 1 | Hello world |\n| 22 | X |"
+	var top string
+	for _, ln := range strings.Split(stripAnsiForTest(Render(src, 80)), "\n") {
+		if strings.Contains(ln, "┌") {
+			top = ln
+		}
+	}
+	if top == "" {
+		t.Fatalf("no framed top border:\n%s", Render(src, 80))
+	}
+	segs := strings.Split(strings.Trim(top, "┌┐"), "┬")
+	if len(segs) != 2 {
+		t.Fatalf("want 2 columns, top=%q", top)
+	}
+	if w := len([]rune(segs[0])); w > 4 {
+		t.Fatalf("No column not narrow: %q", top)
+	}
+	if w := len([]rune(top)); w >= 40 {
+		t.Fatalf("table not fit to content: %q", top)
+	}
+}
+
+// Right-aligned columns keep right alignment after fit.
+func TestFrameTablesRightAlign(t *testing.T) {
+	src := "| No | Giá |\n|---:|---:|\n| 1 | 100 |\n| 22 | 7 |"
+	plain := stripAnsiForTest(Render(src, 80))
+	for _, want := range []string{"│  1 │ 100 │", "│ 22 │   7 │"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in:\n%s", want, plain)
+		}
+	}
+}
 func TestFrameTablesSkipsFramed(t *testing.T) {
 	src := "┌─────┬─────┐\n│ A   │ B   │\n├───┼───┤\n│ 1   │ 2   │\n└─────┴─────┘"
 	if got := frameTables(src, 80); got != src {

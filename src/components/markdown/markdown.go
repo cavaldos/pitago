@@ -87,6 +87,133 @@ func isTableRow(ln string) bool {
 	return strings.Contains(ln, "│") || isTableSep(ln)
 }
 
+// splitRowCells splits one rendered table line by sep (│ or ┼), dropping
+// blank edge artifacts. Inner pipes (cell `a|b`) survive: only sep splits.
+func splitRowCells(ln string, sep rune) []string {
+	parts := strings.Split(ln, string(sep))
+	blank := func(s string) bool {
+		return strings.TrimSpace(ansiSeq.ReplaceAllString(s, "")) == ""
+	}
+	if len(parts) > 0 && blank(parts[0]) {
+		parts = parts[1:]
+	}
+	if len(parts) > 0 && blank(parts[len(parts)-1]) {
+		parts = parts[:len(parts)-1]
+	}
+	return parts
+}
+
+// compactRows re-lays parsed table rows fit to content: each column keeps
+// its alignment (votes from leading/trailing padding; ties go left),
+// wrapped fragments survive as their own rows. Cells are rebuilt with one
+// uniform padding space per side, old pi-style. Returns false when columns
+// parse unevenly or the compact table would still overflow width.
+func compactRows(rows []string, width int) ([]string, bool) {
+	cells := make([][]string, 0, len(rows))
+	seps := make([]bool, 0, len(rows))
+	ncols := -1
+	for _, r := range rows {
+		var c []string
+		sep := isTableSep(r)
+		switch {
+		case sep:
+			c = splitRowCells(r, '┼')
+		case strings.Contains(r, "│"):
+			c = splitRowCells(r, '│')
+		default:
+			return nil, false
+		}
+		if ncols < 0 {
+			ncols = len(c)
+		} else if len(c) != ncols {
+			return nil, false
+		}
+		cells = append(cells, c)
+		seps = append(seps, sep)
+	}
+	if ncols < 1 {
+		return nil, false
+	}
+	core := make([][]string, len(cells))
+	right, left, center := make([]int, ncols), make([]int, ncols), make([]int, ncols)
+	data := false
+	for i, c := range cells {
+		if seps[i] {
+			continue
+		}
+		data = true
+		for j, cell := range c {
+			co := strings.Trim(cell, " \t")
+			lw := lipgloss.Width(cell) - lipgloss.Width(strings.TrimLeft(cell, " \t"))
+			tw := lipgloss.Width(cell) - lipgloss.Width(strings.TrimRight(cell, " \t"))
+			core[i] = append(core[i], co)
+			switch {
+			case lw == 0 && tw == 0:
+				// abstain
+			case lw > tw+1:
+				right[j]++
+			case tw > lw+1:
+				left[j]++
+			case lw > 0 && tw > 0:
+				center[j]++
+			}
+		}
+	}
+	if !data {
+		return nil, false
+	}
+	widths := make([]int, ncols)
+	for i, c := range core {
+		if seps[i] {
+			continue
+		}
+		for j, co := range c {
+			if w := lipgloss.Width(co); w > widths[j] {
+				widths[j] = w
+			}
+		}
+	}
+	w := 2*ncols + ncols - 1 // uniform side padding + inner │/┼
+	for _, cw := range widths {
+		w += cw
+	}
+	if w+2 > width {
+		return nil, false
+	}
+	rebuilt := make([]string, 0, len(cells))
+	for i, c := range cells {
+		var b strings.Builder
+		for j := range c {
+			if j > 0 {
+				if seps[i] {
+					b.WriteString("┼")
+				} else {
+					b.WriteString("│")
+				}
+			}
+			if seps[i] {
+				b.WriteString(strings.Repeat("─", widths[j]+2))
+				continue
+			}
+			co := core[i][j]
+			pad := widths[j] - lipgloss.Width(co)
+			lp, tp := 1, 1
+			switch {
+			case right[j] > left[j] && right[j] >= center[j]:
+				lp += pad
+			case center[j] > left[j] && center[j] > right[j]:
+				lp += pad / 2
+				tp += pad - pad/2
+			default:
+				tp += pad
+			}
+			b.WriteString(strings.Repeat(" ", lp) + co + strings.Repeat(" ", tp))
+		}
+		rebuilt = append(rebuilt, b.String())
+	}
+	return rebuilt, true
+}
+
 // frameGroup draws a tight outer frame (┌┐└┘├┤) around one glamour-rendered
 // table group so it looks like the old pi-style boxed table. Groups that
 // already carry a frame, lack a separator row, or would overflow width are
@@ -123,11 +250,18 @@ func frameGroup(group []string, width int) []string {
 		minLead = 2 // deeper (list/quote) indent stays outside the frame
 	}
 	rows := make([]string, 0, len(group))
-	w := 0
 	for _, ln := range group {
-		t := rtrimLine(ln[minLead:])
-		rows = append(rows, t)
-		if ww := lipgloss.Width(t); ww > w {
+		rows = append(rows, rtrimLine(ln[minLead:]))
+	}
+	// Fit to content: narrow columns (No, #) stay narrow instead of
+	// stretching full-width. Falls through to the stretched frame below
+	// when columns parse unevenly or still overflow.
+	if compact, ok := compactRows(rows, width); ok {
+		rows = compact
+	}
+	w := 0
+	for _, r := range rows {
+		if ww := lipgloss.Width(r); ww > w {
 			w = ww
 		}
 	}
