@@ -90,3 +90,44 @@ func TestPiExitedSuppressedOnClose(t *testing.T) {
 	case <-time.After(2 * time.Second):
 	}
 }
+
+// readLoop routes with one parse per line: responses resolve the pending
+// Send, events reach OnEvent with their raw bytes intact.
+func TestReadLoopRoutesResponseAndEvent(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	c := &Client{pending: make(map[string]chan Response), done: make(chan struct{})}
+	respCh := make(chan Response, 1)
+	c.pending["go-1"] = respCh
+	events := make(chan Event, 4)
+	c.OnEvent = func(e Event) { events <- e }
+	go c.readLoop(r)
+
+	respLine := `{"type":"response","id":"go-1","command":"get_state","success":true,"data":{"a":1}}`
+	evLine := `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hi"}}`
+	if _, err := w.WriteString(respLine + "\n" + evLine + "\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case resp := <-respCh:
+		if resp.ID != "go-1" || !resp.Success {
+			t.Fatalf("response misrouted: %+v", resp)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("response never resolved pending Send")
+	}
+	select {
+	case ev := <-events:
+		if ev.Type != "message_update" {
+			t.Fatalf("event type = %q", ev.Type)
+		}
+		if string(ev.Raw) != evLine {
+			t.Fatalf("event raw mutated:\n%q\nwant:\n%q", ev.Raw, evLine)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("event never reached OnEvent")
+	}
+	w.Close()
+}

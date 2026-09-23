@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -75,7 +76,7 @@ func gutterBox(icon, body string) string {
 	return strings.Join(out, "\n")
 }
 
-func (m Model) renderBlocks() string {
+func (m *Model) renderBlocks() string {
 	var b strings.Builder
 	w := m.vp.Width
 	cw := w - 2 // gutter takes 2 cells
@@ -89,71 +90,135 @@ func (m Model) renderBlocks() string {
 	if m.connErr != "" {
 		b.WriteString(gutter(errStyle.Render("×"), errStyle.Render("! "+m.connErr)+"\n"))
 	}
-	for _, bl := range m.blocks {
-		// Streaming can leave content-less assistant/thinking blocks behind
-		// (e.g. bare newlines around a tool call). They render as stray
-		// blank gaps, so skip them: they carry no information.
-		if (bl.Kind == "assistant" || bl.Kind == "thinking") && strings.TrimSpace(bl.Text) == "" {
+	// Per-block cache: only the dirty block (streaming text or a fresh
+	// tool status) re-renders; history reuses its last string. The key
+	// covers every input of renderOneBlock, so a width/theme/flag change
+	// misses everywhere and rebuilds once.
+	if len(m.renderCache) != len(m.blocks) || len(m.renderCacheKey) != len(m.blocks) {
+		nc := make([]string, len(m.blocks))
+		nk := make([]uint64, len(m.blocks))
+		copy(nc, m.renderCache)
+		copy(nk, m.renderCacheKey)
+		m.renderCache, m.renderCacheKey = nc, nk
+	}
+	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
+	for i, bl := range m.blocks {
+		key := blockKey(bl, cw, hide, expand, theme)
+		if m.renderCacheKey[i] == key {
+			b.WriteString(m.renderCache[i])
 			continue
 		}
-		if bl.Kind == "thinking" && m.HideThinking {
-			continue // /settings "Hide thinking" (pi parity)
+		s, skip := m.renderOneBlock(bl, cw)
+		if skip {
+			s = ""
 		}
-		var icon, body string
-		boxed := false // bordered/full-bleed rows need the 2-cell gutter
-		switch bl.Kind {
-		case "user":
-			icon = statusBarStyle.Render("●")
-			body = userStyle.Width(cw-2).Render(bl.Text) + "\n\n"
-			boxed = true
-		case "assistant":
-			icon = statusBarStyle.Render("●")
-			body = renderMarkdown(bl.Text, cw) + "\n\n"
-		case "thinking":
-			t := bl.Text
-			if len(t) > 300 {
-				t = t[:300] + "…"
-			}
+		m.renderCacheKey[i] = key
+		m.renderCache[i] = s
+		b.WriteString(s)
+	}
+	if m.thinking {
+		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
+	}
+	return b.String()
+}
+
+// blockKey fingerprints one block's rendered output: every field
+// renderOneBlock reads, plus the width and global render flags.
+func blockKey(bl Block, cw int, hide, expand bool, theme string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(bl.Kind))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.Text))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolName))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolArgs))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolArgsRaw))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolStatus))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolResult))
+	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolCallID))
+	h.Write([]byte{0})
+	if bl.Err {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	fmt.Fprintf(h, "\x00%d\x00%v\x00%v\x00%s", cw, hide, expand, theme)
+	return h.Sum64()
+}
+
+// renderOneBlock renders a single chat block (gutter included). It reports
+// skip=true for content-less streaming leftovers and hidden thinking,
+// which renderBlocks caches as empty.
+func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
+	// Streaming can leave content-less assistant/thinking blocks behind
+	// (e.g. bare newlines around a tool call). They render as stray
+	// blank gaps, so skip them: they carry no information.
+	if (bl.Kind == "assistant" || bl.Kind == "thinking") && strings.TrimSpace(bl.Text) == "" {
+		return "", true
+	}
+	if bl.Kind == "thinking" && m.HideThinking {
+		return "", true // /settings "Hide thinking" (pi parity)
+	}
+	var icon, body string
+	boxed := false // bordered/full-bleed rows need the 2-cell gutter
+	switch bl.Kind {
+	case "user":
+		icon = statusBarStyle.Render("●")
+		body = userStyle.Width(cw-2).Render(bl.Text) + "\n\n"
+		boxed = true
+	case "assistant":
+		icon = statusBarStyle.Render("●")
+		body = renderMarkdown(bl.Text, cw) + "\n\n"
+	case "thinking":
+		t := bl.Text
+		if len(t) > 300 {
+			t = t[:300] + "…"
+		}
+		icon = statusBarStyle.Render("○")
+		body = toolStyle.Render(Short(t, 160)) + "\n\n"
+	case "tool":
+		switch bl.ToolStatus {
+		case "done":
+			icon = okStyle.Render("●")
+		case "error":
+			icon = errStyle.Render("×")
+		default:
 			icon = statusBarStyle.Render("○")
-			body = toolStyle.Render(Short(t, 160)) + "\n\n"
-		case "tool":
-			switch bl.ToolStatus {
-			case "done":
-				icon = okStyle.Render("●")
-			case "error":
-				icon = errStyle.Render("×")
-			default:
-				icon = statusBarStyle.Render("○")
+		}
+		head := bl.ToolName
+		switch strings.ToLower(bl.ToolName) {
+		case "bash":
+			head = "$"
+			if bl.ToolArgs != "" {
+				head += " " + bl.ToolArgs
 			}
-			head := bl.ToolName
-			switch strings.ToLower(bl.ToolName) {
-			case "bash":
-				head = "$"
-				if bl.ToolArgs != "" {
-					head += " " + bl.ToolArgs
-				}
-			case "powershell":
-				head = "PS>"
-				if bl.ToolArgs != "" {
-					head += " " + bl.ToolArgs
-				}
-			default:
-				if bl.ToolArgs != "" {
-					head += " " + bl.ToolArgs
-				}
+		case "powershell":
+			head = "PS>"
+			if bl.ToolArgs != "" {
+				head += " " + bl.ToolArgs
 			}
-			// pi suffixes the write header with the added line count
-			// ("write game.js +211").
-			if strings.ToLower(bl.ToolName) == "write" {
-				if content, ok := format.WriteContent(bl.ToolArgsRaw); ok {
-					if n := countLines(content); n > 0 {
-						head += fmt.Sprintf(" +%d", n)
-					}
+		default:
+			if bl.ToolArgs != "" {
+				head += " " + bl.ToolArgs
+			}
+		}
+		// pi suffixes the write header with the added line count
+		// ("write game.js +211").
+		if strings.ToLower(bl.ToolName) == "write" {
+			if content, ok := format.WriteContent(bl.ToolArgsRaw); ok {
+				if n := countLines(content); n > 0 {
+					head += fmt.Sprintf(" +%d", n)
 				}
 			}
-			if strings.TrimSpace(head) == "" {
-				head = "tool"
-			}
+		}
+		if strings.TrimSpace(head) == "" {
+			head = "tool"
+		}
 		body = lipgloss.NewStyle().Foreground(cText).Render(Short(head, 140)) + "\n"
 		if r := m.renderToolBody(bl); r != "" {
 			body += r
@@ -164,37 +229,31 @@ func (m Model) renderBlocks() string {
 		body = lipgloss.NewStyle().Background(toolBg(bl.ToolStatus)).Width(cw).
 			Render(strings.TrimRight(body, "\n")) + "\n\n"
 		boxed = true
-		case "bash":
-			icon = statusBarStyle.Render("●")
-			body = markdown.Highlight("bash", Short(bl.Text, 400)) + "\n\n"
-		case "tree":
-			icon = statusBarStyle.Render("●")
-			body = codeStyle.Render(shortTree(bl.Text, 3000)) + "\n\n"
-		case "session":
-			icon = statusBarStyle.Render("●")
-			body = renderSession(bl.Text) + "\n\n"
-		case "notice":
-			if bl.Err {
-				icon = errStyle.Render("×")
-				body = errStyle.Render("! "+bl.Text) + "\n\n"
-			} else {
-				icon = toolStyle.Render("·")
-				body = toolStyle.Render(bl.Text) + "\n\n"
-			}
-		default:
-			icon = statusBarStyle.Render("●")
-			body = lipgloss.NewStyle().Foreground(cText).Render(bl.Text) + "\n\n"
-		}
-		if boxed {
-			b.WriteString(gutterBox(icon, body))
+	case "bash":
+		icon = statusBarStyle.Render("●")
+		body = markdown.Highlight("bash", Short(bl.Text, 400)) + "\n\n"
+	case "tree":
+		icon = statusBarStyle.Render("●")
+		body = codeStyle.Render(shortTree(bl.Text, 3000)) + "\n\n"
+	case "session":
+		icon = statusBarStyle.Render("●")
+		body = renderSession(bl.Text) + "\n\n"
+	case "notice":
+		if bl.Err {
+			icon = errStyle.Render("×")
+			body = errStyle.Render("! "+bl.Text) + "\n\n"
 		} else {
-			b.WriteString(gutter(icon, body))
+			icon = toolStyle.Render("·")
+			body = toolStyle.Render(bl.Text) + "\n\n"
 		}
+	default:
+		icon = statusBarStyle.Render("●")
+		body = lipgloss.NewStyle().Foreground(cText).Render(bl.Text) + "\n\n"
 	}
-	if m.thinking {
-		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
+	if boxed {
+		return gutterBox(icon, body), false
 	}
-	return b.String()
+	return gutter(icon, body), false
 }
 
 // renderMarkdown renders assistant output with pi's own Markdown (headings,
@@ -821,7 +880,7 @@ func inputBox(title string, lines []string, innerW int, border lipgloss.Color) s
 	frame := lipgloss.NewStyle().Foreground(border)
 	var b strings.Builder
 	if title == "" {
-		b.WriteString(frame.Render("╭" + strings.Repeat("─", innerW+2) + "╮") + "\n")
+		b.WriteString(frame.Render("╭"+strings.Repeat("─", innerW+2)+"╮") + "\n")
 	} else {
 		title = Short(title, innerW-1)
 		fill := innerW - lipgloss.Width(title) - 1
@@ -854,6 +913,9 @@ func (m Model) renderDialog() string {
 	}
 	if d.Kind == "shortcuts" {
 		return m.renderShortcutsDialog(d)
+	}
+	if d.Kind == shortcutKind {
+		return m.renderShortcutDialog(d)
 	}
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
@@ -1226,7 +1288,7 @@ func (m Model) renderModelDialog(d *Dialog) string {
 			} else {
 				r = "  " + statusBarStyle.Width(rightW-2).Render("")
 			}
-			b.WriteString(l+" "+sep+" "+r + "\n")
+			b.WriteString(l + " " + sep + " " + r + "\n")
 		}
 	} else {
 		b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("PROVIDERS") + " │ " +
@@ -1261,7 +1323,7 @@ func (m Model) renderModelDialog(d *Dialog) string {
 			} else {
 				dt = "  " + statusBarStyle.Width(detW-2).Render("")
 			}
-			b.WriteString(l+" "+sep+" "+r+" "+sep+" "+dt + "\n")
+			b.WriteString(l + " " + sep + " " + r + " " + sep + " " + dt + "\n")
 		}
 	}
 
@@ -1479,7 +1541,7 @@ func (m Model) renderLoginDialog(d *Dialog) string {
 		} else {
 			r = "  " + statusBarStyle.Width(rightW-2).Render("")
 		}
-		b.WriteString(l+" "+sep+" "+r + "\n")
+		b.WriteString(l + " " + sep + " " + r + "\n")
 	}
 
 	foot := "↑↓ move · ←→/Tab switch · Enter use/add · ⌫ del · s show · r rename · ^P models · Esc close"

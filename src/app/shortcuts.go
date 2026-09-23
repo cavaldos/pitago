@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -73,7 +74,7 @@ var shortcutsDb = []ShortcutItem{
 }
 
 // shortcutOrder controls category display order (empty groups skipped).
-var shortcutOrder = []string{"Global", "Navigation", "Chat", "Sidebar", "Commands", "UI", "Input", "Dialog", "Mouse"}
+var shortcutOrder = []string{"Global", "Navigation", "Chat", "Sidebar", "Commands", "Custom", "UI", "Input", "Dialog", "Mouse"}
 
 // OpenShortcuts opens the shortcut help page as a dialog/modal.
 // Options = key, Descs = action, Providers = category (parallel): the
@@ -94,6 +95,17 @@ func (m *Model) OpenShortcuts() tea.Cmd {
 			descs = append(descs, it.Description)
 			provs = append(provs, cat)
 		}
+	}
+	// Hub-assigned Alt shortcuts (Custom): Alt+key stages the /command.
+	var custom []string
+	for cmd := range m.CmdShortcuts {
+		custom = append(custom, cmd)
+	}
+	sort.Strings(custom)
+	for _, cmd := range custom {
+		opts = append(opts, shortcutDisplay(m.CmdShortcuts[cmd]))
+		descs = append(descs, "/"+cmd)
+		provs = append(provs, "Custom")
 	}
 
 	d := &Dialog{

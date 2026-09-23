@@ -2,6 +2,7 @@ package pirpc
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -138,31 +139,26 @@ func Spawn(opt Options) (*Client, error) {
 }
 
 // readLoop splits stdout on '\n' only (protocol requirement) and routes lines.
+// One unmarshal per line: Response carries type+id, so the envelope and the
+// response share a single parse; events keep the raw line bytes (cloned —
+// the bufio buffer is reused — for the UI thread to parse once).
 func (c *Client) readLoop(r *os.File) {
 	defer r.Close()
 	br := bufio.NewReaderSize(r, 1<<20)
 	for {
-		line, err := br.ReadString('\n')
+		line, err := br.ReadBytes('\n')
 		if err != nil {
 			return
 		}
-		line = strings.TrimSuffix(line, "\n")
-		line = strings.TrimSuffix(line, "\r")
-		if strings.TrimSpace(line) == "" {
+		line = bytes.TrimRight(line, "\r\n")
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var env struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
+		var resp Response
+		if err := json.Unmarshal(line, &resp); err != nil {
 			continue
 		}
-		if env.Type == "response" {
-			var resp Response
-			if err := json.Unmarshal([]byte(line), &resp); err != nil {
-				continue
-			}
+		if resp.Type == "response" {
 			c.mu.Lock()
 			ch := c.pending[resp.ID]
 			delete(c.pending, resp.ID)
@@ -173,7 +169,7 @@ func (c *Client) readLoop(r *os.File) {
 			continue
 		}
 		if c.OnEvent != nil {
-			c.OnEvent(Event{Type: env.Type, Raw: json.RawMessage(line)})
+			c.OnEvent(Event{Type: resp.Type, Raw: bytes.Clone(line)})
 		}
 	}
 }
@@ -199,28 +195,30 @@ func (c *Client) Send(cmd Command, timeout time.Duration) (Response, error) {
 		return Response{}, err
 	}
 	ch := make(chan Response, 1)
+	// One critical section: register + write stay atomic so concurrent
+	// Sends can't interleave JSONL lines (Fire already holds it across Write).
 	c.mu.Lock()
 	c.pending[cmd.ID] = ch
-	c.mu.Unlock()
-	c.mu.Lock()
 	_, werr := c.stdin.Write(append(raw, '\n'))
+	if werr != nil {
+		delete(c.pending, cmd.ID)
+	}
 	c.mu.Unlock()
 	if werr != nil {
-		c.mu.Lock()
-		delete(c.pending, cmd.ID)
-		c.mu.Unlock()
 		return Response{}, werr
 	}
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case resp := <-ch:
 		if !resp.Success {
 			return resp, fmt.Errorf("pi: %s failed: %s", resp.Command, resp.Error)
 		}
 		return resp, nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		c.mu.Lock()
 		delete(c.pending, cmd.ID)
 		c.mu.Unlock()

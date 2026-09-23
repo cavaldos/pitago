@@ -61,6 +61,7 @@ type Dialog struct {
 	LoginProvider  string // login flow: provider id
 	LoginEnv       string // login flow: env var
 	UpdateTo       string // update flow: target tag (Kind "update")
+	ShortcutCmd    string // cmdshortcut capture: /command being assigned ("" = none)
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -82,97 +83,104 @@ type RecentModel = recent.RecentModel
 type FavEntry = favorite.Fav
 
 type Model struct {
-	vp           viewport.Model
-	sideVp       viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
-	ta           textarea.Model
-	Pi           *pirpc.Client
-	blocks       []Block
-	toasts       []Toast        // ephemeral popups (model switch, yank…): never in chat history
-	tools        map[string]int // toolCallId -> block index
-	curAsst      int
-	curThink     int
-	asstDelta    bool // text deltas streamed into curAsst (message_end must not re-add)
-	thinkDelta   bool // thinking deltas streamed into curThink (same)
-	thinking     bool
-	Status       string
-	extStat      string
-	planOn       bool // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
-	ready        bool
-	winW         int
-	winH         int
-	hideSide     bool // Ctrl+B: hide sidebar for clean drag-select of chat
-	Mouse        bool // --mouse: terminal reports clicks (sidebar recent switch)
-	baseVpH      int
-	cwd          string
-	ModelLbl     string
-	AppVersion   string // pitago build version for the welcome header ("" = omit)
-	UpdateAvail  string // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
-	thinkLvl     string // thinking level from get_state
-	autoCompact  bool   // auto-compaction from get_state
-	ctxWindow    int    // model context window from get_state/stats
-	session      string
-	sessStart    time.Time // session clock for sidebar "time"
-	turnStart    time.Time // last turn start (for "last" + speed)
-	turnOutBase  int       // stats.Out at last turn_start
-	pendSpeed    bool      // compute last/speed on next statsMsg
-	lastDur      time.Duration
-	lastSpeed    float64 // tok/s of last turn
-	ws           wsData  // workspace git status (polled)
-	Stats        pirpc.Stats
-	sessBreak    []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
-	queue        pirpc.Queue
-	Todos        []TodoItem      // tracked from todo-tool calls (sidebar)
-	MCP          []McpServer     // pi agent-dir MCP snapshot (sidebar)
-	Plugins      []Plugin        // installed pi packages (sidebar PLUGINS toggle)
-	Market       []MarketEntry   // npm registry pi-package list (marketplace tab)
-	MarketErr    string          // last marketplace fetch error ("" = ok/unloaded)
-	showPlugins  bool            // PLUGINS expanded (click header or /plugins)
-	Side         map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
-	Dialogs      []*Dialog
-	connErr      string
-	AutoRetry    bool          // no RPC getter; tracked locally (default on)
-	HideThinking bool          // /settings: skip thinking blocks in chat (pi parity, pitago-local)
-	respawning   bool          // reconnecting pi: skip pi_exited notice
-	spawnOpts    pirpc.Options // for respawning pi (login)
-	KeyPath      string        // keystore API keys
-	AuthPath     string        // mirrored pi logins (oauth state pitago saves)
-	sessionFile  string        // respawn keeps the same session
-	Cmds         []pirpc.RepoCommand
-	cmdOpen      bool
-	cmdCursor    int
-	cmdOffset    int   // first visible row of the scroll window
-	cmdItems     []int // indices into cmds
-	atOpen       bool
-	atCursor     int
-	atOffset     int // first visible row of the @ scroll window
-	atRow        int // input row holding the @ token
-	atStart      int // rune index where the @ token starts
-	atPrefix     string
-	atItems      []mention.Item
-	imgAtts      []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
-	imgSeq       int         // chip counter, never renumbered
-	trayFocus    bool        // cursor moved into the tray (↓ from last input line)
-	imgCursor    int         // selected chip while trayFocus
-	trayRet      int         // input offset to restore on Esc
-	pet          petState
-	recentModels []RecentModel
-	recentPath   string // persisted recent models ("" = don't persist)
-	favModels    []FavEntry
-	favSet       map[string]bool // starred models lookup (see components/favorite)
-	favPath      string          // persisted favorites ("" = don't persist)
-	hist         []string        // sent messages, oldest→newest (↑↓ recall when input empty)
-	histIdx      int             // -1 = live input, else index into hist while browsing
-	ThemeName    string          // active TUI theme (/theme, --theme flag)
-	themePath    string          // persisted theme ("" = don't persist)
-	prefsPath    string          // persisted pitago-local prefs ("" = don't persist)
-	builtins     []Builtin
-	confirm      map[string]ConfirmFunc
-	expandTools  bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
-	quitArm      time.Time // first Ctrl+C timestamp (second press within window quits)
-	quitGen      int       // arm generation (stale disarm ticks ignored)
-	escArm       time.Time // first Esc timestamp while running (second press within window cancels)
-	escGen       int       // arm generation (stale disarm ticks ignored)
-	mouseLeakAt  time.Time // last SGR mouse-report burst (split fragments within window are residue)
+	vp             viewport.Model
+	sideVp         viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
+	ta             textarea.Model
+	Pi             *pirpc.Client
+	blocks         []Block
+	toasts         []Toast        // ephemeral popups (model switch, yank…): never in chat history
+	tools          map[string]int // toolCallId -> block index
+	curAsst        int
+	curThink       int
+	asstDelta      bool // text deltas streamed into curAsst (message_end must not re-add)
+	thinkDelta     bool // thinking deltas streamed into curThink (same)
+	thinking       bool
+	Status         string
+	extStat        string
+	planOn         bool // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
+	ready          bool
+	winW           int
+	winH           int
+	hideSide       bool // Ctrl+B: hide sidebar for clean drag-select of chat
+	Mouse          bool // --mouse: terminal reports clicks (sidebar recent switch)
+	baseVpH        int
+	cwd            string
+	ModelLbl       string
+	AppVersion     string // pitago build version for the welcome header ("" = omit)
+	UpdateAvail    string // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
+	thinkLvl       string // thinking level from get_state
+	autoCompact    bool   // auto-compaction from get_state
+	ctxWindow      int    // model context window from get_state/stats
+	session        string
+	sessStart      time.Time // session clock for sidebar "time"
+	turnStart      time.Time // last turn start (for "last" + speed)
+	turnOutBase    int       // stats.Out at last turn_start
+	pendSpeed      bool      // compute last/speed on next statsMsg
+	lastDur        time.Duration
+	lastSpeed      float64 // tok/s of last turn
+	ws             wsData  // workspace git status (polled)
+	Stats          pirpc.Stats
+	sessBreak      []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
+	queue          pirpc.Queue
+	Todos          []TodoItem      // tracked from todo-tool calls (sidebar)
+	MCP            []McpServer     // pi agent-dir MCP snapshot (sidebar)
+	Plugins        []Plugin        // installed pi packages (sidebar PLUGINS toggle)
+	Market         []MarketEntry   // npm registry pi-package list (marketplace tab)
+	MarketErr      string          // last marketplace fetch error ("" = ok/unloaded)
+	showPlugins    bool            // PLUGINS expanded (click header or /plugins)
+	Side           map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
+	Dialogs        []*Dialog
+	connErr        string
+	AutoRetry      bool          // no RPC getter; tracked locally (default on)
+	HideThinking   bool          // /settings: skip thinking blocks in chat (pi parity, pitago-local)
+	respawning     bool          // reconnecting pi: skip pi_exited notice
+	spawnOpts      pirpc.Options // for respawning pi (login)
+	KeyPath        string        // keystore API keys
+	AuthPath       string        // mirrored pi logins (oauth state pitago saves)
+	sessionFile    string        // respawn keeps the same session
+	Cmds           []pirpc.RepoCommand
+	cmdOpen        bool
+	cmdCursor      int
+	cmdOffset      int   // first visible row of the scroll window
+	cmdItems       []int // indices into cmds
+	atOpen         bool
+	atCursor       int
+	atOffset       int // first visible row of the @ scroll window
+	atRow          int // input row holding the @ token
+	atStart        int // rune index where the @ token starts
+	atPrefix       string
+	atItems        []mention.Item
+	imgAtts        []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
+	imgSeq         int         // chip counter, never renumbered
+	trayFocus      bool        // cursor moved into the tray (↓ from last input line)
+	imgCursor      int         // selected chip while trayFocus
+	trayRet        int         // input offset to restore on Esc
+	pet            petState
+	recentModels   []RecentModel
+	recentPath     string // persisted recent models ("" = don't persist)
+	favModels      []FavEntry
+	favSet         map[string]bool // starred models lookup (see components/favorite)
+	favPath        string          // persisted favorites ("" = don't persist)
+	hist           []string        // sent messages, oldest→newest (↑↓ recall when input empty)
+	histIdx        int             // -1 = live input, else index into hist while browsing
+	CmdShortcuts   map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
+	ThemeName      string          // active TUI theme (/theme, --theme flag)
+	themePath      string          // persisted theme ("" = don't persist)
+	prefsPath      string          // persisted pitago-local prefs ("" = don't persist)
+	builtins       []Builtin
+	confirm        map[string]ConfirmFunc
+	expandTools    bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
+	quitArm        time.Time // first Ctrl+C timestamp (second press within window quits)
+	quitGen        int       // arm generation (stale disarm ticks ignored)
+	escArm         time.Time // first Esc timestamp while running (second press within window cancels)
+	escGen         int       // arm generation (stale disarm ticks ignored)
+	mouseLeakAt    time.Time // last SGR mouse-report burst (split fragments within window are residue)
+	renderCache    []string  // per-block rendered output (renderBlocks reuses clean history)
+	renderCacheKey []uint64  // fingerprint parallel to renderCache (see blockKey)
+	sideCache      string    // last built sidebar content (streaming reuses within sideThrottle)
+	sideCacheAt    time.Time // last sidebar rebuild
+	lastPaint      time.Time // last chat viewport paint (streaming coalesces to streamFrame)
+	pendingPaint   bool      // a coalesced paint is waiting on its flush tick
 }
 
 // quitArmWindow is the double-press window for Ctrl+C quit.
@@ -185,6 +193,25 @@ const escArmWindow = 3 * time.Second
 // mouseFragWindow is how long after an SGR mouse-report burst a lone
 // coordinate fragment ("65;99;18M") still counts as split-read residue.
 const mouseFragWindow = 500 * time.Millisecond
+
+// streamFrame caps streaming repaints (~30fps): text/thinking deltas mutate
+// blocks on every event but SetContent runs at most once per frame, with a
+// trailing flush tick so the UI never stays stale.
+const streamFrame = 33 * time.Millisecond
+
+// sideThrottle caps sidebar rebuilds while streaming: the sidebar barely
+// moves mid-turn (status/pet tick), so bursts reuse sideCache briefly.
+const sideThrottle = 500 * time.Millisecond
+
+// streamFlushMsg paints a previously coalesced streaming update.
+type streamFlushMsg struct{}
+
+func streamFlushCmd(d time.Duration) tea.Cmd {
+	if d <= 0 {
+		d = streamFrame
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg { return streamFlushMsg{} })
+}
 
 // mouseBurst reports a wheel/click burst within the fragment window: split
 // reads still arriving get scrubbed as residue, not typed as text.
@@ -553,7 +580,13 @@ func (m *Model) Refresh() {
 	if follow {
 		m.vp.GotoBottom()
 	}
-	m.sideVp.SetContent(m.buildSidebarContent())
+	now := time.Now()
+	s := m.buildSidebarContent()
+	m.sideCache = s
+	m.sideCacheAt = now
+	m.sideVp.SetContent(s)
+	m.lastPaint = now
+	m.pendingPaint = false
 }
 
 // ToggleSide hides/shows the sidebar and reflows chat+input widths
@@ -622,7 +655,67 @@ func (m *Model) RefreshFollow() {
 	}
 	m.vp.SetContent(m.renderBlocks())
 	m.vp.GotoBottom()
-	m.sideVp.SetContent(m.buildSidebarContent())
+	now := time.Now()
+	s := m.buildSidebarContent()
+	m.sideCache = s
+	m.sideCacheAt = now
+	m.sideVp.SetContent(s)
+	m.lastPaint = now
+	m.pendingPaint = false
+}
+
+// refreshStreaming paints a high-frequency pi event (text/thinking delta,
+// tool partial result) at most once per streamFrame: bursts mutate blocks
+// on every event but share one SetContent, with a trailing flush tick so
+// the last delta never stays stale. The sidebar rebuilds at most once per
+// sideThrottle mid-burst.
+func (m *Model) refreshStreaming() tea.Cmd {
+	if !m.ready {
+		return nil
+	}
+	now := time.Now()
+	if !m.lastPaint.IsZero() && now.Sub(m.lastPaint) < streamFrame {
+		if !m.pendingPaint {
+			m.pendingPaint = true
+			return streamFlushCmd(streamFrame - now.Sub(m.lastPaint))
+		}
+		return nil
+	}
+	follow := m.vp.AtBottom()
+	m.vp.SetContent(m.renderBlocks())
+	if follow {
+		m.vp.GotoBottom()
+	}
+	if m.sideCache == "" || now.Sub(m.sideCacheAt) >= sideThrottle {
+		s := m.buildSidebarContent()
+		m.sideCache = s
+		m.sideCacheAt = now
+		m.sideVp.SetContent(s)
+	}
+	m.lastPaint = now
+	m.pendingPaint = false
+	return nil
+}
+
+// flushStreaming paints a previously coalesced streaming update.
+func (m *Model) flushStreaming() {
+	if !m.ready || !m.pendingPaint {
+		return
+	}
+	m.pendingPaint = false
+	follow := m.vp.AtBottom()
+	m.vp.SetContent(m.renderBlocks())
+	if follow {
+		m.vp.GotoBottom()
+	}
+	now := time.Now()
+	if m.sideCache == "" || now.Sub(m.sideCacheAt) >= sideThrottle {
+		s := m.buildSidebarContent()
+		m.sideCache = s
+		m.sideCacheAt = now
+		m.sideVp.SetContent(s)
+	}
+	m.lastPaint = now
 }
 
 // Cwd is the pi session working directory (picker loaders live outside
@@ -720,6 +813,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.Side = prefs.Side
+	m.CmdShortcuts = prefs.CmdShortcuts
 	palette.Win = prefs.EffectiveAutocompleteMax()
 }
 

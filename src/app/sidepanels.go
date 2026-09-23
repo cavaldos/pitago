@@ -544,14 +544,30 @@ func (m *Model) applyPiTaskResult(toolName, argsRaw, resultText string) bool {
 	return false
 }
 
-// rawField pulls one top-level field out of an event envelope
-// (e.g. details/result/input that typed structs drop).
-func rawField(raw json.RawMessage, key string) json.RawMessage {
+// envFields parses an event envelope once and returns the requested
+// top-level fields (nil for missing): one parse, not one per field.
+func envFields(raw json.RawMessage, keys ...string) map[string]json.RawMessage {
 	var env map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil
 	}
-	return env[key]
+	out := make(map[string]json.RawMessage, len(keys))
+	for _, k := range keys {
+		out[k] = env[k]
+	}
+	return out
+}
+
+// todosOf pulls the "todos" array out of a details object: one parse of
+// that small object instead of another scan of the whole envelope.
+func todosOf(details json.RawMessage) json.RawMessage {
+	var d struct {
+		Todos json.RawMessage `json:"todos"`
+	}
+	if err := json.Unmarshal(details, &d); err != nil {
+		return nil
+	}
+	return d.Todos
 }
 
 // pi-tasks file store --------------------------------------------------------

@@ -183,13 +183,13 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			[]string{"providers · keys · OAuth"},
 			[]string{psecActLogin}, msg
 	case PsecSkill:
-		msg = "Enter fills /command in the input · Esc closes"
+		msg = "Enter fills /command · Ctrl+S assigns Alt-shortcut · Esc closes"
 		for _, c := range m.Cmds {
 			if c.Source != "skill" {
 				continue
 			}
 			opts = append(opts, "/"+c.Name)
-			descs = append(descs, shortDesc(c.Description, 48))
+			descs = append(descs, shortDesc(c.Description, 48)+m.shortcutSuffix(c.Name))
 			payload = append(payload, c.Name)
 		}
 		if len(opts) == 0 {
@@ -198,13 +198,13 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = []string{""}
 		}
 	case PsecPrompt:
-		msg = "Enter fills /command in the input · Esc closes"
+		msg = "Enter fills /command · Ctrl+S assigns Alt-shortcut · Esc closes"
 		for _, c := range m.Cmds {
 			if c.Source != "prompt" {
 				continue
 			}
 			opts = append(opts, "/"+c.Name)
-			descs = append(descs, shortDesc(c.Description, 48))
+			descs = append(descs, shortDesc(c.Description, 48)+m.shortcutSuffix(c.Name))
 			payload = append(payload, c.Name)
 		}
 		if len(opts) == 0 {
@@ -213,7 +213,7 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = []string{""}
 		}
 	case PsecExt:
-		msg = "Enter fills /command in the input · Esc closes"
+		msg = "Enter fills /command · Ctrl+S assigns Alt-shortcut · Esc closes"
 		for _, c := range m.Cmds {
 			if c.Source != "extension" {
 				continue
@@ -223,7 +223,7 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 				d += " [" + tag + "]"
 			}
 			opts = append(opts, "/"+c.Name)
-			descs = append(descs, d)
+			descs = append(descs, d+m.shortcutSuffix(c.Name))
 			payload = append(payload, c.Name)
 		}
 		if len(opts) == 0 {
@@ -625,6 +625,26 @@ func psecDesc(payload, desc string, maxW int) string {
 	return toolStyle.Render("— ") + sideStateStyle(state).Render(state) + toolStyle.Render(rest)
 }
 
+// shortcutSuffix renders the assigned Alt-shortcut for a /command row
+// (" · ⌥X", "" when none).
+func (m *Model) shortcutSuffix(cmd string) string {
+	if l := m.shortcutForCmd(cmd); l != "" {
+		return " · " + shortcutDisplay(l)
+	}
+	return ""
+}
+
+// shortcutTarget resolves the highlighted right-pane row to its assignable
+// /command (skill/prompt/extension runnable rows only, "" otherwise).
+func shortcutTarget(d *Dialog, ri int) string {
+	switch d.CurPsec() {
+	case PsecSkill, PsecPrompt, PsecExt:
+	default:
+		return ""
+	}
+	return payloadOf(d, ri)
+}
+
 // extTag shortens an extension source ("npm:pi-subagents" → "pi-subagents")
 // for the row suffix.
 func extTag(c pirpc.RepoCommand) string {
@@ -770,6 +790,18 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		return m, nil
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
+		return m, nil
+	case tea.KeyCtrlS:
+		// Assign an Alt-shortcut to the highlighted /command (hub stays
+		// underneath the capture dialog; rows reload on close).
+		if !d.ProvFocus {
+			if ri := psecCursor(d); ri >= 0 {
+				if cmd := shortcutTarget(d, ri); cmd != "" {
+					m.openShortcutCapture(cmd)
+					return m, nil
+				}
+			}
+		}
 		return m, nil
 	case tea.KeyBackspace, tea.KeyDelete:
 		if km.Type == tea.KeyBackspace && d.Filter != "" {

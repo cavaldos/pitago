@@ -13,9 +13,10 @@ import (
 
 // Prefs is the persisted pitago-local display prefs (zero = pi defaults).
 type Prefs struct {
-	HideThinking    bool            `json:"hideThinking,omitempty"`
-	AutocompleteMax int             `json:"autocompleteMax,omitempty"`
-	Side            map[string]bool `json:"side,omitempty"` // sidebar section key → visible (missing = default)
+	HideThinking    bool              `json:"hideThinking,omitempty"`
+	AutocompleteMax int               `json:"autocompleteMax,omitempty"`
+	Side            map[string]bool   `json:"side,omitempty"` // sidebar section key → visible (missing = default)
+	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"` // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 }
 
 // PrefsPath is ~/.config/pitago/prefs.json ("" when unresolvable).

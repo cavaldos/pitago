@@ -130,7 +130,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.(type) {
 		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg, escDisarmMsg,
-			petTickMsg, petFlashMsg,
+			petTickMsg, petFlashMsg, streamFlushMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
 			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg:
 		default:
@@ -268,24 +268,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.state.Model.ContextWindow > 0 {
 				m.ctxWindow = msg.state.Model.ContextWindow
 			}
-		m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
-		if msg.state.SessionFile != "" {
-			m.sessionFile = msg.state.SessionFile
-			// New identity → new store file: re-read now, otherwise the
-			// sidebar keeps the old session's list until the next tool
-			// event or menu step (looks like a "delayed" update).
-			m.refreshPiTasks()
-		}
-		if !msg.state.IsStreaming && m.thinking {
-			// A settle swallowed behind an open dialog: the turn really
-			// ended. (A just-sent prompt self-heals: agent_start
-			// re-anchors the pet and flips the status back.)
-			m.thinking = false
-			m.Status = "ready"
+			m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
+			if msg.state.SessionFile != "" {
+				m.sessionFile = msg.state.SessionFile
+				// New identity → new store file: re-read now, otherwise the
+				// sidebar keeps the old session's list until the next tool
+				// event or menu step (looks like a "delayed" update).
+				m.refreshPiTasks()
+			}
+			if !msg.state.IsStreaming && m.thinking {
+				// A settle swallowed behind an open dialog: the turn really
+				// ended. (A just-sent prompt self-heals: agent_start
+				// re-anchors the pet and flips the status back.)
+				m.thinking = false
+				m.Status = "ready"
+				m.Refresh()
+				return m, m.petSettled()
+			}
 			m.Refresh()
-			return m, m.petSettled()
-		}
-		m.Refresh()
 		}
 		return m, nil
 
@@ -351,6 +351,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pet.status = petIdle
 			m.Refresh()
 		}
+		return m, nil
+
+	case streamFlushMsg:
+		// Trailing paint for a coalesced streaming burst.
+		m.flushStreaming()
 		return m, nil
 
 	case SessionResetMsg:
@@ -720,6 +725,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.SwitchToRecent(n)
 			}
 		}
+		// Hub-assigned Alt shortcuts: stage the /command for review
+		// (Enter sends, like palette Enter). Stale entries (uninstalled
+		// since) toast instead of firing into "unknown command".
+		if label, ok := shortcutLabelOf(msg); ok && !shortcutReserved(label) {
+			if cmd, ok := m.findCmdShortcut(label); ok {
+				if m.hasCmd(cmd) {
+					m.FillCommand(cmd)
+				} else {
+					m.AddBlock(Block{Kind: "notice", Text: "/" + cmd + " not installed — shortcut kept"})
+					m.Refresh()
+				}
+				return m, nil
+			}
+		}
 		// Alt+↑↓ PgUp PgDn Home End, or Ctrl+↑↓ PgUp PgDn Home End:
 		// scroll sidebar without a mouse. Wheel needs --mouse; Alt is
 		// broken on some terminals (macOS Option), so Ctrl is the
@@ -959,13 +978,15 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 			ToolCallID string          `json:"toolCallId"`
 			ToolName   string          `json:"toolName"`
 			Args       json.RawMessage `json:"args"`
+			Details    json.RawMessage `json:"details"`
+			Input      json.RawMessage `json:"input"`
 		}
 		_ = json.Unmarshal(ev.Raw, &p)
 		i := m.ensureTool(p.ToolCallID, p.ToolName)
 		m.setToolArgs(i, p.ToolName, string(p.Args))
 		m.blocks[i].ToolStatus = "running"
 		if isTodoTool(p.ToolName) {
-			m.updateTodosFromRaw(p.Args, rawField(ev.Raw, "details"), rawField(ev.Raw, "input"))
+			m.updateTodosFromRaw(p.Args, p.Details, p.Input)
 		}
 		pcmd = m.petSet(petWorking)
 	case "tool_execution_update":
@@ -1000,8 +1021,9 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 			m.blocks[i].ToolResult = diffOfDetails(p.Result.Details)
 		}
 		if isTodoTool(p.ToolName) {
-			m.updateTodosFromRaw(p.Result.Details, rawField(p.Result.Details, "todos"),
-				rawField(ev.Raw, "details"), rawField(ev.Raw, "result"),
+			f := envFields(ev.Raw, "details", "result")
+			m.updateTodosFromRaw(p.Result.Details, todosOf(p.Result.Details),
+				f["details"], f["result"],
 				json.RawMessage(joinText(p.Result.Content)))
 			// pi-tasks single-task ops (no full list): fold in place.
 			m.applyPiTaskResult(p.ToolName, m.blocks[i].ToolArgsRaw, m.blocks[i].ToolResult)
@@ -1059,6 +1081,17 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 			text = "pi has exited (" + reason + ") — Ctrl+C to close the TUI"
 		}
 		m.AddBlock(Block{Kind: "notice", Text: text, Err: true})
+	}
+	// High-frequency streaming events share one paint per frame (plus a
+	// trailing flush tick); everything else repaints immediately.
+	if ev.Type == "message_update" || ev.Type == "tool_execution_update" {
+		if flush := m.refreshStreaming(); flush != nil {
+			if pcmd == nil {
+				return m, flush
+			}
+			return m, tea.Batch(pcmd, flush)
+		}
+		return m, pcmd
 	}
 	m.Refresh()
 	return m, pcmd
@@ -1369,6 +1402,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if d.Kind == "login" && len(d.Provs) > 0 {
 		return m.updateLoginDialog(km, d)
+	}
+	if d.Kind == shortcutKind {
+		return m.updateShortcutDialog(km, d)
 	}
 	n := len(d.FIdx)
 	switch km.Type {
