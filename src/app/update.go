@@ -1160,11 +1160,15 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
 	case "agent_end":
-		m.thinking = false
-		m.escArm = time.Time{} // turn over: cancel arm no longer applies
-		m.Status = "ready"
+		// Per-round boundary, NOT turn end: pi runs agent_start…agent_end
+		// per round and agent_settled once when fully idle (see pi's
+		// _runAgentPrompt: prompt/continue loop, settled in finally).
+		// Keep thinking/Status/pet untouched so the footer keeps showing
+		// "running" + ticking Working/Thinking across thinking↔tool
+		// rounds; agent_settled (+ the IsStreaming reconciler) owns the
+		// terminal reset.
 		m.Refresh()
-		return m, m.petSettled()
+		return m, nil
 	case "extension_ui_request":
 		return m.handleUIRequest(ev.Raw), nil
 	case "queue_update":
