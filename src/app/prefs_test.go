@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestPrefsRoundTrip(t *testing.T) {
@@ -65,5 +67,204 @@ func TestSettingsMsgPassesDialog(t *testing.T) {
 	mm, _ := m.Update(SettingsMsg{Opts: []string{"Steering: all"}, Descs: []string{"y"}})
 	if got := mm.(Model).Dialogs[0].Options[0]; got != "Steering: all" {
 		t.Errorf("settings rows should refresh behind the dialog, got %q", got)
+	}
+}
+
+// Typing in /settings filters rows by label, description, or section.
+func TestSettingsFilter(t *testing.T) {
+	d := &Dialog{Kind: "settings", Title: "Agent settings",
+		Options: []string{"Model: m", "Theme: default", "Transport: auto"},
+		Descs:   []string{"Enter: open model picker", "Enter: open theme picker", "Enter: next · reconnects pi"},
+		Providers: []string{"Agent", "Display", "Network"},
+	}
+	d.Reindex()
+	if len(d.FIdx) != 3 {
+		t.Fatalf("unfiltered must show all rows, got %d", len(d.FIdx))
+	}
+	d.Filter = "network"
+	d.Reindex()
+	if len(d.FIdx) != 1 || d.Options[d.FIdx[0]] != "Transport: auto" {
+		t.Fatalf("filter by section must match transport, got %v", d.FIdx)
+	}
+	d.Filter = "theme"
+	d.Reindex()
+	if len(d.FIdx) != 1 || d.Options[d.FIdx[0]] != "Theme: default" {
+		t.Fatalf("filter by label must match theme, got %v", d.FIdx)
+	}
+	if !isFilterKind("settings") {
+		t.Error("settings must be a filter kind so typing filters")
+	}
+}
+
+func settingsTwoPaneDialog() *Dialog {
+	d := &Dialog{Kind: "settings", Title: "Agent settings",
+		Options: []string{"Model: m", "Steering: all", "Theme: default", "Transport: auto", "Quiet startup: off"},
+		Descs: []string{"Enter: open model picker", "Enter: switch all/one-at-a-time",
+			"Enter: open theme picker", "Enter: next · reconnects pi", "Enter: toggle · reconnects pi"},
+		Providers:  []string{"Agent", "Agent", "Display", "Network", "Display"},
+		Provs:      []string{"Agent", "Display", "Network"},
+		ProvCursor: 0, ProvFocus: true,
+	}
+	d.Reindex()
+	return d
+}
+
+// Empty filter scopes the right pane to the selected group; typing on the
+// left searches globally, typing on the right stays scoped.
+func TestSettingsTwoPaneScopesGroup(t *testing.T) {
+	d := settingsTwoPaneDialog()
+	if len(d.FIdx) != 2 {
+		t.Fatalf("Agent group must show 2 rows, got %v", d.FIdx)
+	}
+	d.ProvCursor = 1 // Display
+	d.Reindex()
+	if len(d.FIdx) != 2 || d.Options[d.FIdx[0]] != "Theme: default" {
+		t.Fatalf("Display group must show theme + quiet, got %v", d.FIdx)
+	}
+	d.Filter = "transport" // left pane: global search
+	d.Reindex()
+	if len(d.FIdx) != 1 || d.Options[d.FIdx[0]] != "Transport: auto" {
+		t.Fatalf("global filter must match transport, got %v", d.FIdx)
+	}
+	d.Filter = "theme" // right pane: scoped to Display
+	d.ProvFocus = false
+	d.Reindex()
+	if len(d.FIdx) != 1 {
+		t.Fatalf("scoped filter must match theme in Display, got %v", d.FIdx)
+	}
+	d.ProvCursor = 0 // right pane scoped to Agent: no theme there
+	d.Reindex()
+	if len(d.FIdx) != 0 {
+		t.Fatalf("scoped filter must miss outside the group, got %v", d.FIdx)
+	}
+}
+
+// ←/→/Tab moves between panes, typing filters, Enter on a group dives right.
+func TestSettingsTwoPaneKeys(t *testing.T) {
+	m := Model{}
+	m.Dialogs = []*Dialog{settingsTwoPaneDialog()}
+	um, _ := m.updateDialog(tea.KeyMsg{Type: tea.KeyRight})
+	m = um.(Model)
+	if m.Dialogs[0].ProvFocus {
+		t.Fatal("→ must dive into the rows pane")
+	}
+	um, _ = m.updateDialog(tea.KeyMsg{Type: tea.KeyDown})
+	m = um.(Model)
+	if m.Dialogs[0].Cursor != 1 {
+		t.Fatalf("↓ must move the row cursor, got %d", m.Dialogs[0].Cursor)
+	}
+	um, _ = m.updateDialog(tea.KeyMsg{Type: tea.KeyLeft})
+	m = um.(Model)
+	if !m.Dialogs[0].ProvFocus {
+		t.Fatal("← must return to the groups pane")
+	}
+	um, _ = m.updateDialog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("quiet")})
+	m = um.(Model)
+	if len(m.Dialogs[0].FIdx) != 1 {
+		t.Fatalf("typing on the left must search globally, got %v", m.Dialogs[0].FIdx)
+	}
+	um, _ = m.updateDialog(tea.KeyMsg{Type: tea.KeyEnter})
+	m = um.(Model)
+	if m.Dialogs[0].ProvFocus {
+		t.Fatal("Enter on a group must dive into the rows pane")
+	}
+}
+
+// SettingsMsg opens a two-pane dialog; refresh keeps the group cursor by
+// name and preserves the typed filter.
+func TestSettingsMsgBuildsTwoPane(t *testing.T) {
+	opts := []string{"Model: m", "Theme: default", "Transport: auto"}
+	descs := []string{"x", "y", "z"}
+	cats := []string{"Agent", "Display", "Network"}
+	m := &Model{}
+	mm, _ := m.Update(SettingsMsg{Opts: opts, Descs: descs, Cats: cats})
+	d := mm.(Model).Dialogs[0]
+	if len(d.Provs) != 4 || d.Provs[0] != "All" || d.Provs[1] != "Agent" || !d.ProvFocus {
+		t.Fatalf("must open two-pane on groups with All on top, got provs=%v focus=%v", d.Provs, d.ProvFocus)
+	}
+	if len(d.FIdx) != 3 {
+		t.Fatalf("All must show every row, got %v", d.FIdx)
+	}
+	d.ProvCursor = 1 // Agent
+	d.Reindex()
+	if len(d.FIdx) != 1 || d.Options[d.FIdx[0]] != "Model: m" {
+		t.Fatalf("right pane must scope to Agent, got %v", d.FIdx)
+	}
+	// seeded filter lands on the matches' group
+	m2 := &Model{}
+	mm2, _ := m2.Update(SettingsMsg{Opts: opts, Descs: descs, Cats: cats, Filter: "transport"})
+	d2 := mm2.(Model).Dialogs[0]
+	if d2.ProvFocus || len(d2.FIdx) != 1 || d2.Provs[d2.ProvCursor] != "Network" {
+		t.Fatalf("seeded filter must focus Network matches, got focus=%v cursor=%v fidx=%v",
+			d2.ProvFocus, d2.Provs[d2.ProvCursor], d2.FIdx)
+	}
+	// refresh preserves group + filter
+	m3 := mm.(Model)
+	m3.Dialogs[0].ProvCursor = 3
+	m3.Dialogs[0].Filter = "auto"
+	mm3, _ := m3.Update(SettingsMsg{Opts: opts, Descs: descs, Cats: cats})
+	d3 := mm3.(Model).Dialogs[0]
+	if d3.Provs[d3.ProvCursor] != "Network" || d3.Filter != "auto" {
+		t.Fatalf("refresh must keep group + filter, got %v/%q", d3.Provs, d3.Filter)
+	}
+}
+
+// Two-pane settings renders GROUPS + scoped rows without panicking.
+func TestSettingsTwoPaneRenders(t *testing.T) {
+	m := Model{}
+	m.winW, m.winH = 120, 30
+	m.Dialogs = []*Dialog{settingsTwoPaneDialog()}
+	out := stripANSI(m.renderSettingsDialog(m.Dialogs[0]))
+	for _, want := range []string{"GROUPS", "Agent", "Model", "Steering"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Transport") {
+		t.Errorf("Agent scope must hide Network rows\n%s", out)
+	}
+	// No wrapped cells: each group count stays on its group's line and
+	// each row keeps its value (a pane overflow used to drop the count
+	// onto its own line).
+	lines := strings.Split(out, "\n")
+	sameLine := func(name, want string) {
+		t.Helper()
+		found := false
+		for _, ln := range lines {
+			if strings.Contains(ln, name) && !strings.Contains(ln, "·") {
+				found = true
+				if !strings.Contains(ln, want) {
+					t.Errorf("%q line lost %q (wrapped?)\n%s", name, want, out)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no line for %q\n%s", name, out)
+		}
+	}
+	sameLine("Network", "1")
+	sameLine("Display", "2")
+	sameLine("Steering", "all")
+
+	// "All" on top shows every row with the total count on its line.
+	dAll := settingsTwoPaneDialog()
+	dAll.Provs = append([]string{"All"}, dAll.Provs...)
+	dAll.ProvCursor = 0
+	dAll.Reindex()
+	if len(dAll.FIdx) != len(dAll.Options) {
+		t.Fatalf("All must show every row, got %v", dAll.FIdx)
+	}
+	outAll := stripANSI(m.renderSettingsDialog(dAll))
+	found := false
+	for _, ln := range strings.Split(outAll, "\n") {
+		if strings.Contains(ln, "All") && !strings.Contains(ln, "·") {
+			found = true
+			if !strings.Contains(ln, "5") {
+				t.Errorf("All line lost its total (wrapped?)\n%s", outAll)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no All line\n%s", outAll)
 	}
 }

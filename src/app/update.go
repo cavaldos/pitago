@@ -513,11 +513,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		opts, descs := msg.Opts, msg.Descs
 		if len(m.Dialogs) > 0 && m.Dialogs[0].Kind == "settings" {
 			d := m.Dialogs[0]
+			cur := ""
+			if d.ProvCursor >= 0 && d.ProvCursor < len(d.Provs) {
+				cur = d.Provs[d.ProvCursor]
+			}
 			d.Options, d.Descs, d.Settings = opts, descs, msg.St
+			if len(msg.Cats) > 0 {
+				d.Providers = msg.Cats
+				d.Provs = uniqueGroups(msg.Cats)
+				d.ProvCursor = 0
+				for i, g := range d.Provs {
+					if g == cur {
+						d.ProvCursor = i
+						break
+					}
+				}
+			}
 			d.Reindex()
 		} else {
-			d := &Dialog{Kind: "settings", Title: "Agent settings", Options: opts, Descs: descs, Settings: msg.St}
-			d.Reindex()
+			d := &Dialog{Kind: "settings", Title: "Agent settings",
+				Message: "type to filter · Enter changes value · file rows reconnect pi",
+				Options: opts, Descs: descs, Providers: msg.Cats, Settings: msg.St, Filter: msg.Filter}
+			d.Provs = uniqueGroups(msg.Cats)
+			d.ProvCursor, d.ProvFocus = 0, true
+			if strings.TrimSpace(msg.Filter) != "" {
+				// seeded filter (/settings network): search globally for
+				// the first match, jump to its group, land on the matches.
+				d.ProvFocus = true
+				d.Reindex()
+				if len(d.FIdx) > 0 {
+					if g := providerAt(msg.Cats, d.FIdx[0]); g != "" {
+						for i, gg := range d.Provs {
+							if gg == g {
+								d.ProvCursor = i
+								break
+							}
+						}
+					}
+				}
+				d.ProvFocus = false
+				d.Cursor = 0
+				d.Reindex()
+			} else {
+				d.Reindex()
+			}
 			m.Dialogs = append(m.Dialogs, d)
 		}
 		m.Refresh()
@@ -1448,6 +1487,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if d.Kind == "login" && len(d.Provs) > 0 {
 		return m.updateLoginDialog(km, d)
 	}
+	if d.Kind == "settings" && len(d.Provs) > 0 {
+		return m.updateSettingsDialog(km, d)
+	}
 	if d.Kind == shortcutKind {
 		return m.updateShortcutDialog(km, d)
 	}
@@ -1690,6 +1732,104 @@ func (m Model) updateModelDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// updateSettingsDialog navigates the two-pane /settings picker: left =
+// groups, right = the selected group's rows. ↑↓ moves in the focused
+// pane, ←/→/Tab switches pane, typing filters (left = global, right =
+// scoped to the group), Enter on the left dives right, Enter on the
+// right changes the value (confirm lives in src/builtin).
+func (m Model) updateSettingsDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
+	switch km.Type {
+	case tea.KeyUp, tea.KeyDown:
+		down := km.Type == tea.KeyDown
+		if d.ProvFocus {
+			if n := len(d.Provs); n > 0 {
+				if down {
+					d.ProvCursor = (d.ProvCursor + 1) % n
+				} else {
+					d.ProvCursor = (d.ProvCursor - 1 + n) % n
+				}
+				d.Reindex()
+				d.Cursor = 0
+			}
+		} else if n := len(d.FIdx); n > 0 {
+			if down {
+				d.Cursor = (d.Cursor + 1) % n
+			} else {
+				d.Cursor = (d.Cursor - 1 + n) % n
+			}
+		}
+		return m, nil
+	case tea.KeyLeft:
+		if !d.ProvFocus {
+			d.ProvFocus = true
+			d.Reindex()
+			d.Cursor = 0
+		}
+		return m, nil
+	case tea.KeyRight:
+		if d.ProvFocus {
+			d.ProvFocus = false
+			d.Reindex()
+			d.Cursor = 0
+		}
+		return m, nil
+	case tea.KeyTab:
+		d.ProvFocus = !d.ProvFocus
+		d.Reindex()
+		d.Cursor = 0
+		return m, nil
+	case tea.KeyBackspace:
+		if d.Filter != "" {
+			r := []rune(d.Filter) // rune-wise: byte trim corrupts Vietnamese
+			d.Filter = string(r[:len(r)-1])
+			d.Reindex()
+			d.Cursor = 0
+		}
+		return m, nil
+	case tea.KeyEsc:
+		m.Dialogs = m.Dialogs[1:]
+		m.refreshPiTasks()
+		m.Refresh()
+		return m, m.ReconcileTurnCmd()
+	case tea.KeyEnter:
+		if d.ProvFocus {
+			d.ProvFocus = false
+			d.Reindex()
+			d.Cursor = 0
+			return m, nil
+		}
+		return m.confirmDialog(d)
+	}
+	if km.Type == tea.KeySpace {
+		d.Filter += " "
+		d.Reindex()
+		d.Cursor = 0
+		return m, nil
+	}
+	if km.Type == tea.KeyRunes {
+		d.Filter += km.String()
+		d.Reindex()
+		d.Cursor = 0
+		return m, nil
+	}
+	return m, nil
+}
+
+// uniqueGroups collects section names in first-appearance order, with an
+// "All" entry on top that never scopes (model-picker parity).
+func uniqueGroups(cats []string) []string {
+	seen := map[string]bool{}
+	out := []string{"All"}
+	for _, c := range cats {
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
+
 // confirmDialog handles Enter per dialog kind.
 
 func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
@@ -1916,7 +2056,19 @@ func (d *Dialog) Reindex() {
 	d.FIdx = d.FIdx[:0]
 	f := strings.ToLower(d.Filter)
 	prov := d.selProv()
-	if f != "" && d.ProvFocus {
+	if d.Kind == "settings" && len(d.Provs) > 0 {
+		// two-pane groups: empty filter (or typing on the right) scopes
+		// to the selected group; typing on the left searches globally.
+		// "All" never scopes (like the model picker's All providers).
+		if f == "" || !d.ProvFocus {
+			if d.ProvCursor >= 0 && d.ProvCursor < len(d.Provs) {
+				prov = d.Provs[d.ProvCursor]
+				if prov == "All" {
+					prov = ""
+				}
+			}
+		}
+	} else if f != "" && d.ProvFocus {
 		prov = ""
 	}
 	for i := range d.Options {

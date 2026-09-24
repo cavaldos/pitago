@@ -361,7 +361,7 @@ type SourceInfo struct {
 type RepoCommand struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Source      string `json:"source"` // builtin | extension | prompt | skill
+	Source      string `json:"source"` // builtin | pitago | extension | prompt | skill
 	Location    string `json:"location,omitempty"`
 	Path        string `json:"path,omitempty"`
 	SourceInfo  *SourceInfo `json:"sourceInfo,omitempty"`

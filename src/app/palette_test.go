@@ -106,6 +106,37 @@ func TestCmdExtensionTag(t *testing.T) {
 	}
 }
 
+// Pitago-only commands show [pitago] in the popup, pi-parity stays [builtin].
+func TestCmdPitagoTag(t *testing.T) {
+	var m Model
+	m.UseBuiltins([]Builtin{
+		{Name: "model", Desc: "Select model", Origin: "pi"},
+		{Name: "recent", Desc: "Switch recent model", Origin: "pitago"},
+	}, nil)
+	m.Cmds = BuiltinRepo(m.builtins)
+	if m.Cmds[0].Source != "builtin" || m.Cmds[1].Source != "pitago" {
+		t.Fatalf("sources = %q/%q, want builtin/pitago", m.Cmds[0].Source, m.Cmds[1].Source)
+	}
+	m.ta = textarea.New()
+	m.winW, m.winH = 120, 30
+	m.ta.SetValue("/")
+	m.refreshCmds()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	plain := format.StripANSI(m.renderCmdPopup())
+	for _, want := range []string{"/model — Select model [builtin]", "/recent — Switch recent model [pitago]"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("popup missing %q\n%s", want, plain)
+		}
+	}
+	// typing the origin narrows to it
+	m.ta.SetValue("/pitago")
+	m.refreshCmds()
+	if len(m.cmdItems) != 1 || m.Cmds[m.cmdItems[0]].Name != "recent" {
+		t.Fatalf("filter by origin must match /recent, got %v", m.cmdItems)
+	}
+}
+
 // Regression (screenshot): the / popup was a fixed 10-row window, so on a
 // short terminal it overflowed winH (or crushed the chat to 3 rows). The
 // window must shrink so the frame stays exactly winH rows.

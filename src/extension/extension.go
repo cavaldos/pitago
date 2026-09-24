@@ -20,10 +20,12 @@ const (
 	SourceExtension = "extension"
 	SourcePrompt    = "prompt"
 	SourceSkill     = "skill"
-	SourceBuiltin   = "builtin" // pitago-local (see src/builtin), never from RPC
+	SourceBuiltin   = "builtin" // pi-parity re-implements (see src/builtin), never from RPC
+	SourcePitago    = "pitago"  // pitago-only commands ([pitago] in the popup)
 )
 
 // Summarize counts repo commands per source for the sidebar.
+// Pitago-only commands fold into the builtin bucket (counts stay comparable).
 func Summarize(cmds []pirpc.RepoCommand) (ext, prompt, skill, builtin int) {
 	for _, c := range cmds {
 		switch c.Source {
@@ -33,7 +35,7 @@ func Summarize(cmds []pirpc.RepoCommand) (ext, prompt, skill, builtin int) {
 			prompt++
 		case SourceSkill:
 			skill++
-		case SourceBuiltin:
+		case SourceBuiltin, SourcePitago:
 			builtin++
 		}
 	}

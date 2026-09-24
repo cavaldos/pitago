@@ -7,8 +7,9 @@ import (
 	"pitago/src/app"
 )
 
-// Pi parity: 7 live rows + 14 file/local rows (image block first, like the
-// stock pi screenshot: skill commands, show images, image width, ...).
+// Pi parity: 7 live rows + 15 file/local rows (image block first, like the
+// stock pi screenshot: skill commands, show images, image width, ...),
+// grouped into sections for scanning.
 func TestSettingsOptionsPiParity(t *testing.T) {
 	st := app.SettingsState{
 		Model: "m", Thinking: "high", Steering: "all", FollowUp: "all",
@@ -24,9 +25,12 @@ func TestSettingsOptionsPiParity(t *testing.T) {
 		},
 		HideThinking: false, AutocompleteMax: 10,
 	}
-	opts, descs := settingsOptions(st)
+	opts, descs, cats := settingsOptions(st)
 	if len(opts) != 7+len(fileSettings) {
 		t.Fatalf("expected %d rows, got %d", 7+len(fileSettings), len(opts))
+	}
+	if len(cats) != len(opts) || len(descs) != len(opts) {
+		t.Fatalf("opts/descs/cats must parallel each other, got %d/%d/%d", len(opts), len(descs), len(cats))
 	}
 	for i, want := range []string{"Skill commands: on", "Show images: on", "Image width: 60",
 		"Auto-resize images: on", "Block images: off"} {
@@ -36,6 +40,25 @@ func TestSettingsOptionsPiParity(t *testing.T) {
 	}
 	if !strings.Contains(descs[7], "reconnects pi") {
 		t.Errorf("file rows should warn about reconnect, got %q", descs[7])
+	}
+	// sections: live agent rows first, theme display, skill agent,
+	// images together, network together, pitago-local last
+	for i, want := range []string{"Agent", "Agent", "Agent", "Agent", "Agent", "Agent", "Display"} {
+		if cats[i] != want {
+			t.Errorf("live row %d: expected group %q, got %q", i, want, cats[i])
+		}
+	}
+	if cats[7] != "Agent" || cats[8] != "Images" {
+		t.Errorf("skill should stay Agent and images grouped, got %q/%q", cats[7], cats[8])
+	}
+	seen := map[string]bool{}
+	for _, c := range cats {
+		seen[c] = true
+	}
+	for _, want := range []string{"Agent", "Display", "Images", "Network", "Privacy", "Pitago"} {
+		if !seen[want] {
+			t.Errorf("missing group %q in %v", want, cats)
+		}
 	}
 }
 

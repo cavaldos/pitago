@@ -260,15 +260,16 @@ func doOAuthLogout(m *app.Model, provider, authPath string) tea.Cmd {
 
 // loadSettings fetches live state + pi settings file + pitago prefs to
 // build the settings dialog (pi parity: the first rows are live agent
-// state, the rest mirror stock pi's settings menu).
-func loadSettings(m *app.Model) tea.Cmd {
+// state, the rest mirror stock pi's settings menu, grouped for scanning).
+// arg seeds the filter (e.g. /settings network).
+func loadSettings(m *app.Model, arg string) tea.Cmd {
 	return func() tea.Msg {
 		sst, err := loadSettingsState(m)
 		if err != nil {
 			return app.SettingsMsg{Err: err}
 		}
-		opts, descs := settingsOptions(sst)
-		return app.SettingsMsg{St: sst, Opts: opts, Descs: descs}
+		opts, descs, cats := settingsOptions(sst)
+		return app.SettingsMsg{St: sst, Opts: opts, Descs: descs, Cats: cats, Filter: arg}
 	}
 }
 
@@ -307,9 +308,11 @@ func onoff(b bool) string {
 
 // fileSetting is one settings.json-backed (or pitago-local) /settings row.
 // vals are the display values to cycle; toVal converts back to the file
-// value; local rows apply instantly without reconnecting pi.
+// value; local rows apply instantly without reconnecting pi; group is the
+// section header shown above the row (filter matches it too).
 type fileSetting struct {
 	label string
+	group string
 	path  string // dotted settings.json path ("" = pitago-local)
 	vals  []string
 	toVal func(disp string) any
@@ -322,27 +325,27 @@ var httpTimeoutMs = []int{30000, 60000, 120000, 300000, 0}
 var trustVals = []string{"Ask", "Always trust", "Never trust"}
 var trustKeys = []string{"ask", "always", "never"}
 
-// fileSettings mirrors the applicable rows of stock pi's settings menu, in
-// pi's order (image block first, like the screenshot). Skipped as pi-TUI-only
-// or submenu: hardware cursor, editor/output padding, clear-on-shrink,
-// terminal progress, tui-mode, fullscreen×3, double-escape, mermaid,
-// changelog, tree filter, warnings + per-model thinking (submenus),
-// telemetry UI (pitago has its own updater — the key is still writable via
-// the file).
+// fileSettings mirrors the applicable rows of stock pi's settings menu,
+// grouped into sections for scanning (image block first, like pi's
+// screenshot). Skipped as pi-TUI-only or submenu: hardware cursor,
+// editor/output padding, clear-on-shrink, terminal progress, tui-mode,
+// fullscreen×3, double-escape, mermaid, changelog, warnings + per-model
+// thinking (submenus), telemetry UI (pitago has its own updater — the key
+// is still writable via the file).
 var fileSettings = []fileSetting{
-	{label: "Skill commands", path: "enableSkillCommands", vals: []string{"on", "off"},
+	{label: "Skill commands", group: "Agent", path: "enableSkillCommands", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Show images", path: "terminal.showImages", vals: []string{"on", "off"},
+	{label: "Show images", group: "Images", path: "terminal.showImages", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Image width", path: "terminal.imageWidthCells", vals: []string{"60", "80", "120"},
+	{label: "Image width", group: "Images", path: "terminal.imageWidthCells", vals: []string{"60", "80", "120"},
 		toVal: func(d string) any { return atoiOr(d, 60) }},
-	{label: "Auto-resize images", path: "images.autoResize", vals: []string{"on", "off"},
+	{label: "Auto-resize images", group: "Images", path: "images.autoResize", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Block images", path: "images.blockImages", vals: []string{"on", "off"},
+	{label: "Block images", group: "Images", path: "images.blockImages", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Transport", path: "transport", vals: []string{"auto", "sse", "websocket", "websocket-cached"},
+	{label: "Transport", group: "Network", path: "transport", vals: []string{"auto", "sse", "websocket", "websocket-cached"},
 		toVal: func(d string) any { return d }},
-	{label: "HTTP idle timeout", path: "httpIdleTimeoutMs", vals: httpTimeoutVals,
+	{label: "HTTP idle timeout", group: "Network", path: "httpIdleTimeoutMs", vals: httpTimeoutVals,
 		toVal: func(d string) any {
 			for i, l := range httpTimeoutVals {
 				if l == d {
@@ -351,13 +354,15 @@ var fileSettings = []fileSetting{
 			}
 			return 300000
 		}},
-	{label: "Cache warming", path: "cacheWarming", vals: []string{"off", "streaming", "idle"},
+	{label: "Cache warming", group: "Network", path: "cacheWarming", vals: []string{"off", "streaming", "idle"},
 		toVal: func(d string) any { return d }},
-	{label: "Hide thinking", path: "hideThinkingBlock", vals: []string{"on", "off"}, local: true,
+	{label: "Cache-miss notices", group: "Network", path: "showCacheMissNotices", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Cache-miss notices", path: "showCacheMissNotices", vals: []string{"on", "off"},
+	{label: "Hide thinking", group: "Display", path: "hideThinkingBlock", vals: []string{"on", "off"}, local: true,
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Default project trust", path: "defaultProjectTrust", vals: trustVals,
+	{label: "Quiet startup", group: "Display", path: "quietStartup", vals: []string{"on", "off"},
+		toVal: func(d string) any { return d == "on" }},
+	{label: "Default project trust", group: "Privacy", path: "defaultProjectTrust", vals: trustVals,
 		toVal: func(d string) any {
 			for i, l := range trustVals {
 				if l == d {
@@ -366,13 +371,11 @@ var fileSettings = []fileSetting{
 			}
 			return "ask"
 		}},
-	{label: "Quiet startup", path: "quietStartup", vals: []string{"on", "off"},
+	{label: "Install telemetry", group: "Privacy", path: "enableInstallTelemetry", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
-	{label: "Install telemetry", path: "enableInstallTelemetry", vals: []string{"on", "off"},
-		toVal: func(d string) any { return d == "on" }},
-	{label: "Autocomplete max", path: "", vals: []string{"3", "5", "7", "10", "15", "20"}, local: true,
+	{label: "Autocomplete max", group: "Pitago", path: "", vals: []string{"3", "5", "7", "10", "15", "20"}, local: true,
 		toVal: func(d string) any { return atoiOr(d, 10) }},
-	{label: "Tree filter mode", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
+	{label: "Tree filter mode", group: "Pitago", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
 		toVal: func(d string) any { return d }},
 }
 
@@ -443,7 +446,10 @@ func nextVal(vals []string, cur string) string {
 	return vals[0]
 }
 
-func settingsOptions(st app.SettingsState) ([]string, []string) {
+// liveSettingGroups parallels the 7 live rows: agent state first, theme last.
+var liveSettingGroups = []string{"Agent", "Agent", "Agent", "Agent", "Agent", "Agent", "Display"}
+
+func settingsOptions(st app.SettingsState) ([]string, []string, []string) {
 	opts := []string{
 		"Model: " + st.Model,
 		"Thinking: " + st.Thinking,
@@ -462,6 +468,7 @@ func settingsOptions(st app.SettingsState) ([]string, []string) {
 		"Enter: toggle",
 		"Enter: open theme picker",
 	}
+	cats := append([]string(nil), liveSettingGroups...)
 	for _, fr := range fileSettings {
 		disp := st.Vals[fr.path]
 		if fr.path == "" { // pitago-local rows
@@ -480,8 +487,9 @@ func settingsOptions(st app.SettingsState) ([]string, []string) {
 		}
 		opts = append(opts, fr.label+": "+disp)
 		descs = append(descs, foot)
+		cats = append(cats, fr.group)
 	}
-	return opts, descs
+	return opts, descs, cats
 }
 
 // settingsAction handles Enter on each settings row.
@@ -496,8 +504,8 @@ func settingsAction(m *app.Model, ri int) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return app.SettingsMsg{Err: err}
 		}
-		opts, descs := settingsOptions(sst)
-		return app.SettingsMsg{St: sst, Opts: opts, Descs: descs}
+		opts, descs, cats := settingsOptions(sst)
+		return app.SettingsMsg{St: sst, Opts: opts, Descs: descs, Cats: cats}
 	}
 	// file-backed rows (index 7+): cycle the value. Local rows apply
 	// instantly; the rest write settings.json and reconnect pi (the
@@ -594,8 +602,8 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 		applyLocalSetting(m, fr, next)
 		st.HideThinking = m.HideThinking
 		st.AutocompleteMax = palette.Win
-		opts, descs := settingsOptions(st)
-		d.Options, d.Descs, d.Settings = opts, descs, st
+		opts, descs, cats := settingsOptions(st)
+		d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
 		d.Reindex()
 		m.Refresh()
 		return m, nil
@@ -612,8 +620,8 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 		st.Vals = map[string]string{}
 	}
 	st.Vals[fr.path] = next
-	opts, descs := settingsOptions(st)
-	d.Options, d.Descs, d.Settings = opts, descs, st
+	opts, descs, cats := settingsOptions(st)
+	d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
 	d.Reindex()
 	m.Status = "reconnecting pi…"
 	m.Refresh()
@@ -977,10 +985,10 @@ func All() []app.Builtin {
 		return app.Builtin{Name: name, Desc: desc, Usage: usage, Origin: OriginPi, Run: run}
 	}
 	all := []app.Builtin{
-		pi("settings", "Open agent settings (model · thinking · steering · compact · retry)", "/settings", func(m *app.Model, arg string) tea.Cmd {
+		pi("settings", "Open agent settings (model · thinking · steering · compact · retry)", "/settings [filter]", func(m *app.Model, arg string) tea.Cmd {
 			m.Status = "loading settings…"
 			m.Refresh()
-			return loadSettings(m)
+			return loadSettings(m, arg)
 		}),
 		{
 			Name: "pitago-setting", Desc: "Open Pitago settings hub (agent · skills · plugins · MCP · tools · tasks · sidebar)", Usage: "/pitago-setting",

@@ -1,6 +1,10 @@
 package extension
 
-import "testing"
+import (
+	"testing"
+
+	"pitago/src/pirpc"
+)
 
 func TestInputResponse(t *testing.T) {
 	// Enter submits the typed value
@@ -15,6 +19,17 @@ func TestInputResponse(t *testing.T) {
 	c = InputResponse("r1", "", true)
 	if c.Cancelled == nil || !*c.Cancelled || c.Value != nil {
 		t.Fatalf("cancel = %+v", c)
+	}
+}
+
+func TestSummarizeCountsPitagoAsBuiltin(t *testing.T) {
+	ext, _, _, bin := Summarize([]pirpc.RepoCommand{
+		{Name: "model", Source: "builtin"},
+		{Name: "recent", Source: "pitago"},
+		{Name: "mcp", Source: "extension"},
+	})
+	if bin != 2 || ext != 1 {
+		t.Fatalf("pitago must fold into builtin, got builtin=%d ext=%d", bin, ext)
 	}
 }
 

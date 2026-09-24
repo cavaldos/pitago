@@ -116,7 +116,7 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		m.Dialogs = m.Dialogs[1:]
 		m.Status = "loading settings…"
 		m.Refresh()
-		return m, loadSettings(m)
+		return m, loadSettings(m, "")
 	case p == "@theme":
 		m.Dialogs = m.Dialogs[1:]
 		m.Refresh()

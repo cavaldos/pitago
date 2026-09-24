@@ -25,9 +25,10 @@ func (m *Model) refreshCmds() {
 	if p, ok := m.cmdPrefix(); ok {
 		names := make([]string, len(m.Cmds))
 		for i := range m.Cmds {
-			// name + extension tag + description, so "/pi-subagents"
-			// also matches that extension's commands (like pi)
-			names[i] = m.Cmds[i].Name + " " + m.Cmds[i].SourceTag() + " " + m.Cmds[i].Description
+			// name + source + extension tag + description, so "/pi-subagents"
+			// also matches that extension's commands (like pi), and typing
+			// "pitago"/"builtin" narrows to that origin
+			names[i] = m.Cmds[i].Name + " " + m.Cmds[i].Source + " " + m.Cmds[i].SourceTag() + " " + m.Cmds[i].Description
 		}
 		m.cmdItems = append(m.cmdItems, palette.Match(p, names)...)
 	}

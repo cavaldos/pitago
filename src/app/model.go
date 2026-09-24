@@ -277,10 +277,13 @@ type PickerMsg struct {
 
 type SettingsMsg struct {
 	St SettingsState
-	// Opts/Descs are precomputed by src/builtin (this package must not
+	// Opts/Descs/Cats are precomputed by src/builtin (this package must not
 	// import builtin, so the producer ships them in the message).
-	Opts, Descs []string
-	Err         error
+	// Cats parallels Opts (section header per row); Filter seeds a new
+	// dialog's filter (e.g. /settings network), refreshes keep typing.
+	Opts, Descs, Cats []string
+	Filter            string
+	Err               error
 }
 
 type TreeMsg struct {
@@ -862,10 +865,16 @@ func (m *Model) RunBuiltin(name, arg string) tea.Cmd {
 }
 
 // BuiltinRepo exposes the registry as repo-style commands for the / popup.
+// Pitago-only commands keep Source "pitago" so the popup shows [pitago]
+// instead of [builtin] (pi-parity re-implements stay [builtin]).
 func BuiltinRepo(builtins []Builtin) []pirpc.RepoCommand {
 	out := make([]pirpc.RepoCommand, 0, len(builtins))
 	for _, b := range builtins {
-		out = append(out, pirpc.RepoCommand{Name: b.Name, Description: b.Desc, Source: "builtin"})
+		src := "builtin"
+		if b.Origin == "pitago" {
+			src = "pitago"
+		}
+		out = append(out, pirpc.RepoCommand{Name: b.Name, Description: b.Desc, Source: src})
 	}
 	return out
 }

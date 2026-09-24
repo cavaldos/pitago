@@ -930,6 +930,9 @@ func (m Model) renderDialog() string {
 	if d.Kind == "shortcuts" {
 		return m.renderShortcutsDialog(d)
 	}
+	if d.Kind == "settings" && len(d.Provs) > 0 {
+		return m.renderSettingsDialog(d)
+	}
 	if d.Kind == shortcutKind {
 		return m.renderShortcutDialog(d)
 	}
@@ -996,8 +999,15 @@ func (m Model) renderDialog() string {
 		if start > 0 {
 			b.WriteString(toolStyle.Render(fmt.Sprintf("…(+%d above)", start)) + "\n")
 		}
+		lastCat := ""
 		for fi := start; fi < end; fi++ {
 			ri := d.FIdx[fi]
+			if d.Kind == "settings" && ri >= 0 && ri < len(d.Providers) {
+				if cat := d.Providers[ri]; cat != "" && cat != lastCat {
+					b.WriteString("  " + sideTitleStyle.Width(rowW-2).Render(strings.ToUpper(cat)) + "\n")
+					lastCat = cat
+				}
+			}
 			cursor := "  "
 			style := statusBarStyle
 			if fi == d.Cursor {
@@ -1031,7 +1041,7 @@ func (m Model) renderDialog() string {
 		foot += " · Tab scope · Del delete"
 	}
 	if d.Kind == "settings" {
-		foot = "↑↓ select · Enter change · Esc close"
+		foot = "type to filter · ↑↓ select · Enter change · Esc close"
 		if n := len(d.FIdx); n > 0 { // pi-style position (6/33)
 			cur := d.Cursor + 1
 			if cur > n {
@@ -1353,6 +1363,201 @@ func (m Model) renderModelDialog(d *Dialog) string {
 		b.WriteString("\n")
 	}
 	b.WriteString(toolStyle.Render(foot))
+	box := dlgStyle.Width(boxW).Render(b.String())
+	hint := ""
+	if len(m.Dialogs) > 1 {
+		hint = statusBarStyle.Render(fmt.Sprintf("(%d more dialogs pending)", len(m.Dialogs)-1))
+	}
+	return lipgloss.JoinVertical(lipgloss.Center,
+		lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box),
+		hint,
+	)
+}
+
+// renderSettingsDialog draws the two-pane /settings picker: left = groups
+// with row counts, right = the selected group's rows (label + value +
+// action hint, labels in one column so values align). ↑↓ moves in the
+// focused pane, ←/→/Tab switches pane, typing filters, Enter changes
+// the value.
+func (m Model) renderSettingsDialog(d *Dialog) string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
+	if d.Message != "" {
+		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
+	}
+	b.WriteString(statusBarStyle.Render("filter: "+d.Filter+"▌") + "\n")
+	b.WriteString("\n")
+
+	boxW := m.winW - 10
+	if boxW < 70 {
+		boxW = 70
+	}
+	if boxW > 120 {
+		boxW = 120
+	}
+	leftW := 22
+	rightW := boxW - 8 - leftW - 3
+	if rightW < 30 {
+		rightW = 30
+	}
+	win := m.winH - 12
+	if win < 8 {
+		win = 8
+	}
+	if win > 20 {
+		win = 20
+	}
+
+	f := strings.ToLower(d.Filter)
+	matchText := func(i int) bool {
+		return f == "" || strings.Contains(strings.ToLower(d.Options[i]), f) ||
+			(i < len(d.Descs) && strings.Contains(strings.ToLower(d.Descs[i]), f)) ||
+			strings.Contains(strings.ToLower(normProv(providerAt(d.Providers, i))), f)
+	}
+	groupCount := func(g string) int {
+		n := 0
+		for i := range d.Options {
+			if g != "All" && normProv(providerAt(d.Providers, i)) != g {
+				continue
+			}
+			if matchText(i) {
+				n++
+			}
+		}
+		return n
+	}
+
+	// left window (groups): always win rows — markers take budget rows
+	// so the box never resizes while scrolling.
+	ptotal := len(d.Provs)
+	pstart, pend, pAbove, pBelow := fixedWin(d.ProvCursor, ptotal, win)
+	var leftLines []string
+	if pAbove {
+		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d above)", pstart)))
+	}
+	for pi := pstart; pi < pend; pi++ {
+		name := d.Provs[pi]
+		cntStr := fmt.Sprintf("%d", groupCount(name))
+		nm := Short(name, leftW-2-len(cntStr)-1)
+		pad := leftW - 2 - lipgloss.Width(nm) - len(cntStr)
+		if pad < 1 {
+			pad = 1
+		}
+		content := Fit(nm+strings.Repeat(" ", pad)+cntStr, leftW-2)
+		mark := "  "
+		style := statusBarStyle
+		if groupCount(name) == 0 {
+			style = toolStyle
+		}
+		if pi == d.ProvCursor {
+			mark = "▸ "
+			if d.ProvFocus {
+				style = rowHiStyle
+			} else {
+				style = lipgloss.NewStyle().Foreground(cText)
+			}
+		}
+		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(content))
+	}
+	if pBelow {
+		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", ptotal-pend)))
+	}
+	for len(leftLines) < win {
+		leftLines = append(leftLines, "  "+statusBarStyle.Width(leftW-2).Render(""))
+	}
+
+	// right window (rows): labels share one column so values align.
+	labels := make([]string, len(d.FIdx))
+	values := make([]string, len(d.FIdx))
+	labelW := 0
+	for fi, ri := range d.FIdx {
+		lbl, val := d.Options[ri], ""
+		if kv := strings.SplitN(d.Options[ri], ": ", 2); len(kv) == 2 {
+			lbl, val = kv[0], kv[1]
+		}
+		labels[fi], values[fi] = Short(lbl, 24), val
+		if w := lipgloss.Width(labels[fi]); w > labelW {
+			labelW = w
+		}
+	}
+	total := len(d.FIdx)
+	start, end, rAbove, rBelow := fixedWin(d.Cursor, total, win)
+	var rightLines []string
+	if rAbove {
+		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d above)", start)))
+	}
+	for fi := start; fi < end; fi++ {
+		ri := d.FIdx[fi]
+		mark := "  "
+		style := statusBarStyle
+		if fi == d.Cursor {
+			mark = "▸ "
+			if d.ProvFocus {
+				style = lipgloss.NewStyle().Foreground(cText)
+			} else {
+				style = rowHiStyle
+			}
+		}
+		base := Fit(labels[fi], labelW) + "  " + Short(values[fi], rightW-4-labelW-2)
+		row := base
+		if desc := DescOf(d, ri); desc != "" {
+			// remaining cells inside the pane: gap(2) + "— "(2)
+			if dw := rightW - 2 - lipgloss.Width(base) - 4; dw >= 8 {
+				row += "  " + toolStyle.Render("— "+Short(desc, dw))
+			}
+		}
+		rightLines = append(rightLines, mark+style.Width(rightW-2).Render(row))
+	}
+	if rBelow {
+		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
+	}
+	if total == 0 {
+		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render("— no match —"))
+	}
+	for len(rightLines) < win {
+		rightLines = append(rightLines, "  "+statusBarStyle.Width(rightW-2).Render(""))
+	}
+
+	// headers (left pane = global search, so show All; right pane stays
+	// scoped to the selected group)
+	sel := "All"
+	if d.ProvCursor >= 0 && d.ProvCursor < len(d.Provs) && (d.Filter == "" || !d.ProvFocus) {
+		sel = d.Provs[d.ProvCursor]
+	}
+	sep := sepStyle.Render("│")
+	b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("GROUPS") + " │ " +
+		"  " + sideTitleStyle.Width(rightW-2).Render(sel+" · "+fmt.Sprintf("%d", total)) + "\n")
+	n := len(leftLines)
+	if len(rightLines) > n {
+		n = len(rightLines)
+	}
+	for i := 0; i < n; i++ {
+		l, r := "", ""
+		if i < len(leftLines) {
+			l = leftLines[i]
+		} else {
+			l = "  " + statusBarStyle.Width(leftW-2).Render("")
+		}
+		if i < len(rightLines) {
+			r = rightLines[i]
+		} else {
+			r = "  " + statusBarStyle.Width(rightW-2).Render("")
+		}
+		b.WriteString(l + " " + sep + " " + r + "\n")
+	}
+
+	foot := "↑↓ groups · → settings · type searches all · Enter change · Esc close"
+	if !d.ProvFocus {
+		foot = "↑↓ settings · ← groups · Tab switch · type filters here · Enter change · Esc close"
+	}
+	if n := len(d.FIdx); n > 0 { // pi-style position (6/33)
+		cur := d.Cursor + 1
+		if cur > n {
+			cur = n
+		}
+		foot += fmt.Sprintf(" (%d/%d)", cur, n)
+	}
+	b.WriteString("\n" + toolStyle.Render(foot))
 	box := dlgStyle.Width(boxW).Render(b.String())
 	hint := ""
 	if len(m.Dialogs) > 1 {
