@@ -191,10 +191,28 @@ func sessionFiles(dir string) ([]string, error) {
 }
 
 // DeleteSession removes one session file (picker delete). Only *.jsonl
-// files are removed; anything else is refused.
+// files under the session root are removed; anything else (relative,
+// traversal, outside root) is refused.
 func DeleteSession(path string) error {
 	if path == "" || !strings.HasSuffix(path, ".jsonl") {
 		return os.ErrInvalid
+	}
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return os.ErrInvalid
+	}
+	if strings.Contains(path, "..") {
+		return os.ErrInvalid
+	}
+	base := filepath.Base(path)
+	if base == ".jsonl" || strings.ContainsAny(base, `/\`) {
+		return os.ErrInvalid
+	}
+	if root := SessionRoot(); root != "" {
+		rClean := filepath.Clean(root)
+		parent := filepath.Dir(path)
+		if parent != rClean && !strings.HasPrefix(parent, rClean+string(filepath.Separator)) {
+			return os.ErrInvalid
+		}
 	}
 	return os.Remove(path)
 }

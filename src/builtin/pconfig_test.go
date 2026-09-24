@@ -81,10 +81,20 @@ func TestConfirmPconfigMarketInstalls(t *testing.T) {
 	if len(mm.(*app.Model).Dialogs) != 1 {
 		t.Error("install should keep the hub open")
 	}
-	if cmd == nil {
-		t.Error("market Enter should issue the pi install cmd")
+	if cmd != nil {
+		t.Error("first market Enter must arm the confirm gate, not exec")
 	}
-	if got := mm.(*app.Model).Status; !strings.Contains(got, "installing npm:pi-new") {
+	if got := mm.(*app.Model).Status; !strings.Contains(got, "confirm install npm:pi-new") {
+		t.Errorf("status should ask for confirm, got %q", got)
+	}
+	mm2, cmd := confirmPconfig(mm.(*app.Model), d, d.FIdx[d.Cursor])
+	if len(mm2.(*app.Model).Dialogs) != 1 {
+		t.Error("install should keep the hub open")
+	}
+	if cmd == nil {
+		t.Error("second market Enter should issue the pi install cmd")
+	}
+	if got := mm2.(*app.Model).Status; !strings.Contains(got, "installing npm:pi-new") {
 		t.Errorf("status should name the installed spec, got %q", got)
 	}
 }

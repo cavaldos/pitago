@@ -109,6 +109,9 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		return m, m.FetchMarketPageCmd(len(m.Market))
 	case strings.HasPrefix(p, "market:"):
 		spec := "npm:" + strings.TrimPrefix(p, "market:")
+		if !m.ConfirmPluginOp("install", spec) {
+			return m, nil // first press arms the auth gate
+		}
 		m.Status = "installing " + spec + "…"
 		m.Refresh()
 		return m, m.ChangePluginCmd("install", spec)

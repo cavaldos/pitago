@@ -246,7 +246,8 @@ func PushActiveToPi(keyPath, env string) {
 
 // SyncFromPi merges pi's auth.json api_keys into pitago's keystore WITHOUT
 // overwriting: unknown keys are appended, known keys just become visible,
-// and the active pointer follows pi (pi is what actually serves models).
+// and the active pointer is NEVER moved here (pitago's selection wins; pi
+// is updated explicitly via PushActiveToPi/EnsurePiHasActive).
 // Returns number of newly imported keys.
 // ponytail: union, never last-write-wins.
 func SyncFromPi(keyPath string) int {
@@ -293,13 +294,10 @@ func SyncFromPi(keyPath string) int {
 		}
 		if found < 0 {
 			e.Keys = append(e.Keys, KeyItem{Key: k, AddedAt: nowUnix()})
-			e.Active = len(e.Keys) - 1 // mirror pi's current key
 			n++
 			dirty = true
-		} else if e.Active != found {
-			e.Active = found // mirror pi, pitago keeps the rest
-			dirty = true
 		}
+		// found >= 0: already tracked — active stays where pitago left it.
 	}
 	if dirty {
 		_ = saveStore(keyPath, store)

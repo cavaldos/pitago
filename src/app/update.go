@@ -46,6 +46,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// popups, or the textarea can insert the noise as text; wheel reports
 	// still scroll the chat.
 	if km, ok := msg.(tea.KeyMsg); ok && !km.Paste && km.Type == tea.KeyRunes {
+		// Sequence: a split tail ("[<65"…) buffered from the prior read
+		// rejoins its continuation here (time-bound via mouseBurst, so a
+		// stale buffer never eats later typing). Non-continuations drop
+		// the buffer and process normally.
+		if m.mouseBuf != "" {
+			if m.mouseBurst() && len(km.Runes) > 0 {
+				c := km.Runes[0]
+				if c >= '0' && c <= '9' || c == ';' || c == 'M' || c == 'm' {
+					km.Runes = []rune(m.mouseBuf + string(km.Runes))
+					msg = km
+				}
+			}
+			m.mouseBuf = ""
+		}
+		// A bracketed tail split across reads ("[<64;…M[<65"): hold the
+		// incomplete tail for the next read instead of emitting a partial
+		// scroll with wrong coordinates. "[<" alone is typing, not noise.
+		if s := string(km.Runes); s != "" && !km.Alt {
+			if loc := sgrTail.FindStringIndex(s); loc != nil && loc[1] == len(s) {
+				if tail := s[loc[0]:]; tail != "[<" {
+					m.mouseBuf = tail
+					m.mouseLeakAt = time.Now()
+					if prefix := s[:loc[0]]; prefix == "" {
+						return m, nil // pure tail: swallow, wait for rest
+					} else {
+						km.Runes = []rune(prefix)
+						msg = km
+					}
+				}
+			}
+		}
 		// A split ESC[ arrives as a lone Alt+[ — mouse-report shrapnel,
 		// not text (no binding uses it; the textarea would insert the "["
 		// and picker filters would insert "alt+[").
@@ -81,6 +112,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.scrollLeak(events)
 			}
+			// Sequence break: normal typing while armed disarms, so a
+			// later frag-like typing ("65;99") isn't swallowed.
+			m.mouseLeakAt = time.Time{}
 		}
 	}
 	// A Replace picker targets the open dialog in place (Tab scope swap),
@@ -1126,8 +1160,11 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
 	case "agent_end":
+		m.thinking = false
+		m.escArm = time.Time{} // turn over: cancel arm no longer applies
+		m.Status = "ready"
 		m.Refresh()
-		return m, nil
+		return m, m.petSettled()
 	case "extension_ui_request":
 		return m.handleUIRequest(ev.Raw), nil
 	case "queue_update":

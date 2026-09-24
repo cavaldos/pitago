@@ -70,12 +70,16 @@ func (m *Model) collectDrops() {
 }
 
 // takeImages gathers tray images + leftover @refs for the send path,
-// then clears the tray (mirrors ta.Reset on send).
+// then clears the tray (mirrors ta.Reset on send). A tray load failure
+// aborts (nil images): the tray is kept so nothing half-broken is sent.
 func (m *Model) takeImages(text string) ([]pirpc.ImageContent, []string) {	var refs []string
 	for _, a := range m.imgAtts {
 		refs = append(refs, a.path)
 	}
 	atts, notes := image.LoadPaths(m.cwd, refs)
+	if len(refs) > 0 && len(notes) > 0 {
+		return nil, notes
+	}
 	if len(atts) < image.MaxCount {
 		rest := image.MaxCount - len(atts)
 		ex, n2 := image.Extract(text, m.cwd)

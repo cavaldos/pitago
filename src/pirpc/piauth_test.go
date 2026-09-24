@@ -49,7 +49,7 @@ func TestPushActiveToPiWritesAuth(t *testing.T) {
 }
 
 // pi -> pitago: SyncFromPi unions without overwriting (123 kept, 456 added,
-// active follows pi).
+// active stays where pitago left it).
 func TestSyncFromPiMergesWithoutOverwrite(t *testing.T) {
 	agent := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", agent)
@@ -70,8 +70,8 @@ func TestSyncFromPiMergesWithoutOverwrite(t *testing.T) {
 	if got[0] != "key-123-pitago-abcdefgh" || got[1] != "key-456-pi-abcdefgh" {
 		t.Fatalf("union = %v", got)
 	}
-	if active != 1 {
-		t.Fatalf("active = %d, want 1 (mirror pi)", active)
+	if active != 0 {
+		t.Fatalf("active = %d, want 0 (preserve pitago)", active)
 	}
 	// re-sync is idempotent, no dupes
 	if n := SyncFromPi(keys); n != 0 {

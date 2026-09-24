@@ -26,7 +26,26 @@ const (
 	marketPageSize = 100
 	// npm installs are slow: same budget class as binary updates (120s).
 	pluginChangeTimeout = 180 * time.Second
+	// pluginConfirmWindow bounds the install/remove auth gate: the first
+	// Enter/Delete arms, the second on the same spec within the window runs.
+	pluginConfirmWindow = 10 * time.Second
 )
+
+// ConfirmPluginOp is the install/remove authorization gate: first press arms
+// (status prompts, returns false = no exec), second press on the same
+// action+spec within the window confirms (returns true). Any other spec
+// re-arms instead of executing.
+func (m *Model) ConfirmPluginOp(action, spec string) bool {
+	if m.plugAction == action && m.plugSpec == spec && !m.plugAt.IsZero() &&
+		time.Since(m.plugAt) < pluginConfirmWindow {
+		m.plugAction, m.plugSpec, m.plugAt = "", "", time.Time{}
+		return true
+	}
+	m.plugAction, m.plugSpec, m.plugAt = action, spec, time.Now()
+	m.Status = fmt.Sprintf("press again to confirm %s %s", action, spec)
+	m.Refresh()
+	return false
+}
 
 // marketURL builds one registry search page (rank order, zero-based).
 func marketURL(from int) string {
@@ -179,11 +198,55 @@ func (m Model) piBin() string {
 	return "pi"
 }
 
+// validPluginAction reports whether action is a known pi package op.
+func validPluginAction(action string) bool {
+	return action == "install" || action == "remove"
+}
+
+// validPluginSpec whitelists pi package specs (no shell metachars, no
+// whitespace, known source prefix). exec passes args without a shell, but
+// `pi install` still interprets the spec — arbitrary strings must not reach it.
+func validPluginSpec(spec string) bool {
+	spec = strings.TrimSpace(spec)
+	if spec == "" || len(spec) > 256 {
+		return false
+	}
+	if strings.ContainsAny(spec, " \t\n\r\v\f;&|<>$`'\"\\(){}!*#?~") {
+		return false
+	}
+	if strings.HasPrefix(spec, "npm:") {
+		name := strings.TrimPrefix(spec, "npm:")
+		if name == "" || strings.Contains(name, ":") {
+			return false
+		}
+		// npm name (scoped or not): lower, dots/underscores/dashes/slashes
+		for _, r := range name {
+			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
+				r == '-' || r == '.' || r == '_' || r == '/' || r == '@' {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+	if strings.HasPrefix(spec, "git:") {
+		rest := strings.TrimPrefix(spec, "git:")
+		return rest != "" && !strings.Contains(rest, ":")
+	}
+	return false
+}
+
 // ChangePluginCmd runs `pi install|remove <spec>` in the background (hub
 // stays open; PluginChangeMsg refreshes the lists when it lands).
 // Exported: Enter actions live in src/builtin (see Confirmers).
 func (m Model) ChangePluginCmd(action, spec string) tea.Cmd {
 	bin := m.piBin()
+	if !validPluginAction(action) || !validPluginSpec(spec) {
+		return func() tea.Msg {
+			return PluginChangeMsg{Action: action, Spec: spec,
+				Err: fmt.Errorf("refused invalid plugin spec")}
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), pluginChangeTimeout)
 		defer cancel()

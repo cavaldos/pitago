@@ -176,6 +176,10 @@ type Model struct {
 	escArm         time.Time // first Esc timestamp while running (second press within window cancels)
 	escGen         int       // arm generation (stale disarm ticks ignored)
 	mouseLeakAt    time.Time // last SGR mouse-report burst (split fragments within window are residue)
+	mouseBuf       string    // pending split tail ("[<65"…) waiting for its continuation (sequence, time-bound)
+	plugAction     string    // pending plugin op awaiting second confirm (auth gate)
+	plugSpec       string    // pending plugin spec (cleared on confirm/cancel/timeout)
+	plugAt         time.Time // first press timestamp for the pending plugin op
 	renderCache    []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey []uint64  // fingerprint parallel to renderCache (see blockKey)
 	sideCache      string    // last built sidebar content (streaming reuses within sideThrottle)
@@ -192,8 +196,10 @@ const quitArmWindow = 3 * time.Second
 const escArmWindow = 3 * time.Second
 
 // mouseFragWindow is how long after an SGR mouse-report burst a lone
-// coordinate fragment ("65;99;18M") still counts as split-read residue.
-const mouseFragWindow = 500 * time.Millisecond
+// coordinate fragment ("65;99;18M") still counts as split-read residue,
+// plus how long a buffered split tail ("[<65"…) waits for its continuation.
+// Sequence (consecutive reads) decides, the window only bounds staleness.
+const mouseFragWindow = 1500 * time.Millisecond
 
 // streamFrame caps streaming repaints (~30fps): text/thinking deltas mutate
 // blocks on every event but SetContent runs at most once per frame, with a
@@ -482,7 +488,13 @@ func (m *Model) submitInput() tea.Cmd {
 	// Tray chips (drops/pastes/Tab-completed @) join in too.
 	images, notes := m.takeImages(text)
 	for _, n := range notes {
-		m.AddBlock(Block{Kind: "notice", Text: n})
+		m.AddBlock(Block{Kind: "notice", Text: n, Err: images == nil})
+	}
+	if images == nil {
+		// Tray image failed to load: abort the send, keep input + tray
+		// so the user can fix/remove the chip instead of half-sending.
+		m.Refresh()
+		return nil
 	}
 	if m.thinking {
 		m.ta.Reset()

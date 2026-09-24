@@ -47,13 +47,12 @@ func main() {
 	}
 
 	// Two-way key sync with pi (auth.json wins over env inside pi):
-	// 1. import pi → pitago (union, never overwrite) so keys added via
-	//    stock `pi` show up here; 2. push pitago actives where pi has
-	//    nothing yet so pitago-added keys reach pi; 3. export actives to
-	//    env for the pi child to inherit.
+	// 1. push pitago actives where pi has nothing yet so pitago-added keys
+	//    reach pi; 2. import pi → pitago (union, never moves active) so keys
+	//    added via stock `pi` show up here; 3. export actives to env.
 	keyPath := pirpc.KeyPath()
-	pirpc.SyncFromPi(keyPath)
 	pirpc.EnsurePiHasActive(keyPath)
+	pirpc.SyncFromPi(keyPath)
 	pirpc.SyncAuthStateFromPi(pirpc.AuthStatePath())
 	for env, key := range pirpc.LoadKeys(keyPath) {
 		if key != "" && os.Getenv(env) == "" {

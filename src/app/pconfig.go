@@ -815,6 +815,9 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		if d.CurPsec() == PsecPlugin && !d.ProvFocus {
 			if ri := psecCursor(d); ri >= 0 && ri < len(m.Plugins) {
 				spec := m.Plugins[ri].Spec
+				if !m.ConfirmPluginOp("remove", spec) {
+					return m, nil // first Delete arms the auth gate
+				}
 				m.Status = "removing " + spec + "…"
 				m.Refresh()
 				return m, m.ChangePluginCmd("remove", spec)

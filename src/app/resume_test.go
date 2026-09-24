@@ -41,6 +41,7 @@ func TestResumePickerPayload(t *testing.T) {
 // Deleting a session splices every parallel slice, payload included.
 func TestDeleteResumeSplicesPayload(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", dir) // DeleteSession is confined to the session root
 	mk := func(name string) string {
 		p := dir + "/" + name
 		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {

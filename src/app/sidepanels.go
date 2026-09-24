@@ -577,20 +577,30 @@ func todosOf(details json.RawMessage) json.RawMessage {
 // reads (like MCP/plugins do), with RPC deltas as the live supplement.
 
 // piTaskSessionID derives pi's session id from its session file basename
-// (<timestamp>_<id>.jsonl). Empty when the name carries no id.
+// (<timestamp>_<id>.jsonl). Empty when the name carries no id. The id is the
+// segment after the LAST "_" (timestamps never contain "_", so many "_"
+// in the name still resolve to the trailing id).
 func piTaskSessionID(sessionFile string) string {
 	base := filepath.Base(sessionFile)
-	if i := strings.LastIndex(base, "."); i >= 0 {
-		base = base[:i]
+	if !strings.HasSuffix(base, ".jsonl") {
+		return ""
 	}
+	base = strings.TrimSuffix(base, ".jsonl")
 	i := strings.LastIndex(base, "_")
 	if i < 0 {
 		return ""
 	}
-	if id := base[i+1:]; id != "" && id != "-" {
-		return id
+	id := base[i+1:]
+	if id == "" || id == "-" || strings.ContainsAny(id, "./\\") {
+		return ""
 	}
-	return ""
+	// id charset: filename-safe (no spaces/control)
+	for _, r := range id {
+		if r <= ' ' || r == 127 {
+			return ""
+		}
+	}
+	return id
 }
 
 // piTasksProjectKey mirrors pi-tasks projectKey(cwd).

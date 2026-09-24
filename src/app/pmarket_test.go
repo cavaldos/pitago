@@ -133,8 +133,16 @@ func TestPconfigDeleteRemovesPlugin(t *testing.T) {
 	mv := mkHub()
 	mm, cmd := mv.Update(key(tea.KeyDelete))
 	mv = mm.(Model)
+	if cmd != nil {
+		t.Fatal("first Delete must arm the confirm gate, not exec")
+	}
+	if got := mv.Status; !strings.Contains(got, "confirm remove npm:pi-lens") {
+		t.Errorf("status should ask for confirm, got %q", got)
+	}
+	mm, cmd = mv.Update(key(tea.KeyDelete))
+	mv = mm.(Model)
 	if cmd == nil {
-		t.Fatal("Delete should issue the pi remove cmd")
+		t.Fatal("second Delete should issue the pi remove cmd")
 	}
 	if got := mv.Status; !strings.Contains(got, "removing npm:pi-lens") {
 		t.Errorf("status should name the removed spec, got %q", got)
@@ -155,10 +163,15 @@ func TestPconfigDeleteRemovesPlugin(t *testing.T) {
 		t.Errorf("filter should shrink to %q, got %q", "len", mv.Dialogs[0].Filter)
 	}
 
-	mv = mkHub() // ⌫ with empty filter deletes (sessions/login parity)
+	mv = mkHub() // ⌫ with empty filter arms, second press deletes
+	mm, cmd = mv.Update(key(tea.KeyBackspace))
+	mv = mm.(Model)
+	if cmd != nil {
+		t.Error("first ⌫ with empty filter must arm, not delete")
+	}
 	mm, cmd = mv.Update(key(tea.KeyBackspace))
 	if cmd == nil {
-		t.Error("⌫ with empty filter should delete the plugin")
+		t.Error("second ⌫ with empty filter should delete the plugin")
 	}
 
 	mv = mkHub() // sections pane: Delete does nothing
