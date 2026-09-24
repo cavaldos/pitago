@@ -28,6 +28,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"secret":      confirmSecret,
 		"yank":        confirmYank,
 		"update":      confirmUpdate,
+		"trajectory":  confirmTrajectory,
 	}
 }
 

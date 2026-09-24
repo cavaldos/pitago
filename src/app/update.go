@@ -83,8 +83,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	// A Replace picker targets the open dialog in place (Tab scope swap),
+	// not a second dialog — it bypasses dialog capture to the main switch.
 	// dialog captures all keys while open
-	if len(m.Dialogs) > 0 {
+	if len(m.Dialogs) > 0 && !replaceIntoOpen(m.Dialogs[0], msg) {
 		// Wheel scrolls the settings hub list (locked to the dialog —
 		// the chat/sidebar behind never moves); every other mouse event
 		// stays swallowed while a dialog is open.
@@ -93,6 +95,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				mm.Action == tea.MouseActionPress &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				return m.updatePconfigWheel(d, mm.Button == tea.MouseButtonWheelDown)
+			}
+			// Trajectory window: wheel over STEPS moves the selection,
+			// wheel over DETAIL scrolls it (chat/sidebar behind never move).
+			if d := m.Dialogs[0]; d.Kind == "trajectory" &&
+				mm.Action == tea.MouseActionPress &&
+				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
+				return m.updateTrajWheel(d, mm)
 			}
 			return m, nil
 		}
@@ -431,7 +440,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d := m.Dialogs[0]
 			d.Title = title
 			d.Scope = msg.Scope
-			d.Options, d.Descs, d.Paths = msg.Options, msg.Descs, msg.Paths
+			d.Options, d.Descs, d.Paths, d.Payload = msg.Options, msg.Descs, msg.Paths, msg.Payload
 			d.Reindex()
 			for i, ri := range d.FIdx {
 				if ri < len(d.Paths) && d.Paths[ri] == msg.Current {
@@ -443,7 +452,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 			return m, nil
 		}
-		d := &Dialog{Kind: msg.Kind, Title: title, Options: msg.Options, Descs: msg.Descs, Providers: msg.Providers, Models: msg.Models, Paths: msg.Paths, Filter: msg.Filter, Scope: msg.Scope}
+		d := &Dialog{Kind: msg.Kind, Title: title, Options: msg.Options, Descs: msg.Descs, Providers: msg.Providers, Models: msg.Models, Paths: msg.Paths, Payload: msg.Payload, Filter: msg.Filter, Scope: msg.Scope}
 		if msg.Kind == "model" {
 			// two-pane picker: left = providers, right = their models
 			d.Provs = buildProvs(msg.Providers)
@@ -520,6 +529,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AddBlock(Block{Kind: "notice", Text: "tree error: " + msg.Err.Error(), Err: true})
 		} else {
 			m.AddBlock(Block{Kind: "tree", Text: msg.Text})
+		}
+		m.Refresh()
+		return m, nil
+
+	case TrajectoryMsg:
+		m.Status = "ready"
+		if msg.Err != nil {
+			m.AddBlock(Block{Kind: "notice", Text: "trajectory error: " + msg.Err.Error(), Err: true})
+		} else if len(msg.Options) == 0 {
+			m.AddBlock(Block{Kind: "notice", Text: "no trajectory entries yet"})
+		} else {
+			scope := msg.Scope
+			if scope == "" {
+				scope = "all"
+			}
+			d := &Dialog{Kind: "trajectory", Title: "Trajectory (" + scope + ")",
+				Message: "harness-style run trace · ↑↓ move · Enter views the full step · type filters",
+				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload, Scope: scope, Filter: msg.Filter}
+			d.Reindex()
+			m.Dialogs = append(m.Dialogs, d)
 		}
 		m.Refresh()
 		return m, nil
@@ -1432,6 +1461,7 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				d.Cursor = n - 1
 			}
 			m.previewTheme(d)
+			d.TrajOff = 0 // new step → detail back to top
 		}
 		return m, nil
 	case tea.KeyDown:
@@ -1442,6 +1472,12 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				d.Cursor = 0
 			}
 			m.previewTheme(d)
+			d.TrajOff = 0 // new step → detail back to top
+		}
+		return m, nil
+	case tea.KeyPgUp, tea.KeyPgDown:
+		if d.Kind == "trajectory" {
+			m.trajPage(d, km.Type == tea.KeyPgDown)
 		}
 		return m, nil
 	case tea.KeyBackspace:
@@ -1903,6 +1939,7 @@ func (d *Dialog) Reindex() {
 	if d.Cursor >= len(d.FIdx) {
 		d.Cursor = 0
 	}
+	d.TrajOff = 0 // re-filtered list → detail back to top (only trajectory reads it)
 }
 
 // SelLoginProv is the selected provider in the two-pane login dialog

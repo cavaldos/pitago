@@ -60,6 +60,7 @@ type Dialog struct {
 	Settings       SettingsState
 	LoginProvider  string // login flow: provider id
 	LoginEnv       string // login flow: env var
+	TrajOff        int    // trajectory dialog: detail-column scroll offset (lines)
 	UpdateTo       string // update flow: target tag (Kind "update")
 	ShortcutCmd    string // cmdshortcut capture: /command being assigned ("" = none)
 }
@@ -266,6 +267,7 @@ type PickerMsg struct {
 	Options, Descs, Providers []string
 	Models                    []pirpc.ModelInfo // model picker: full specs parallel to Options
 	Paths                     []string          // sessions picker: parallel session file per option
+	Payload                   []string          // sessions picker: parallel multi-line detail per option
 	Filter                    string            // sessions picker: pre-typed filter (/resume <arg>)
 	Scope                     string            // sessions picker: "current" | "all"
 	Replace                   bool              // sessions picker: Tab scope swap into the open dialog
@@ -284,6 +286,15 @@ type SettingsMsg struct {
 type TreeMsg struct {
 	Text string
 	Err  error
+}
+
+// TrajectoryMsg carries harness-style run-trace rows for the /trajectory
+// window (built by src/builtin; this package only holds the message).
+type TrajectoryMsg struct {
+	Scope                   string
+	Options, Descs, Payload []string
+	Filter                  string
+	Err                     error
 }
 
 type SessionMsg struct {

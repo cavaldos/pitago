@@ -1,13 +1,5 @@
-# pitago
-
 <div align="center">
-<pre>
-████  ███ █████  ███  ███   ███
-█   █  █    █   █   █ █     █   █
-████   █    █   █████ █  ██ █   █
-█      █    █   █   █ █   █ █   █
-█     ███   █   █   █  ███   ███
-</pre>
+<img src="resources/logo.png" alt="pitago logo" />
 </div>
 
 <div align="center">
@@ -21,7 +13,7 @@
 [![License](https://img.shields.io/github/license/cavaldos/pitago?style=flat-square)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor%20%E2%9D%A4%EF%B8%8F-8A2BE2?style=flat-square)](https://ko-fi.com/calvados)
 
-*A polished Terminal User Interface (TUI) frontend for the `pi` agent, built with Bubble Tea. `pi --mode rpc` serves as the backend (multi-provider, tools, sessions, compaction), while pitago provides a rich terminal interface communicating over JSONL.*
+_A polished Terminal User Interface (TUI) frontend for the `pi` agent, built with Bubble Tea. `pi --mode rpc` serves as the backend (multi-provider, tools, sessions, compaction), while pitago provides a rich terminal interface communicating over JSONL._
 
 </div>
 
@@ -205,28 +197,28 @@ script/release.sh v0.0.1
 
 ## Keybindings
 
-| Key            | Action                                                                                           |
-| -------------- | ------------------------------------------------------------------------------------------------ |
-| `Enter`        | Send (idle) / steer (while running)                                                              |
-| `Esc×2`        | Cancel running turn (double-press within 3s — 1st press only arms)                               |
-| `Ctrl+C`       | Quit (press twice within 3s — warning pins to the sidebar corner)                  |
-| `Ctrl+N`       | New session                                                                                      |
-| `Ctrl+P`       | Cycle model                                                                                      |
-| `Ctrl+R`       | Recent-models picker                                                                             |
-| `Ctrl+T`       | Cycle thinking level (no picker)                                                             |
-| `Ctrl+B`       | Hide/show sidebar (hide for clean drag-select of chat only)                                      |
-| `Ctrl+Y`       | Yank last assistant answer to clipboard (chat-only, no sidebar)                                  |
-| `Ctrl+V`       | Paste text — or screenshot data (pngpaste/wl-paste/xclip); errors shown, terminal Cmd+V still works |
-| `Backspace`    | Empty input + image tray → remove last `[Image N]` chip                                          |
-| `↓` (+tray)    | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input               |
-| `Ctrl+O`       | Yank picker: choose any message to copy (sidebar stays visible)                                  |
-| `Ctrl+G`       | Expand/collapse tool output: write content, read results, diffs (collapsed previews like pi)     |
-| `Alt+1…5`      | Jump straight to a recent model                                                                  |
-| `Tab`          | Complete `/command` or `@file`                                                                   |
-| `@`            | Mention a file (fuzzy finder, like pi — Tab/Enter completes, text goes to pi raw; `@*.png/.jpg/.gif/.webp` also sends vision) |
-| `↑↓ PgUp PgDn` | Empty input: recall sent messages (`↑` older · `↓` newer · `Esc` clear) · otherwise scroll chat (single-line input) |
-| `Alt+↑↓ PgUp PgDn Home End` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll sidebar (keyboard, always works) |
-| `Mouse wheel` | On by default: hover sidebar to scroll it, chat otherwise; `--mouse=false` disables |
+| Key                                                         | Action                                                                                                                        |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `Enter`                                                     | Send (idle) / steer (while running)                                                                                           |
+| `Esc×2`                                                     | Cancel running turn (double-press within 3s — 1st press only arms)                                                            |
+| `Ctrl+C`                                                    | Quit (press twice within 3s — warning pins to the sidebar corner)                                                             |
+| `Ctrl+N`                                                    | New session                                                                                                                   |
+| `Ctrl+P`                                                    | Cycle model                                                                                                                   |
+| `Ctrl+R`                                                    | Recent-models picker                                                                                                          |
+| `Ctrl+T`                                                    | Cycle thinking level (no picker)                                                                                              |
+| `Ctrl+B`                                                    | Hide/show sidebar (hide for clean drag-select of chat only)                                                                   |
+| `Ctrl+Y`                                                    | Yank last assistant answer to clipboard (chat-only, no sidebar)                                                               |
+| `Ctrl+V`                                                    | Paste text — or screenshot data (pngpaste/wl-paste/xclip); errors shown, terminal Cmd+V still works                           |
+| `Backspace`                                                 | Empty input + image tray → remove last `[Image N]` chip                                                                       |
+| `↓` (+tray)                                                 | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input                                           |
+| `Ctrl+O`                                                    | Yank picker: choose any message to copy (sidebar stays visible)                                                               |
+| `Ctrl+G`                                                    | Expand/collapse tool output: write content, read results, diffs (collapsed previews like pi)                                  |
+| `Alt+1…5`                                                   | Jump straight to a recent model                                                                                               |
+| `Tab`                                                       | Complete `/command` or `@file`                                                                                                |
+| `@`                                                         | Mention a file (fuzzy finder, like pi — Tab/Enter completes, text goes to pi raw; `@*.png/.jpg/.gif/.webp` also sends vision) |
+| `↑↓ PgUp PgDn`                                              | Empty input: recall sent messages (`↑` older · `↓` newer · `Esc` clear) · otherwise scroll chat (single-line input)           |
+| `Alt+↑↓ PgUp PgDn Home End` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll sidebar (keyboard, always works)                                                                                       |
+| `Mouse wheel`                                               | On by default: hover sidebar to scroll it, chat otherwise; `--mouse=false` disables                                           |
 
 ### Copying text
 
@@ -255,6 +247,7 @@ Type `/` to open the command popup. Two kinds:
 - `/update` — check GitHub releases + install latest (auto-checks in background, once a day)
 - `/thinking` — toggle thinking level
 - `/tree` — session tree, pi-style rows (read-only over RPC)
+- `/trajectory [all|tools|messages]` — harness-style run trace window (numbered steps with time + kind, type to filter, `Enter` views the full step in chat)
 - `/settings` — agent settings, pi parity (22 rows: model · thinking · steering · follow-up · auto-compact · auto-retry · theme + skill commands · show images · image width · auto-resize · block images · transport · http timeout · cache warming · hide thinking · cache-miss notices · project trust · quiet startup · telemetry · autocomplete max · tree filter; file rows save to `~/.pi/agent/settings.json` and reconnect pi; dialog shows pi-style position `(6/33)`)
 - `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login
 - `/login` / `/logout` — manage logins: API keys + pi OAuth/subscriptions (`/login`: left providers, right keys + auth — `Enter` use/add, `⌫` delete/disconnect, `s` show/hide key, `r` rename, `Ctrl+P` model picker, `Esc` close; stays open, pi reconnects behind)

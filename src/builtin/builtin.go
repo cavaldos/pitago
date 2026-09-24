@@ -1030,6 +1030,15 @@ func All() []app.Builtin {
 		pi("thinking", "<level> — Set thinking level", "/thinking", func(m *app.Model, arg string) tea.Cmd {
 			return m.OpenThinking()
 		}),
+		{
+			Name: "trajectory", Desc: "Harness-style run trace (numbered steps · Enter views full step)", Usage: "/trajectory [all|tools|messages]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				m.Status = "loading trajectory…"
+				m.Refresh()
+				return loadTrajectory(m, arg)
+			},
+		},
 		pi("reload", "Reload keybindings, extensions, skills, prompts, themes, and context files", "/reload", func(m *app.Model, arg string) tea.Cmd {
 			// No "reload" RPC exists (pi returns "Unknown command"), and a
 			// plain GetCommands re-reads the already-loaded list — a `pi

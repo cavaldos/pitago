@@ -921,6 +921,12 @@ func (m Model) renderDialog() string {
 	if d.Kind == "login" && len(d.Provs) > 0 {
 		return m.renderLoginDialog(d)
 	}
+	if d.Kind == "trajectory" {
+		return m.renderTrajectoryDialog(d)
+	}
+	if d.Kind == "sessions" {
+		return m.renderResumeDialog(d)
+	}
 	if d.Kind == "shortcuts" {
 		return m.renderShortcutsDialog(d)
 	}
