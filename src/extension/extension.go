@@ -94,6 +94,37 @@ func Response(id, method string, choice int, opts []string) pirpc.Command {
 	return cmd
 }
 
+// IsDialogMethod reports extension_ui_request methods that block for an
+// extension_ui_response (select/confirm/input/editor, per pi's RPC
+// extension-UI subprotocol). Fire-and-forget methods
+// (notify/setStatus/setWidget/setTitle/set_editor_text) never expect one.
+func IsDialogMethod(method string) bool {
+	switch method {
+	case "select", "confirm", "input", "editor":
+		return true
+	}
+	return false
+}
+
+// IsFireAndForget reports extension_ui_request methods pi never waits on:
+// the client may display the info or ignore it, no response is expected.
+func IsFireAndForget(method string) bool {
+	switch method {
+	case "notify", "setStatus", "setWidget", "setTitle", "set_editor_text":
+		return true
+	}
+	return false
+}
+
+// FallbackResponse builds a safe cancellation for an extension_ui_request
+// pitago cannot render (unknown future method, custom widget payload).
+// Dialog callers receive undefined/false and fall back to defaults; pi
+// ignores responses with no pending request, so sending this for a
+// fire-and-forget-like method is a harmless no-op instead of a hang.
+func FallbackResponse(id string) pirpc.Command {
+	return pirpc.Command{Type: "extension_ui_response", ID: id, Cancelled: boolPtr(true)}
+}
+
 // IsDialogRequest reports extension_ui_request methods that open a dialog
 // (select/confirm/input). Anything else (notify/setStatus/setWidget/…)
 // never disrupts input routing. Unreadable payloads stay on the safe side

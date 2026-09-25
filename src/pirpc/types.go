@@ -328,17 +328,28 @@ type MessageUpdate struct {
 }
 
 // UIRequest is an extension_ui_request (permission dialogs etc.).
+// Field names mirror pi's RPC extension-UI subprotocol
+// (docs/rpc-extension-ui.md): dialog methods (select/confirm/input/editor)
+// block for an extension_ui_response; fire-and-forget methods
+// (notify/setStatus/setWidget/setTitle/set_editor_text) never expect one.
+// setWidget carries string arrays only in RPC mode (component factories
+// are ignored pi-side); omitted widgetLines clears the widget.
 type UIRequest struct {
-	ID          string   `json:"id"`
-	Method      string   `json:"method"`
-	Title       string   `json:"title,omitempty"`
-	Message     string   `json:"message,omitempty"`
-	Placeholder string   `json:"placeholder,omitempty"`
-	Options     []string `json:"options,omitempty"`
-	NotifyType  string   `json:"notifyType,omitempty"`
-	StatusKey   string   `json:"statusKey,omitempty"`
-	StatusText  string   `json:"statusText,omitempty"`
-	Text        string   `json:"text,omitempty"`
+	ID              string   `json:"id"`
+	Method          string   `json:"method"`
+	Title           string   `json:"title,omitempty"`
+	Message         string   `json:"message,omitempty"`
+	Placeholder     string   `json:"placeholder,omitempty"`
+	Prefill         string   `json:"prefill,omitempty"`
+	Options         []string `json:"options,omitempty"`
+	NotifyType      string   `json:"notifyType,omitempty"`
+	StatusKey       string   `json:"statusKey,omitempty"`
+	StatusText      string   `json:"statusText,omitempty"`
+	WidgetKey       string   `json:"widgetKey,omitempty"`
+	WidgetLines     []string `json:"widgetLines,omitempty"`
+	WidgetPlacement string   `json:"widgetPlacement,omitempty"`
+	Timeout         int      `json:"timeout,omitempty"`
+	Text            string   `json:"text,omitempty"`
 }
 
 // Queue mirrors queue_update.

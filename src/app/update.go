@@ -1474,6 +1474,14 @@ func diffOfDetails(raw json.RawMessage) string {
 
 // extension UI ---------------------------------------------------------------
 
+// fireUI answers an extension_ui_request. Pi is nil in tests
+// (New(nil, …)) where nobody waits — skip the write instead of panicking.
+func (m Model) fireUI(cmd pirpc.Command) {
+	if m.Pi != nil {
+		_ = m.Pi.Fire(cmd)
+	}
+}
+
 // handleUIRequest routes extension_ui_request events.
 // Protocol knowledge (methods, defaults, response shape) lives in
 // src/extension; this only mutates UI state.
@@ -1485,7 +1493,8 @@ func (m Model) handleUIRequest(raw []byte) Model {
 	switch {
 	case extension.ShouldAutoCancel(req.Method):
 		// MVP: auto-cancel so the agent uses defaults/timeout
-		_ = m.Pi.Fire(pirpc.Command{Type: "extension_ui_response", ID: req.ID, Cancelled: boolPtr(true)})
+		m.AddBlock(Block{Kind: "notice", Text: "plugin muốn mở editor — đã dùng mặc định"})
+		m.fireUI(extension.FallbackResponse(req.ID))
 	case req.Method == "select" || req.Method == "confirm":
 		d := &Dialog{
 			ID: req.ID, Method: req.Method, Kind: "ui",
@@ -1516,8 +1525,28 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		m.ta.SetValue(req.Text)
 		m.histIdx = -1
 	case req.Method == "setWidget":
-		// skipped: pi extension widgets don't render in this TUI
-		_ = req
+		// RPC mode carries string arrays only (component factories are
+		// ignored pi-side, e.g. plan-mode's PLAN widget): show them as a
+		// toast so extension state stays visible instead of vanishing.
+		// Omitted lines clear the widget — toasts auto-dismiss anyway,
+		// so clear is a no-op.
+		if len(req.WidgetLines) > 0 {
+			label := req.WidgetKey
+			if label == "" {
+				label = "plugin"
+			}
+			m.AddBlock(Block{Kind: "notice", Text: "[" + label + "]\n" + strings.Join(req.WidgetLines, "\n")})
+		}
+	case req.Method == "setTitle":
+		// terminal window title: no TUI surface, ignore per protocol
+		// (fire-and-forget methods may be ignored).
+	default:
+		// Unknown future method: toast so it stays visible, then cancel
+		// so a dialog-like request never hangs the agent. Pi ignores
+		// responses with no pending request, so this is equally safe
+		// for fire-and-forget-likes.
+		m.AddBlock(Block{Kind: "notice", Text: "plugin UI chưa hỗ trợ: " + req.Method, Err: true})
+		m.fireUI(extension.FallbackResponse(req.ID))
 	}
 	// Any fresh extension prompt arrives after the extension ran code that
 	// may have rewritten its store file (e.g. pi-tasks createTask writes
