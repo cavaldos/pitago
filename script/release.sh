@@ -14,11 +14,18 @@ TAG="${1:-}"
   echo "error: working tree is dirty — commit or stash first" >&2
   exit 1
 }
-git rev-parse "$TAG" >/dev/null 2>&1 && {
-  echo "error: tag $TAG already exists" >&2
-  exit 1
-}
-
-git tag -a "$TAG" -m "Release $TAG"
-git push origin "$TAG"
+# Re-running with an existing tag moves the tag to HEAD and rebuilds
+# the release (old GitHub Release is deleted so CI recreates it).
+if git rev-parse "$TAG" >/dev/null 2>&1 \
+  || git ls-remote --tags --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+  echo "tag $TAG already exists — rebuilding it on $(git rev-parse --short HEAD)"
+  if command -v gh >/dev/null 2>&1; then
+    gh release delete "$TAG" --yes 2>/dev/null || true
+  fi
+  git tag -f -a "$TAG" -m "Release $TAG"
+  git push --force origin "$TAG"
+else
+  git tag -a "$TAG" -m "Release $TAG"
+  git push origin "$TAG"
+fi
 echo "pushed $TAG — watch the release build under GitHub Actions"
