@@ -160,6 +160,37 @@ func leakEventParts(cbS, cxS, cyS string) (tea.MouseMsg, bool) {
 	return tea.MouseMsg{X: cx - 1, Y: cy - 1, Action: tea.MouseActionPress, Button: btn}, true
 }
 
+// applyWheelLeak replays scrubbed wheel reports into the open dialog
+// (same routing as the normal MouseMsg path). Trackpad bursts often split
+// across reads and arrive here as KeyRunes — without this the trajectory
+// detail feels dead while the chat behind still scrolls. Other dialogs
+// swallow (like MouseMsg).
+func (m Model) applyWheelLeak(events []tea.MouseMsg) tea.Model {
+	if len(m.Dialogs) == 0 || len(events) == 0 {
+		return m
+	}
+	d := m.Dialogs[0]
+	cur := m
+	for _, ev := range events {
+		if ev.Button != tea.MouseButtonWheelUp && ev.Button != tea.MouseButtonWheelDown {
+			continue
+		}
+		switch {
+		case d.Kind == "trajectory":
+			nm, _ := cur.updateTrajWheel(d, ev)
+			if mm, ok := nm.(Model); ok {
+				cur = mm
+			}
+		case d.Kind == "pconfig" && len(d.Provs) > 0:
+			nm, _ := cur.updatePconfigWheel(d, ev.Button == tea.MouseButtonWheelDown)
+			if mm, ok := nm.(Model); ok {
+				cur = mm
+			}
+		}
+	}
+	return cur
+}
+
 // scrollLeak replays scrubbed wheel reports into the viewports, mirroring
 // the normal MouseMsg routing (wheel over the sidebar scrolls it).
 func (m *Model) scrollLeak(events []tea.MouseMsg) tea.Cmd {

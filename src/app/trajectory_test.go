@@ -182,6 +182,46 @@ func TestRenderTrajectoryFixedSize(t *testing.T) {
 	}
 }
 
+// Box height never moves with scroll and the │ divider stays on one
+// column (selected rows used to be 2 cells wider, jagging the line).
+func TestRenderTrajectoryFixedHeightAndDivider(t *testing.T) {
+	m := Model{winW: 120, winH: 40}
+	d := trajWheelDialog()
+	heights := map[int]int{}
+	for _, off := range []int{0, 3, 1000} {
+		d.TrajOff = off
+		out := stripANSI(m.renderTrajectoryDialog(d))
+		heights[off] = len(strings.Split(strings.TrimRight(out, "\n"), "\n"))
+	}
+	if heights[0] != heights[3] || heights[3] != heights[1000] {
+		t.Fatalf("height varies with scroll: %v", heights)
+	}
+	s := &Dialog{Kind: "trajectory", Title: "T", Scope: "all",
+		Options: []string{"#01 • user: hi"}, Descs: []string{"t · user"}, Payload: []string{"hi"}}
+	s.Reindex()
+	hShort := len(strings.Split(strings.TrimRight(stripANSI(m.renderTrajectoryDialog(s)), "\n"), "\n"))
+	if hShort != heights[0] {
+		t.Fatalf("height varies short=%d long=%d", hShort, heights[0])
+	}
+	d2 := &Dialog{Kind: "trajectory", Title: "Trajectory (all)", Scope: "all",
+		Options: []string{"#01 • user: hi", "#02 • assistant: ok", "#03 • user: yo"},
+		Descs:   []string{"t · user", "t · assistant", "t · user"},
+		Payload: []string{"a\nb\n\nc", "d\ne\n\nf", "g\nh\n\ni"}}
+	d2.Reindex()
+	d2.Cursor = 1
+	want := -1
+	for _, ln := range strings.Split(stripANSI(m.renderTrajectoryDialog(d2)), "\n") {
+		if strings.Count(ln, "│") != 3 {
+			continue
+		}
+		if idx := len(strings.Split(ln, "│")[0]); want < 0 {
+			want = idx
+		} else if idx != want {
+			t.Fatalf("divider jags: got %d want %d in %q", idx, want, ln)
+		}
+	}
+}
+
 // Kind + [tag] spans carry color; visible cells are unchanged.
 // (lipgloss mutes color without a TTY, so the test forces ANSI256 and
 // restores the ambient profile after.)

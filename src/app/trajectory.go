@@ -191,9 +191,14 @@ func trajScroll(off, total, win int) int {
 
 // updateTrajWheel routes the wheel by column: steps move the selection
 // (detail offset resets, like ↑↓), detail scrolls 3 lines per notch.
+// When the detail has no overflow the wheel is never dead: it moves the
+// selection anywhere (otherwise hovering a short detail feels broken).
 func (m Model) updateTrajWheel(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd) {
 	down := mm.Button == tea.MouseButtonWheelDown
-	if !trajDetailAt(m.winW, mm.X) {
+	_, _, rightW := trajGeom(m.winW)
+	win := trajWin(m.winH)
+	lines := trajDetailLines(trajSelected(d), rightW-4)
+	if len(lines) <= win || !trajDetailAt(m.winW, mm.X) {
 		t := tea.KeyDown
 		if !down {
 			t = tea.KeyUp
@@ -201,9 +206,6 @@ func (m Model) updateTrajWheel(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd) 
 		nm, cmd := m.updateDialog(tea.KeyMsg{Type: t})
 		return nm, cmd
 	}
-	_, _, rightW := trajGeom(m.winW)
-	win := trajWin(m.winH)
-	lines := trajDetailLines(trajSelected(d), rightW-4)
 	step := 3
 	if down {
 		d.TrajOff = trajScroll(d.TrajOff+step, len(lines), win)
@@ -255,9 +257,9 @@ func (m Model) renderTrajectoryDialog(d *Dialog) string {
 		ri := d.FIdx[fi]
 		row := ""
 		if ri >= 0 && ri < len(d.Options) {
-			row = Fit(d.Options[ri], leftW-4)
+			row = Fit(d.Options[ri], leftW-2)
 		} else {
-			row = Fit("", leftW-4)
+			row = Fit("", leftW-2)
 		}
 		if fi == d.Cursor {
 			// selected: full-width highlight, no inner colors (an inner
@@ -316,11 +318,15 @@ func (m Model) renderTrajectoryDialog(d *Dialog) string {
 		}
 		b.WriteString(trajPad(l+" "+sep+" "+r, cw) + "\n")
 	}
-	if off > 0 {
+	skipped := len(rows) - off - win
+	if off > 0 && skipped > 0 {
+		b.WriteString(toolStyle.Render(Fit(fmt.Sprintf("…(+%d lines above · +%d below: wheel/PgDn or Enter views full step)", off, skipped), cw)) + "\n")
+	} else if off > 0 {
 		b.WriteString(toolStyle.Render(Fit(fmt.Sprintf("…(+%d lines above)", off), cw)) + "\n")
-	}
-	if skipped := len(rows) - off - win; skipped > 0 {
+	} else if skipped > 0 {
 		b.WriteString(toolStyle.Render(Fit(fmt.Sprintf("…(+%d lines below: wheel/PgDn or Enter views full step)", skipped), cw)) + "\n")
+	} else {
+		b.WriteString(Fit("", cw) + "\n")
 	}
 	b.WriteString("\n")
 	foot := "type to filter · ↑↓ steps · wheel detail · Enter view in chat · Esc close"

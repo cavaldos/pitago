@@ -88,14 +88,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mouseLeakAt = time.Now()
 			if len(cleaned) == 0 {
 				if len(m.Dialogs) > 0 {
-					return m, nil // dialogs swallow mouse, like MouseMsg
+					return m.applyWheelLeak(events), nil
 				}
 				return m, m.scrollLeak(events)
 			}
 			// Mixed burst + real typing: still scroll (don't drop the
 			// wheel), then let the leftover text type normally. Wheel
 			// never touches input history — scrollLeak only moves viewports.
-			if len(m.Dialogs) == 0 {
+			if len(m.Dialogs) > 0 {
+				m = m.applyWheelLeak(events).(Model)
+			} else {
 				_ = m.scrollLeak(events)
 			}
 			km.Runes = cleaned
@@ -108,7 +110,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if events, frag := cleanMouseFrag(string(km.Runes)); frag {
 				m.mouseLeakAt = time.Now()
 				if len(m.Dialogs) > 0 {
-					return m, nil
+					return m.applyWheelLeak(events), nil
 				}
 				return m, m.scrollLeak(events)
 			}
@@ -126,14 +128,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// stays swallowed while a dialog is open.
 		if mm, ok := msg.(tea.MouseMsg); ok {
 			if d := m.Dialogs[0]; d.Kind == "pconfig" && len(d.Provs) > 0 &&
-				mm.Action == tea.MouseActionPress &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				return m.updatePconfigWheel(d, mm.Button == tea.MouseButtonWheelDown)
 			}
 			// Trajectory window: wheel over STEPS moves the selection,
 			// wheel over DETAIL scrolls it (chat/sidebar behind never move).
 			if d := m.Dialogs[0]; d.Kind == "trajectory" &&
-				mm.Action == tea.MouseActionPress &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				return m.updateTrajWheel(d, mm)
 			}
