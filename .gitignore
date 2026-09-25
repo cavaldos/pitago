@@ -1,5 +1,5 @@
-# Build artifacts
-pitago
+# Build artifacts (root binary only — bare `pitago` would also match src/pitago/)
+/pitago
 /bin/
 
 # pi stderr log
