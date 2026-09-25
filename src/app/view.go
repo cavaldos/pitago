@@ -761,15 +761,19 @@ func (m Model) overSide(x int) bool {
 // statsLine mirrors opencode's status footer: model · ctx% · cost, no sidebar.
 
 func (m Model) statsLine() string {
+	agent := ""
+	if m.CurAgent != "" {
+		agent = " · @" + Short(m.CurAgent, 20)
+	}
 	if m.Stats.ContextPct > 0 {
-		return fmt.Sprintf("%s · %.0f%% · %s · $%.2f",
-			Short(m.ModelLbl, 30), m.Stats.ContextPct, FmtNum(m.Stats.TokensTotal), m.Stats.Cost)
+		return fmt.Sprintf("%s%s · %.0f%% · %s · $%.2f",
+			Short(m.ModelLbl, 30), agent, m.Stats.ContextPct, FmtNum(m.Stats.TokensTotal), m.Stats.Cost)
 	}
 	if m.Stats.Cost > 0 || m.Stats.TokensTotal > 0 {
-		return fmt.Sprintf("%s · %s · $%.2f",
-			Short(m.ModelLbl, 30), FmtNum(m.Stats.TokensTotal), m.Stats.Cost)
+		return fmt.Sprintf("%s%s · %s · $%.2f",
+			Short(m.ModelLbl, 30), agent, FmtNum(m.Stats.TokensTotal), m.Stats.Cost)
 	}
-	return Short(m.ModelLbl, 40)
+	return Short(m.ModelLbl, 40) + agent
 }
 
 func (m Model) renderHeader() string {
@@ -790,13 +794,17 @@ func (m Model) renderInput() string {
 	border, title := cInput, ""
 	left := "○ ready · ↵ send · / commands · @ files · ^P model · ^R recents · ^C quit"
 	plan := m.isPlanMode()
+	agentTag := ""
+	if m.CurAgent != "" {
+		agentTag = " · @" + Short(m.CurAgent, 20)
+	}
 	if m.thinking {
 		if plan {
 			border = cPlan
-			title = "PLAN · " + spinFrame(m.pet.tick) + " " + m.inputStatus()
+			title = "PLAN · " + spinFrame(m.pet.tick) + " " + m.inputStatus() + agentTag
 		} else {
 			border = cGreen
-			title = spinFrame(m.pet.tick) + " " + m.inputStatus()
+			title = spinFrame(m.pet.tick) + " " + m.inputStatus() + agentTag
 		}
 		if m.escArmed() {
 			left = "press Esc again to cancel"
@@ -805,9 +813,11 @@ func (m Model) renderInput() string {
 		}
 	} else if plan {
 		border = cPlan
-		title = "PLAN"
+		title = "PLAN" + agentTag
 	} else if len(m.Dialogs) > 0 && !m.isInlineUI() {
 		border = cInputDim
+	} else if m.CurAgent != "" {
+		title = "@" + Short(m.CurAgent, 30)
 	}
 	right := m.statsLine()
 	if m.extStat != "" {

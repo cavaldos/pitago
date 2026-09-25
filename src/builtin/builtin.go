@@ -1151,6 +1151,15 @@ func All() []app.Builtin {
 				return m.OpenShortcuts()
 			},
 		},
+		{
+			// Native replacement: pi-subagents renders via ui.custom,
+			// which returns undefined in RPC mode (no menu appears).
+			Name: "subagents", Desc: "Select subagent (shows ● current)", Usage: "/subagents [name|off]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.OpenSubagents(arg)
+			},
+		},
 	}
 	// Pi builtins with no RPC equivalent stay intercepted so they report
 	// instead of leaking into the chat (old runBuiltin default branch).

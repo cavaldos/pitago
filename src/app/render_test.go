@@ -278,3 +278,28 @@ func TestInputFooterNeverWraps(t *testing.T) {
 		t.Fatalf("frame is %d rows, want 24", len(lines))
 	}
 }
+
+func TestRenderInputShowsAgent(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Status = "ready"
+	m.ModelLbl = "test"
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = tm.(Model)
+	m.CurAgent = "reviewer"
+	// Idle: agent on the top border.
+	top := strings.Split(stripANSI(m.renderInput()), "\n")[0]
+	if !strings.Contains(top, "@reviewer") {
+		t.Fatalf("idle input must show @agent on the border: %q", top)
+	}
+	// Footer stats carry it too.
+	if !strings.Contains(stripANSI(m.renderInput()), "@reviewer") {
+		t.Fatal("footer stats must show @agent")
+	}
+	// Running: agent next to the live status.
+	m.thinking = true
+	m.Status = "pi is running…"
+	top = strings.Split(stripANSI(m.renderInput()), "\n")[0]
+	if !strings.Contains(top, "pi is running") || !strings.Contains(top, "@reviewer") {
+		t.Fatalf("running input must show status + agent: %q", top)
+	}
+}

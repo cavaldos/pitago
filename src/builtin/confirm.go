@@ -29,7 +29,37 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"yank":        confirmYank,
 		"update":      confirmUpdate,
 		"trajectory":  confirmTrajectory,
+		"subagents":   confirmSubagents,
 	}
+}
+
+// confirmSubagents selects the highlighted subagent: persists it as current
+// (● marker next open) and toasts the choice. The "— none —" row clears
+// back to the initial state. Details stay in the row descs.
+func confirmSubagents(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	if ri < 0 || ri >= len(d.Options) {
+		return m, nil
+	}
+	name := d.Options[ri]
+	m.Dialogs = m.Dialogs[1:]
+	if name == app.SubagentsNone {
+		m.SetCurrentSubagent("")
+		m.AddBlock(app.Block{Kind: "notice", Text: "subagent off → back to initial state"})
+		m.Refresh()
+		return m, nil
+	}
+	desc := ""
+	if ri < len(d.Descs) {
+		desc = d.Descs[ri]
+	}
+	text := "subagent → " + name
+	if desc != "" {
+		text += " " + desc
+	}
+	m.SetCurrentSubagent(name)
+	m.AddBlock(app.Block{Kind: "notice", Text: text})
+	m.Refresh()
+	return m, nil
 }
 
 func confirmModel(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
