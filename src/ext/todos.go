@@ -19,10 +19,13 @@ const (
 
 // TodoItem is one sidebar todo row.
 type TodoItem struct {
-	ID      string
-	Content string
-	Status  TodoStatus
-	SubAct  string // optional sub-action shown after in-progress items
+	ID        string
+	Content   string
+	Status    TodoStatus
+	SubAct    string   // optional sub-action shown after in-progress items
+	BlockedBy []string // pi-tasks dependency ids
+	CreatedAt int64    // epoch milliseconds
+	UpdatedAt int64    // epoch milliseconds
 }
 
 // IsTodoTool reports todo/task tool names (sidebar tracking).
@@ -107,12 +110,44 @@ func ParseTodos(raw json.RawMessage) ([]TodoItem, bool) {
 		if sub == "" {
 			sub, _ = m["activeForm"].(string)
 		}
-		out = append(out, TodoItem{ID: id, Content: content, Status: NormTodoStatus(m), SubAct: sub})
+		blocked := stringSlice(m["blockedBy"])
+		item := TodoItem{ID: id, Content: content, Status: NormTodoStatus(m), SubAct: sub, BlockedBy: blocked}
+		item.CreatedAt, item.UpdatedAt = epochMillis(m)
+		out = append(out, item)
 	}
 	if len(arr) > 0 && len(out) == 0 {
 		return nil, false
 	}
 	return out, true
+}
+
+func stringSlice(v any) []string {
+	a, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(a))
+	for _, x := range a {
+		if s, ok := x.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func epochMillis(m map[string]any) (created, updated int64) {
+	toMillis := func(v any) int64 {
+		switch n := v.(type) {
+		case float64:
+			return int64(n)
+		case int64:
+			return n
+		case int:
+			return int64(n)
+		}
+		return 0
+	}
+	return toMillis(m["createdAt"]), toMillis(m["updatedAt"])
 }
 
 // ParseTodoLines parses pi-tasks TaskList text ("#1 [pending] subject").

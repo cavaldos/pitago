@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/app"
+	componentformat "pitago/src/components/format"
 	"pitago/src/pirpc"
 	"pitago/src/pitago"
 )
@@ -173,8 +174,17 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 		}
 		for _, b := range pirpc.BlocksOf(msg.Content) {
 			if b.Type == "toolCall" && b.Name != "" {
+				call := "tool: " + treeTool(b.Name, b.Arguments)
+				if diff := trajEditDiff(b.Name, string(b.Arguments)); diff != "" {
+					parts = append(parts, call+"\ndiff:\n"+trajCap(diff, 2000))
+					continue
+				}
 				args := strings.TrimSpace(string(b.Arguments))
-				parts = append(parts, "tool: "+treeTool(b.Name, b.Arguments)+"\n"+trajCap(args, 1000))
+				if b.Name == "edit" && args != "" {
+					parts = append(parts, call+"\nargs: "+trajCap(args, 1000))
+				} else {
+					parts = append(parts, call+"\n"+trajCap(args, 1000))
+				}
 			}
 		}
 		if msg.StopReason == "aborted" {
@@ -189,7 +199,13 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 		if msg.ToolCallID != "" {
 			if tc, ok := tcm[msg.ToolCallID]; ok {
 				parts = append(parts, "call: "+treeTool(tc.Name, tc.Arguments))
-				if args := strings.TrimSpace(string(tc.Arguments)); args != "" {
+				if tc.Name == "edit" {
+					if diff := trajEditDiff(tc.Name, string(tc.Arguments)); diff != "" {
+						parts = append(parts, "diff:\n"+trajCap(diff, 2000))
+					} else if args := strings.TrimSpace(string(tc.Arguments)); args != "" {
+						parts = append(parts, "args: "+trajCap(args, 1000))
+					}
+				} else if args := strings.TrimSpace(string(tc.Arguments)); args != "" {
 					parts = append(parts, "args: "+trajCap(args, 1000))
 				}
 			}
@@ -217,6 +233,13 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 	default:
 		return trajCap(pirpc.TextOf(msg.Content), 2000)
 	}
+}
+
+func trajEditDiff(tool, args string) string {
+	if tool == "edit" {
+		return componentformat.EditDiffFallback(args)
+	}
+	return ""
 }
 
 // trajCap trims to n runes (no flattening: detail keeps newlines).

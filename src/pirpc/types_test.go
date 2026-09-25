@@ -1,6 +1,7 @@
 package pirpc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -48,9 +49,12 @@ func TestPromptEmptyMessagePresent(t *testing.T) {
 }
 
 func TestImageCount(t *testing.T) {
-	raw := json.RawMessage(`[{"type":"text","text":"hi"},{"type":"image"},{"type":"image"}]`)
-	if n := ImageCount(raw); n != 2 {
+	raw := json.RawMessage(`[{"type":"text","text":"hi"},{"type":"image","data":"aGk=","mimeType":"image/png"}]`)
+	if n := ImageCount(raw); n != 1 {
 		t.Fatalf("count = %d", n)
+	}
+	if got := ImagesOf(raw); len(got) != 1 || got[0].Data != "aGk=" || got[0].MimeType != "image/png" {
+		t.Fatalf("images = %+v", got)
 	}
 	if n := ImageCount(json.RawMessage(`"plain"`)); n != 0 {
 		t.Fatalf("plain count = %d", n)
@@ -58,6 +62,31 @@ func TestImageCount(t *testing.T) {
 }
 
 // SourceTag must mirror pi's getAutocompleteSourceTag.
+func TestDecodeSelectOption(t *testing.T) {
+	raw, _ := json.Marshal(SelectOption{Title: "Ship it", Description: "Deploy after tests"})
+	encoded := SelectOptionPrefix + base64.RawURLEncoding.EncodeToString(raw)
+
+	got, ok := DecodeSelectOption(encoded)
+	if !ok || got.Title != "Ship it" || got.Description != "Deploy after tests" {
+		t.Fatalf("decoded = %+v, ok=%v", got, ok)
+	}
+	if _, ok := DecodeSelectOption("legacy title"); ok {
+		t.Fatal("legacy title must remain a plain string")
+	}
+	for _, bad := range []string{SelectOptionPrefix + "%%%", SelectOptionPrefix + base64.RawURLEncoding.EncodeToString([]byte(`{}`))} {
+		if _, ok := DecodeSelectOption(bad); ok {
+			t.Fatalf("malformed private value accepted: %q", bad)
+		}
+	}
+
+	if !IsAskUserSelect(UIRequest{Method: "select", Options: []string{"plain", encoded}}) {
+		t.Fatal("encoded select must carry the additive Ask User marker")
+	}
+	if IsAskUserSelect(UIRequest{Method: "confirm", Options: []string{encoded}}) {
+		t.Fatal("confirm must never use rich Ask User rendering")
+	}
+}
+
 func TestSourceTag(t *testing.T) {
 	tag := func(scope, source string) string {
 		return RepoCommand{Source: "extension",

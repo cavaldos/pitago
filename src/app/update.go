@@ -11,8 +11,9 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"pitago/src/extension"
+	"pitago/src/components/chat"
 	"pitago/src/ext"
+	"pitago/src/extension"
 	"pitago/src/pirpc"
 )
 
@@ -120,6 +121,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mouseLeakAt = time.Time{}
 		}
 	}
+	// Live bridge transport bypasses dialog capture: an attach closes local
+	// dialogs, and a reconnect/disconnect must always reach the model.
+	if lm, ok := msg.(liveMsg); ok {
+		return m, m.applyLive(lm.generation, lm.message)
+	}
+	// Detach and owned-child isolation are global, even behind a read-only
+	// picker/dialog. In particular, Ctrl+D must never become "close dialog".
+	if km, ok := msg.(tea.KeyMsg); ok && m.followRemote && km.Type == tea.KeyCtrlD {
+		return m, m.detachLive()
+	}
+	if _, ok := msg.(piEventMsg); ok && m.followRemote {
+		return m, nil
+	}
+
 	// A Replace picker targets the open dialog in place (Tab scope swap),
 	// not a second dialog — it bypasses dialog capture to the main switch.
 	// dialog captures all keys while open
@@ -132,11 +147,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				return m.updatePconfigWheel(d, mm.Button == tea.MouseButtonWheelDown)
 			}
-			// Trajectory window: wheel over STEPS moves the selection,
-			// wheel over DETAIL scrolls it (chat/sidebar behind never move).
-			if d := m.Dialogs[0]; d.Kind == "trajectory" &&
+			// Trace windows: wheel over the left list moves the selection,
+			// wheel over the detail scrolls it (chat/sidebar stay behind).
+			if d := m.Dialogs[0]; (d.Kind == "trajectory" || d.Kind == "tree") &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
+				if d.Kind == "tree" {
+					return m.updateTreeWheel(d, mm)
+				}
 				return m.updateTrajWheel(d, mm)
+			}
+			if d := m.Dialogs[0]; d.Kind == "notification" &&
+				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
+				t := tea.KeyUp
+				if mm.Button == tea.MouseButtonWheelDown {
+					t = tea.KeyDown
+				}
+				return m.updateDialog(tea.KeyMsg{Type: t})
 			}
 			return m, nil
 		}
@@ -182,6 +208,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// In external follow mode, only display/navigation and quit remain live.
+	// This guard sits after dialog capture but before textarea/input and all
+	// RPC control paths, making prompt/steer/abort/model/session impossible.
+	if km, ok := msg.(tea.KeyMsg); ok {
+		if nm, cmd, handled := m.handleFollowKey(km); handled {
+			return nm, cmd
+		}
+	}
+
 	// Wheel never touches input history: ↑↓ recalls when the input is
 	// empty (mouse on only — with mouse off plain ↑↓ may be a wheel
 	// scroll, see the KeyUp/KeyDown cases), wheel scrolls viewports only
@@ -206,12 +241,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.winW, m.winH = msg.Width, msg.Height
 		mainW := m.mainW()
 		// Layout fits winH exactly: header(1) + viewport + input(6 + tray:
-		// textarea 3 + footer 1 + border 2 + image chips 0/1).
-		vpH := msg.Height - 7 - m.chipH()
+		// textarea 3 + footer 1 + border 2 + image chips 0/1). Keep the
+		// base budget independent of the current tray; applyPopupH owns
+		// subtracting the tray when it changes without a resize.
+		baseVpH := msg.Height - 7
+		if baseVpH < 5 {
+			baseVpH = 5
+		}
+		m.baseVpH = baseVpH
+		vpH := baseVpH - m.chipH()
 		if vpH < 5 {
 			vpH = 5
 		}
-		m.baseVpH = vpH
 		if !m.ready {
 			m.vp = viewport.New(mainW, vpH)
 			m.sideVp = viewport.New(sideInnerW, m.sideContentH())
@@ -234,6 +275,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case connectedMsg:
+		if m.followRemote {
+			return m, nil // an in-flight owned fetch must not replace remote history
+		}
 		if msg.err != nil {
 			m.connErr = msg.err.Error()
 			m.Status = "cannot connect to pi"
@@ -255,27 +299,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.Stats = msg.stats
 		m.sessBreak = pirpc.UsageBreakdown(msg.entries)
-		m.Cmds = append(BuiltinRepo(m.builtins), msg.cmds...)
+		m.Cmds = mergeCommands(m.builtins, msg.cmds)
 		m.refreshCmds() // reconnect can replace Cmds under an open / popup (stale indices panic render)
 		m.Todos = restoreTodos(msg.msgs)
+		m.syncTaskRuntime()
 		m.MCP = getMcpServers()
 		m.Plugins = getPlugins()
 		m.sessionFile = msg.state.SessionFile
 		m.refreshPiTasks() // store file covers /tasks-menu edits (no RPC)
 		m.blocks = nil
 		m.tools = make(map[string]int)
+		m.progressByKey = make(map[string]int)
 		m.hist = nil
 		m.histIdx = -1
 		m.restore(msg.msgs)
 		m.Status = "ready"
 		m.planOn = false // fresh connect: plan latch is live-only
+		m.clearTeamWidgetState()
 		m.RefreshFollow()
-		return m, nil
+		return m, m.ensureTaskTick()
 
 	case piEventMsg:
+		if m.followRemote {
+			return m, nil // never mix the owned child's transcript into follow mode
+		}
 		return m.handleEvent(msg.Event)
 
 	case statsMsg:
+		if m.followRemote {
+			return m, nil
+		}
 		if msg.err == nil {
 			m.Stats = msg.stats
 			if m.ctxWindow == 0 {
@@ -300,6 +353,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case stateRefreshMsg:
+		if m.followRemote {
+			return m, nil
+		}
 		if msg.err == nil {
 			lbl := msg.state.Model.ID
 			if lbl == "" {
@@ -353,6 +409,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case extensionCmdAckMsg:
+		if msg.err != nil {
+			m.AddBlock(Block{Kind: "notice", Text: msg.err.Error(), Err: true})
+			m.Refresh()
+		}
+		return m, nil
+
 	case pasteDoneMsg:
 		m.applyPaste(msg)
 		return m, nil
@@ -381,8 +444,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case petTickMsg:
-		// 500ms loop while busy/flashing: face animation + elapsed counter.
-		if m.pet.status.Busy() || m.pet.status.Flashing() {
+		// 500ms loop while busy/flashing or a task is active: one timer also
+		// drives the task spinner and elapsed counter.
+		if m.pet.status.Busy() || m.pet.status.Flashing() || m.taskActive() {
 			m.pet.tick++
 			m.Refresh()
 			return m, petTickCmd()
@@ -409,6 +473,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.blocks = nil
 		m.tools = make(map[string]int)
+		m.progressByKey = make(map[string]int)
 		m.curAsst, m.curThink = -1, -1
 		m.asstDelta, m.thinkDelta = false, false
 		m.thinking = false
@@ -417,9 +482,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Status = "ready"
 		m.planOn = false // new session: plan latch is live-only
 		m.Todos = nil
+		m.task = taskRuntime{}
 		// Drop the old session identity: its task store must not leak into
 		// the new session via refreshPiTasks (re-adopted from get_state below).
 		m.sessionFile = ""
+		m.clearTeamWidgetState()
 		m.imgAtts = nil // pending chips belong to the old session
 		m.trayFocus = false
 		m.histIdx = -1 // keep sent history across /new, back to live input
@@ -443,19 +510,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 			return m, nil
 		} else {
-		m.ModelLbl = msg.Label
-		id := msg.ID
-		if id == "" {
-			id = msg.Label
-		}
-		m.pushRecent(msg.Provider, id, msg.Label)
-		m.rememberModel(msg.Provider, id, msg.Label)
-		m.Status = "ready"
-		verb := "model switched → "
-		if msg.Restored {
-			verb = "model restored → "
-		}
-		m.AddBlock(Block{Kind: "notice", Text: verb + msg.Label})
+			m.ModelLbl = msg.Label
+			id := msg.ID
+			if id == "" {
+				id = msg.Label
+			}
+			m.pushRecent(msg.Provider, id, msg.Label)
+			m.rememberModel(msg.Provider, id, msg.Label)
+			m.Status = "ready"
+			verb := "model switched → "
+			if msg.Restored {
+				verb = "model restored → "
+			}
+			m.AddBlock(Block{Kind: "notice", Text: verb + msg.Label})
 			m.Refresh()
 			return m, m.fetchStateOnce()
 		}
@@ -611,8 +678,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Status = "ready"
 		if msg.Err != nil {
 			m.AddBlock(Block{Kind: "notice", Text: "tree error: " + msg.Err.Error(), Err: true})
+		} else if len(msg.Options) == 0 {
+			m.AddBlock(Block{Kind: "notice", Text: "no tree entries yet"})
 		} else {
-			m.AddBlock(Block{Kind: "tree", Text: msg.Text})
+			mode := msg.Mode
+			if mode == "" {
+				mode = "default"
+			}
+			d := &Dialog{Kind: "tree", Title: "Tree (" + mode + ")",
+				Message: "session tree · ↑↓ move · Enter views the full entry · type filters",
+				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload,
+				Scope: mode, Filter: msg.Filter}
+			d.Reindex()
+			if msg.Current >= 0 {
+				for i, ri := range d.FIdx {
+					if ri == msg.Current {
+						d.Cursor = i
+						break
+					}
+				}
+			}
+			m.Dialogs = append(m.Dialogs, d)
 		}
 		m.Refresh()
 		return m, nil
@@ -721,6 +807,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.Pi = msg.client
+		if m.liveBridge != nil {
+			m.liveBridge.SetOwnPID(msg.client.PID())
+		}
 		msg.client.OnEvent = func(e pirpc.Event) { ProgRef.Send(piEventMsg{e}) }
 		m.Status = "reloading…"
 		m.Refresh()
@@ -728,7 +817,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CmdsRefreshMsg:
 		if msg.Err == nil {
-			merged := append(BuiltinRepo(m.builtins), msg.Cmds...)
+			merged := mergeCommands(m.builtins, msg.Cmds)
 			if cmdSig(merged) != cmdSig(m.Cmds) {
 				if msg.Announce {
 					old := make(map[string]bool, len(m.Cmds))
@@ -1208,6 +1297,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.thinking = false
 		m.escArm = time.Time{}
 		m.pet = petState{}
+		m.clearTeamWidgetState()
 		if m.respawning {
 			break // intentional reconnect, respawnMsg will follow
 		}
@@ -1218,19 +1308,17 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		}
 		m.AddBlock(Block{Kind: "notice", Text: text, Err: true})
 	}
+	taskCmd := m.ensureTaskTick()
 	// High-frequency streaming events share one paint per frame (plus a
 	// trailing flush tick); everything else repaints immediately.
 	if ev.Type == "message_update" || ev.Type == "tool_execution_update" {
 		if flush := m.refreshStreaming(); flush != nil {
-			if pcmd == nil {
-				return m, flush
-			}
-			return m, tea.Batch(pcmd, flush)
+			return m, tea.Batch(pcmd, taskCmd, flush)
 		}
-		return m, pcmd
+		return m, tea.Batch(pcmd, taskCmd)
 	}
 	m.Refresh()
-	return m, pcmd
+	return m, tea.Batch(pcmd, taskCmd)
 }
 
 func (m *Model) applyDelta(raw []byte) tea.Cmd {
@@ -1299,10 +1387,30 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 		return nil
 	}
 	msg := env.Message
+	if msg.Role == "assistant" && msg.Usage != nil {
+		// message_end is the authoritative per-message total; unlike the
+		// streaming snapshot it also covers tool-only assistant messages.
+		m.addTaskUsage(msg.Usage.Input, msg.Usage.Output)
+	}
 	switch msg.Role {
 	case "user":
 		if t := withImages(pirpc.TextOf(msg.Content), pirpc.ImageCount(msg.Content)); strings.TrimSpace(t) != "" {
-			m.AddBlock(Block{Kind: "user", Text: t})
+			m.AddBlock(Block{Kind: "user", Text: t, Images: chatImages(msg.Content)})
+		}
+	case "custom":
+		if !msg.Display {
+			break
+		}
+		text := strings.TrimSpace(pirpc.TextOf(msg.Content))
+		if text == "" {
+			break
+		}
+		if isTeamDashboardText(text) {
+			m.openTeamDashboard(text)
+		} else if isTeamDetailText(text) {
+			m.openTeamDetail(text)
+		} else {
+			m.addChatNotice(text, false)
 		}
 	case "assistant":
 		if msg.StopReason == "error" && msg.ErrorMessage != "" {
@@ -1357,15 +1465,21 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 				m.refreshPiTasks()
 			}
 		}
+		status := "done"
+		if msg.IsError {
+			status = "error"
+		}
 		if i, ok := m.tools[msg.ToolCallID]; ok {
 			if m.blocks[i].ToolStatus == "running" {
-				m.blocks[i].ToolStatus = "done"
+				m.blocks[i].ToolStatus = status
 			}
 			if m.blocks[i].ToolResult == "" {
 				m.blocks[i].ToolResult = text
 			}
-		} else if strings.TrimSpace(text) != "" {
-			m.AddBlock(Block{Kind: "tool", ToolName: msg.ToolName, ToolStatus: "done", ToolResult: text})
+		} else if strings.TrimSpace(msg.ToolName) != "" {
+			i := m.ensureTool(msg.ToolCallID, msg.ToolName)
+			m.blocks[i].ToolStatus = status
+			m.blocks[i].ToolResult = text
 		}
 	case "bashExecution":
 		out := msg.Output
@@ -1384,9 +1498,13 @@ func (m *Model) restore(msgs []pirpc.AgentMessage) {
 		switch msg.Role {
 		case "user":
 			if t := withImages(strings.TrimSpace(pirpc.TextOf(msg.Content)), pirpc.ImageCount(msg.Content)); t != "" {
-				m.AddBlock(Block{Kind: "user", Text: t})
+				m.AddBlock(Block{Kind: "user", Text: t, Images: chatImages(msg.Content)})
 			}
 			m.pushHist(strings.TrimSpace(pirpc.TextOf(msg.Content)))
+		case "custom":
+			if text := strings.TrimSpace(pirpc.TextOf(msg.Content)); msg.Display && text != "" {
+				m.addChatNotice(text, false)
+			}
 		case "assistant":
 			for _, b := range pirpc.BlocksOf(msg.Content) {
 				switch b.Type {
@@ -1413,6 +1531,10 @@ func (m *Model) restore(msgs []pirpc.AgentMessage) {
 				text = diffOfDetails(msg.Details)
 			}
 			if i, ok := m.tools[msg.ToolCallID]; ok {
+				m.blocks[i].ToolStatus = "done"
+				if msg.IsError {
+					m.blocks[i].ToolStatus = "error"
+				}
 				m.blocks[i].ToolResult = text
 			}
 		case "bashExecution":
@@ -1440,6 +1562,18 @@ func joinText(blocks []pirpc.ContentBlock) string {
 }
 
 func joinTextBlocks(blocks []pirpc.ContentBlock) string { return joinText(blocks) }
+
+// chatImages preserves image payloads from RPC user blocks for terminal render.
+func chatImages(raw json.RawMessage) []chat.Image {
+	var out []chat.Image
+	for _, img := range pirpc.ImagesOf(raw) {
+		if img.Data == "" || img.MimeType == "" {
+			continue
+		}
+		out = append(out, chat.NewImage(img.Data, img.MimeType))
+	}
+	return out
+}
 
 // withImages appends a 📷 suffix for vision echoes (pi returns user content
 // as text + image blocks; TextOf drops the images, so count them back).
@@ -1496,10 +1630,18 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		m.AddBlock(Block{Kind: "notice", Text: "plugin muốn mở editor — đã dùng mặc định"})
 		m.fireUI(extension.FallbackResponse(req.ID))
 	case req.Method == "select" || req.Method == "confirm":
+		kind := "ui"
+		title := extension.TitleFor(req.Method, req.Title)
+		if pirpc.IsAskUserSelect(req) {
+			kind = "askUser"
+			if req.Title == "" {
+				title = "Ask User"
+			}
+		}
 		d := &Dialog{
-			ID: req.ID, Method: req.Method, Kind: "ui",
-			Title:   extension.TitleFor(req.Method, req.Title),
-			Message: req.Message, Options: extension.OptionsFor(req),
+			ID: req.ID, Method: req.Method, Kind: kind,
+			Title: title, Message: req.Message,
+			Options: extension.OptionsFor(req), Descs: extension.DescriptionsFor(req),
 		}
 		d.Reindex()
 		m.Dialogs = append(m.Dialogs, d)
@@ -1518,24 +1660,39 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		m.Dialogs = append(m.Dialogs, d)
 		m.applyPopupH()
 	case req.Method == "notify":
-		m.AddBlock(Block{Kind: "notice", Text: req.Message, Err: req.NotifyType == "error"})
+		// Subagent integrations report worker progress through notify. Keep
+		// those updates in the chat transcript; ordinary extension notices
+		// remain ephemeral toasts.
+		if isSubagentProgressMessage(req.Message) {
+			m.addChatNotice(req.Message, req.NotifyType == "error")
+		} else {
+			m.AddBlock(Block{Kind: "notice", Text: req.Message, Err: req.NotifyType == "error"})
+		}
 	case req.Method == "setStatus":
-		m.extStat = stripANSI(req.StatusText)
+		if !m.setTeamStatus(req.StatusKey, req.StatusText) {
+			m.extStat = stripANSI(req.StatusText)
+		}
 	case req.Method == "set_editor_text":
 		m.ta.SetValue(req.Text)
 		m.histIdx = -1
 	case req.Method == "setWidget":
 		// RPC mode carries string arrays only (component factories are
-		// ignored pi-side, e.g. plan-mode's PLAN widget): show them as a
-		// toast so extension state stays visible instead of vanishing.
-		// Omitted lines clear the widget — toasts auto-dismiss anyway,
-		// so clear is a no-op.
-		if len(req.WidgetLines) > 0 {
+		// ignored pi-side). Team state replaces the editor dashboard in
+		// place; ordinary widgets remain transient toasts and the async
+		// subagent widget retains its in-place transcript block.
+		if isTeamWidget(req.WidgetKey) {
+			m.setTeamWidget(req.WidgetLines, req.WidgetPlacement)
+		} else if len(req.WidgetLines) > 0 {
 			label := req.WidgetKey
 			if label == "" {
 				label = "plugin"
 			}
-			m.AddBlock(Block{Kind: "notice", Text: "[" + label + "]\n" + strings.Join(req.WidgetLines, "\n")})
+			text := "[" + label + "]\n" + strings.Join(req.WidgetLines, "\n")
+			if isAgentProgressWidget(req.WidgetKey) {
+				m.setChatProgressWidget(req.WidgetKey, text, false)
+			} else {
+				m.AddBlock(Block{Kind: "notice", Text: text})
+			}
 		}
 	case req.Method == "setTitle":
 		// terminal window title: no TUI surface, ignore per protocol
@@ -1559,6 +1716,9 @@ func (m Model) handleUIRequest(raw []byte) Model {
 
 func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.Dialogs[0]
+	if d.Kind == "team" {
+		return m.updateTeamDashboardDialog(km, d)
+	}
 	if d.Kind == "pconfig" && len(d.Provs) > 0 {
 		return m.updatePconfigDialog(km, d)
 	}
@@ -1598,13 +1758,44 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d.TrajOff = 0 // new step → detail back to top
 		}
 		return m, nil
+	case tea.KeyLeft, tea.KeyRight:
+		if d.Kind == "tree" && n > 0 {
+			page := treePageSize(m.winH)
+			if km.Type == tea.KeyRight {
+				d.Cursor += page
+			} else {
+				d.Cursor -= page
+			}
+			if d.Cursor < 0 {
+				d.Cursor = 0
+			}
+			if d.Cursor >= n {
+				d.Cursor = n - 1
+			}
+		}
+		return m, nil
 	case tea.KeyPgUp, tea.KeyPgDown:
-		if d.Kind == "trajectory" {
+		if d.Kind == "tree" {
+			m.treePage(d, km.Type == tea.KeyPgDown)
+		} else if d.Kind == "trajectory" {
 			m.trajPage(d, km.Type == tea.KeyPgDown)
+		} else if d.Kind == "notification" && n > 0 {
+			page := notificationWindow(m.winH)
+			if km.Type == tea.KeyPgDown {
+				d.Cursor += page
+			} else {
+				d.Cursor -= page
+			}
+			if d.Cursor >= n {
+				d.Cursor = n - 1
+			}
+			if d.Cursor < 0 {
+				d.Cursor = 0
+			}
 		}
 		return m, nil
 	case tea.KeyBackspace:
-		if (isFilterKind(d.Kind) || d.Kind == "secret" || d.Kind == "rename" || d.Kind == "input") && d.Filter != "" {
+		if (isFilterKind(d.Kind) || d.Kind == "askUser" || d.Kind == "secret" || d.Kind == "rename" || d.Kind == "input") && d.Filter != "" {
 			r := []rune(d.Filter) // rune-wise: byte trim corrupts Vietnamese
 			d.Filter = string(r[:len(r)-1])
 			d.Reindex()
@@ -1631,7 +1822,7 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyEsc:
-		if d.Kind == "ui" {
+		if d.Kind == "ui" || d.Kind == "askUser" {
 			m.answerDialog(d, -1)
 		} else if d.Kind == "input" {
 			m.answerInput(d, true)
@@ -1661,7 +1852,7 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if km.Type == tea.KeySpace {
 		// space arrives as its own key (not Runes): typing contexts take
 		// it literally, option lists keep ignoring it.
-		if isFilterKind(d.Kind) {
+		if isFilterKind(d.Kind) || d.Kind == "askUser" {
 			d.Filter += " "
 			d.Reindex()
 			return m, nil
@@ -1673,7 +1864,7 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if km.Type == tea.KeyRunes {
-		if isFilterKind(d.Kind) {
+		if isFilterKind(d.Kind) || d.Kind == "askUser" {
 			// type to filter the picker
 			d.Filter += km.String()
 			d.Reindex()
@@ -1914,7 +2105,7 @@ func uniqueGroups(cats []string) []string {
 // confirmDialog handles Enter per dialog kind.
 
 func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
-	if d.Kind == "ui" {
+	if d.Kind == "ui" || d.Kind == "askUser" {
 		if len(d.FIdx) == 0 {
 			return m, nil
 		}
@@ -1991,13 +2182,13 @@ func (m *Model) answerInput(d *Dialog, cancelled bool) {
 // Plan latch heuristic lives in ext (pi-extension domain, no plan flag in
 // get_state); this stays the thin MVC controller.
 func (m *Model) answerDialog(d *Dialog, choice int) {
-	if d.Kind == "ui" && choice >= 0 && choice < len(d.Options) {
+	if (d.Kind == "ui" || d.Kind == "askUser") && choice >= 0 && choice < len(d.Options) {
 		if v, ok := ext.ShouldLatchPlan(d.Options[choice]); ok {
 			m.planOn = v
 		}
 	}
 	m.Dialogs = m.Dialogs[1:]
-	_ = m.Pi.Fire(extension.Response(d.ID, d.Method, choice, d.Options))
+	m.fireUI(extension.Response(d.ID, d.Method, choice, d.Options))
 	m.applyPopupH()
 	m.Refresh()
 }

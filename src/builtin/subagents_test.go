@@ -46,6 +46,32 @@ func TestConfirmSubagentsNoneClears(t *testing.T) {
 	}
 }
 
+func TestTeamBuiltinForwardsDashboardAndWorkerID(t *testing.T) {
+	var team app.Builtin
+	for _, c := range All() {
+		if c.Name == "team" {
+			team = c
+			break
+		}
+	}
+	if team.Name == "" {
+		t.Fatal("builtin /team missing")
+	}
+	m := &app.Model{TeamWidgetLines: []string{"w1 running"}, TeamWidgetVisible: false, TeamWidgetSeen: true}
+	if cmd := team.Run(m, ""); cmd == nil {
+		t.Fatal("bare /team should return the extension dashboard command")
+	}
+	if m.TeamWidgetVisible {
+		t.Fatal("/team must not toggle the compact status widget")
+	}
+	if cmd := team.Run(m, "worker-1"); cmd == nil {
+		t.Fatal("/team worker-id should return an extension command")
+	}
+	if cmd := team.Run(m, "steer w1 finish"); cmd != nil {
+		t.Fatal("multi-word convenience arguments must not be advertised or forwarded")
+	}
+}
+
 // The registry entry must exist so /subagents routes to the native picker
 // instead of falling through to pi (whose ui.custom is a no-op in RPC).
 func TestSubagentsRegistered(t *testing.T) {

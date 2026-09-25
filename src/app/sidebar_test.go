@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"pitago/src/pirpc"
 )
 
 func TestSidebarHelpers(t *testing.T) {
@@ -66,6 +68,102 @@ func TestSidebarFitsHeight(t *testing.T) {
 	box := strings.Split(stripANSI(m.renderSidebar()), "\n")
 	if len(box) != m.sideH() {
 		t.Fatalf("sidebar box is %d rows, want %d", len(box), m.sideH())
+	}
+}
+
+func TestSidebarToolsOnlyShowsInvokedCallsInBlockOrder(t *testing.T) {
+	m := New(nil, t.TempDir())
+	if got := stripANSI(m.buildSidebarContent()); strings.Contains(got, "TOOLS") {
+		t.Fatal("empty transcript must not render a TOOLS placeholder")
+	}
+
+	m.blocks = []Block{
+		{Kind: "assistant", Text: "ignored"},
+		{Kind: "tool", ToolStatus: "done"}, // update-only call has no name
+		{Kind: "tool", ToolName: "read", ToolStatus: "done"},
+		{Kind: "thinking", Text: "ignored"},
+		{Kind: "tool", ToolName: "edit", ToolStatus: "error"},
+		{Kind: "tool", ToolName: "bash", ToolStatus: "running"},
+	}
+	// The lookup map is an in-place update index, not display order.
+	m.tools = map[string]int{"bash": 5, "edit": 4, "read": 2}
+
+	out := stripANSI(m.buildSidebarContent())
+	rows := []string{"✓ read · done", "× edit · error", "● bash · running"}
+	pos := -1
+	for _, row := range rows {
+		i := strings.Index(out, row)
+		if i < 0 {
+			t.Fatalf("TOOLS section missing %q:\n%s", row, out)
+		}
+		if i <= pos {
+			t.Fatalf("tool rows are out of block order (wanted %q after previous):\n%s", row, out)
+		}
+		pos = i
+	}
+	if strings.Contains(out, "ignored") {
+		t.Fatalf("TOOLS section contains non-tool transcript data:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > sideInnerW {
+			t.Fatalf("sidebar line is %d cells, want <= %d: %q", w, sideInnerW, line)
+		}
+	}
+}
+
+func TestSidebarToolsRestoredErrorStatus(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.restore([]pirpc.AgentMessage{{
+		Role:    "assistant",
+		Content: []byte(`[{"type":"toolCall","id":"call-err","name":"bash","arguments":{}}]`),
+	}, {
+		Role:       "toolResult",
+		ToolCallID: "call-err",
+		ToolName:   "bash",
+		IsError:    true,
+		Content:    []byte(`[{"type":"text","text":"command failed"}]`),
+	}})
+
+	out := stripANSI(m.buildSidebarContent())
+	if !strings.Contains(out, "× bash · error") {
+		t.Fatalf("restored failed tool call missing error sidebar row:\n%s", out)
+	}
+	if strings.Contains(out, "✓ bash · done") {
+		t.Fatalf("restored failed tool call incorrectly shown as done:\n%s", out)
+	}
+}
+
+func TestSidebarToolsRestoredThenClearedOnSessionReset(t *testing.T) {
+	m := New(nil, t.TempDir())
+	msgs := []pirpc.AgentMessage{{
+		Role:    "assistant",
+		Content: []byte(`[{"type":"toolCall","id":"call-1","name":"read","arguments":{}}]`),
+	}, {
+		Role:       "toolResult",
+		ToolCallID: "call-1",
+		ToolName:   "read",
+		Content:    []byte(`[{"type":"text","text":"contents"}]`),
+	}}
+	m.restore(msgs)
+
+	out := stripANSI(m.buildSidebarContent())
+	if !strings.Contains(out, "TOOLS") || !strings.Contains(out, "✓ read · done") {
+		t.Fatalf("restored tool call missing from sidebar:\n%s", out)
+	}
+
+	// A reconnect rebuilds blocks from the connected session. With no calls in
+	// that restored history, calls from the previous connection must vanish.
+	tm, _ := m.Update(connectedMsg{})
+	m = tm.(Model)
+	if got := stripANSI(m.buildSidebarContent()); strings.Contains(got, "TOOLS") {
+		t.Fatalf("reconnect retained tools from the previous session:\n%s", got)
+	}
+
+	m.blocks = []Block{{Kind: "tool", ToolName: "bash", ToolStatus: "done"}}
+	tm, _ = m.Update(SessionResetMsg{})
+	m = tm.(Model)
+	if got := stripANSI(m.buildSidebarContent()); strings.Contains(got, "TOOLS") {
+		t.Fatalf("session reset retained TOOLS section:\n%s", got)
 	}
 }
 

@@ -1,6 +1,8 @@
 package extension
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"pitago/src/pirpc"
@@ -19,6 +21,41 @@ func TestInputResponse(t *testing.T) {
 	c = InputResponse("r1", "", true)
 	if c.Cancelled == nil || !*c.Cancelled || c.Value != nil {
 		t.Fatalf("cancel = %+v", c)
+	}
+}
+
+func TestAskUserOptionNormalizationAndResponse(t *testing.T) {
+	payload, _ := json.Marshal(pirpc.SelectOption{Title: "Keep", Description: "Preserve compatibility"})
+	encoded := pirpc.SelectOptionPrefix + base64.RawURLEncoding.EncodeToString(payload)
+	req := pirpc.UIRequest{Method: "select", Options: []string{"Legacy", encoded}}
+
+	if !pirpc.IsAskUserSelect(req) {
+		t.Fatal("rich Ask User marker missing")
+	}
+	if got := OptionsFor(req); len(got) != 2 || got[0] != "Legacy" || got[1] != "Keep" {
+		t.Fatalf("normalized options = %#v", got)
+	}
+	if got := DescriptionsFor(req); len(got) != 2 || got[0] != "" || got[1] != "Preserve compatibility" {
+		t.Fatalf("descriptions = %#v", got)
+	}
+	resp := Response("r1", "select", 1, OptionsFor(req))
+	if resp.Value == nil || *resp.Value != "Keep" || resp.Cancelled != nil {
+		t.Fatalf("rich response = %+v", resp)
+	}
+}
+
+func TestLegacySelectAndConfirmResponsesUnchanged(t *testing.T) {
+	req := pirpc.UIRequest{Method: "select", Options: []string{"Alpha", "Beta"}}
+	if pirpc.IsAskUserSelect(req) || len(DescriptionsFor(req)) != 0 {
+		t.Fatal("legacy select unexpectedly marked rich")
+	}
+	selectResp := Response("r2", "select", 1, OptionsFor(req))
+	if selectResp.Value == nil || *selectResp.Value != "Beta" || selectResp.Confirmed != nil {
+		t.Fatalf("legacy select response = %+v", selectResp)
+	}
+	confirmResp := Response("r3", "confirm", 0, OptionsFor(pirpc.UIRequest{Method: "confirm"}))
+	if confirmResp.Confirmed == nil || !*confirmResp.Confirmed || confirmResp.Value != nil {
+		t.Fatalf("confirm response = %+v", confirmResp)
 	}
 }
 

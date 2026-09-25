@@ -105,6 +105,7 @@ func TestSortProvsConn(t *testing.T) {
 // Green dot: models listed, saved key, or preset env all count as connected.
 func TestProvConnSources(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir()) // isolate from ~/.pi/agent/auth.json
+	t.Setenv("ANTHROPIC_API_KEY", "")            // ignore ambient developer credentials
 	t.Setenv("GROQ_API_KEY", "gsk-test")
 	conn := provConn(t.TempDir(), []string{"opencode"})
 	if !conn["opencode"] {
@@ -131,10 +132,10 @@ func TestModelPickerTypingSearchesAll(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.Dialogs = []*Dialog{{
 		Kind: "model", Title: "Select model",
-		Options: []string{"m1", "m2", "m3"},
-		Descs:   []string{"a · ollama", "b · opencode-zen", "c · ollama"},
-		Providers: []string{"ollama", "opencode-zen", "ollama"},
-		Provs:     []string{"All", "ollama", "opencode-zen"},
+		Options:    []string{"m1", "m2", "m3"},
+		Descs:      []string{"a · ollama", "b · opencode-zen", "c · ollama"},
+		Providers:  []string{"ollama", "opencode-zen", "ollama"},
+		Provs:      []string{"All", "ollama", "opencode-zen"},
 		ProvCursor: 1, ProvFocus: true,
 	}}
 	d := m.Dialogs[0]
@@ -183,8 +184,8 @@ func TestModelPickerFavorites(t *testing.T) {
 		m := New(nil, t.TempDir()) // favPath "" → no file writes
 		m.Dialogs = []*Dialog{{
 			Kind: "model", Title: "Select model",
-			Options: []string{"m1", "m2", "m3"},
-			Descs:   []string{"a · ollama", "b · opencode-zen", "c · ollama"},
+			Options:   []string{"m1", "m2", "m3"},
+			Descs:     []string{"a · ollama", "b · opencode-zen", "c · ollama"},
 			Providers: []string{"ollama", "opencode-zen", "ollama"},
 			Provs:     []string{"All", "ollama", "opencode-zen"},
 			ProvFocus: false,

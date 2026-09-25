@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,39 @@ func TestSecretEnterReachesConfirmer(t *testing.T) {
 	if !called {
 		t.Fatal("Enter on secret dialog did not reach secret confirmer")
 	}
+}
+
+func TestNewSessionRestoresEditorToBottom(t *testing.T) {
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = tm.(Model)
+
+	// A tray present during resize reserves its row in the current layout.
+	// Starting a new session drops that row; the editor must reclaim it
+	// instead of inheriting the old, one-row-short viewport budget.
+	m.imgAtts = []imgAttach{{label: 1, name: "shot.png", path: "/tmp/shot.png"}}
+	tm, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = tm.(Model)
+	assertEditorAtBottom := func(m Model, when string) {
+		t.Helper()
+		frame := stripANSI(m.View())
+		lines := strings.Split(frame, "\n")
+		if got := len(lines); got != 24 {
+			t.Fatalf("frame %s is %d rows, want 24", when, got)
+		}
+		bottom := strings.Index(frame, "╰")
+		if bottom < 0 {
+			t.Fatalf("frame %s has no editor bottom border", when)
+		}
+		if row := strings.Count(frame[:bottom], "\n"); row != len(lines)-1 {
+			t.Fatalf("editor %s ends on row %d, want bottom row %d", when, row, len(lines)-1)
+		}
+	}
+	assertEditorAtBottom(m, "with tray")
+
+	tm, _ = m.Update(SessionResetMsg{})
+	m = tm.(Model)
+	assertEditorAtBottom(m, "after new session")
 }
 
 // /new (SessionResetMsg) must drop the old session identity along with the

@@ -233,6 +233,10 @@ func (m Model) trajPage(d *Dialog, down bool) {
 // right = the selected step's full detail scrolled by TrajOff. Every
 // content line ends exactly cw cells wide, so the box never resizes.
 func (m Model) renderTrajectoryDialog(d *Dialog) string {
+	return m.renderTraceDialog(d, "trajectory")
+}
+
+func (m Model) renderTraceDialog(d *Dialog, mode string) string {
 	var b strings.Builder
 	boxW, leftW, rightW := trajGeom(m.winW)
 	cw := trajContentW(m.winW)
@@ -299,14 +303,15 @@ func (m Model) renderTrajectoryDialog(d *Dialog) string {
 		case r.meta:
 			rightLines = append(rightLines, "  "+trajPad(toolStyle.Render(plain), rightW-2))
 		default:
-			rightLines = append(rightLines, "  "+trajPad(lipgloss.NewStyle().Foreground(cText).Render(plain), rightW-2))
+			rightLines = append(rightLines, "  "+trajPad(trajDetailRowStyle(plain, r.diff).Render(plain), rightW-2))
 		}
 	}
 	for len(rightLines) < win {
 		rightLines = append(rightLines, "  "+trajPad("", rightW-2))
 	}
 
-	b.WriteString(trajPad("  "+sideTitleStyle.Render(Fit("STEPS", leftW-2))+" "+sepStyle.Render("│")+" "+"  "+sideTitleStyle.Render(Fit("DETAIL", rightW-2)), cw) + "\n")
+	leftTitle, rightTitle := "STEPS", "DETAIL"
+	b.WriteString(trajPad("  "+sideTitleStyle.Render(Fit(leftTitle, leftW-2))+" "+sepStyle.Render("│")+" "+"  "+sideTitleStyle.Render(Fit(rightTitle, rightW-2)), cw) + "\n")
 	sep := sepStyle.Render("│")
 	for i := 0; i < win; i++ {
 		l, r := "", ""
@@ -354,6 +359,7 @@ func (m Model) renderTrajectoryDialog(d *Dialog) string {
 type trajRow struct {
 	text        string
 	title, meta bool
+	diff        trajDiffKind
 }
 
 // trajDetailRows word-wraps detail to w cells (all rows, no cap).
@@ -366,18 +372,63 @@ func trajDetailRows(detail string, w int) []trajRow {
 	orig := 0
 	for _, ln := range strings.Split(detail, "\n") {
 		mkTitle, mkMeta := orig == 0, orig == 1
+		diff := trajDiffKindOf(ln)
 		if strings.TrimSpace(ln) == "" {
-			out = append(out, trajRow{text: ""})
+			out = append(out, trajRow{text: "", diff: diff})
 			orig++
 			continue
 		}
 		for _, wln := range strings.Split(wrap.Render(ln), "\n") {
-			out = append(out, trajRow{text: wln, title: mkTitle, meta: mkMeta})
+			out = append(out, trajRow{text: wln, title: mkTitle, meta: mkMeta, diff: diff})
 			mkTitle, mkMeta = false, false
 		}
 		orig++
 	}
 	return out
+}
+
+type trajDiffKind uint8
+
+const (
+	trajDiffNone trajDiffKind = iota
+	trajDiffRemove
+	trajDiffAdd
+	trajDiffHeader
+)
+
+// trajDiffKindOf classifies a source detail line before it is wrapped. This
+// keeps continuation rows of a long diff line colored as part of the same
+// change instead of reverting to normal text after the first wrap.
+func trajDiffKindOf(line string) trajDiffKind {
+	switch {
+	case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "---"):
+		return trajDiffRemove
+	case strings.HasPrefix(line, "+ "), strings.HasPrefix(line, "+++"):
+		return trajDiffAdd
+	case strings.HasPrefix(line, "diff:"), strings.HasPrefix(line, "@@"):
+		return trajDiffHeader
+	default:
+		return trajDiffNone
+	}
+}
+
+// trajDetailRowStyle gives edit diff rows Pi-like colors: removals are red,
+// additions green, and diff/file headers yellow. Ordinary detail text keeps
+// the normal foreground color.
+func trajDetailRowStyle(line string, kind trajDiffKind) lipgloss.Style {
+	if kind == trajDiffNone {
+		kind = trajDiffKindOf(line)
+	}
+	switch kind {
+	case trajDiffRemove:
+		return lipgloss.NewStyle().Foreground(cRed)
+	case trajDiffAdd:
+		return lipgloss.NewStyle().Foreground(cGreen)
+	case trajDiffHeader:
+		return lipgloss.NewStyle().Foreground(cYellow)
+	default:
+		return lipgloss.NewStyle().Foreground(cText)
+	}
 }
 
 // trajDetailLines word-wraps detail to w cells (all rows, no cap).

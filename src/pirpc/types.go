@@ -1,6 +1,7 @@
 package pirpc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 )
@@ -19,24 +20,24 @@ type ImageContent struct {
 // the prompt ("Cannot read properties of undefined") — tray-only sends
 // (images, empty text) must still transmit "message":"".
 type Command struct {
-	ID                 string `json:"id,omitempty"`
-	Type               string `json:"type"`
-	Message            string `json:"message"`
+	ID                 string         `json:"id,omitempty"`
+	Type               string         `json:"type"`
+	Message            string         `json:"message"`
 	Images             []ImageContent `json:"images,omitempty"`
-	StreamingBehavior  string `json:"streamingBehavior,omitempty"`
-	ShellCommand       string `json:"command,omitempty"`
-	SessionPath        string `json:"sessionPath,omitempty"`
-	ParentSession      string `json:"parentSession,omitempty"`
-	Provider           string `json:"provider,omitempty"`
-	ModelID            string `json:"modelId,omitempty"`
-	Level              string `json:"level,omitempty"`
-	Mode               string `json:"mode,omitempty"`
-	Enabled            *bool  `json:"enabled,omitempty"`
-	Name               string `json:"name,omitempty"`
-	CustomInstructions string `json:"customInstructions,omitempty"`
-	OutputPath         string `json:"outputPath,omitempty"`
-	EntryID            string `json:"entryId,omitempty"`
-	Since              string `json:"since,omitempty"`
+	StreamingBehavior  string         `json:"streamingBehavior,omitempty"`
+	ShellCommand       string         `json:"command,omitempty"`
+	SessionPath        string         `json:"sessionPath,omitempty"`
+	ParentSession      string         `json:"parentSession,omitempty"`
+	Provider           string         `json:"provider,omitempty"`
+	ModelID            string         `json:"modelId,omitempty"`
+	Level              string         `json:"level,omitempty"`
+	Mode               string         `json:"mode,omitempty"`
+	Enabled            *bool          `json:"enabled,omitempty"`
+	Name               string         `json:"name,omitempty"`
+	CustomInstructions string         `json:"customInstructions,omitempty"`
+	OutputPath         string         `json:"outputPath,omitempty"`
+	EntryID            string         `json:"entryId,omitempty"`
+	Since              string         `json:"since,omitempty"`
 	// extension_ui_response fields
 	Value     *string `json:"value,omitempty"`
 	Confirmed *bool   `json:"confirmed,omitempty"`
@@ -68,6 +69,8 @@ type ContentBlock struct {
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	MimeType  string          `json:"mimeType,omitempty"`
 }
 
 // ImageCount returns how many {"type":"image"} blocks raw holds.
@@ -81,12 +84,16 @@ func ImageCount(raw json.RawMessage) int {
 	return n
 }
 
-// AgentMessage is one row of get_messages (role: user/assistant/toolResult/bashExecution).
+// AgentMessage is one row of get_messages. Pi also emits custom messages for
+// extension command output; Pitago needs their type/display fields to render
+// results such as /team and /team-result.
 type AgentMessage struct {
 	Role         string          `json:"role"`
 	Content      json.RawMessage `json:"content,omitempty"`
-	Command      string          `json:"command,omitempty"` // bashExecution
-	Output       string          `json:"output,omitempty"`  // bashExecution
+	CustomType   string          `json:"customType,omitempty"` // custom message
+	Display      bool            `json:"display,omitempty"`    // custom message
+	Command      string          `json:"command,omitempty"`    // bashExecution
+	Output       string          `json:"output,omitempty"`     // bashExecution
 	ExitCode     int             `json:"exitCode,omitempty"`
 	ToolCallID   string          `json:"toolCallId,omitempty"` // toolResult
 	ToolName     string          `json:"toolName,omitempty"`   // toolResult
@@ -94,6 +101,7 @@ type AgentMessage struct {
 	IsError      bool            `json:"isError,omitempty"`
 	StopReason   string          `json:"stopReason,omitempty"`   // assistant
 	ErrorMessage string          `json:"errorMessage,omitempty"` // assistant
+	Usage        *EntryUsage     `json:"usage,omitempty"`        // final assistant usage (message_end)
 }
 
 // TextOf joins all {"type":"text"} blocks; plain-string content also works.
@@ -125,6 +133,17 @@ func BlocksOf(raw json.RawMessage) []ContentBlock {
 		return nil
 	}
 	return blocks
+}
+
+// ImagesOf returns image content blocks with their payloads preserved.
+func ImagesOf(raw json.RawMessage) []ImageContent {
+	var out []ImageContent
+	for _, b := range BlocksOf(raw) {
+		if b.Type == "image" {
+			out = append(out, ImageContent{Type: "image", Data: b.Data, MimeType: b.MimeType})
+		}
+	}
+	return out
 }
 
 // State mirrors get_state data (subset we display).
@@ -352,6 +371,50 @@ type UIRequest struct {
 	Text            string   `json:"text,omitempty"`
 }
 
+// SelectOptionPrefix identifies pi-ask-user's private RPC fallback encoding.
+// It is deliberately outside the normal option-text namespace so old hosts
+// still receive a string, while updated hosts can recover the option details.
+const SelectOptionPrefix = "__pitago_ask_option_v1__:"
+
+// SelectOption is the detail carried by the private RPC select encoding.
+type SelectOption struct {
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+// DecodeSelectOption decodes one RPC select value. A false result means the
+// value is a legacy/plain string and must be displayed and returned unchanged.
+func DecodeSelectOption(value string) (SelectOption, bool) {
+	if !strings.HasPrefix(value, SelectOptionPrefix) {
+		return SelectOption{}, false
+	}
+	payload := strings.TrimPrefix(value, SelectOptionPrefix)
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		return SelectOption{}, false
+	}
+	var option SelectOption
+	if err := json.Unmarshal(raw, &option); err != nil || option.Title == "" {
+		return SelectOption{}, false
+	}
+	return option, true
+}
+
+// IsAskUserSelect reports the additive marker used by pi-ask-user's RPC
+// fallback. Only such selects receive rich option details; all other string
+// selects (including confirms) keep their existing rendering and response.
+func IsAskUserSelect(req UIRequest) bool {
+	if req.Method != "select" {
+		return false
+	}
+	for _, value := range req.Options {
+		if _, ok := DecodeSelectOption(value); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // Queue mirrors queue_update.
 type Queue struct {
 	Steering []string `json:"steering"`
@@ -370,11 +433,11 @@ type SourceInfo struct {
 
 // RepoCommand is one runnable /command: extension, prompt template or skill.
 type RepoCommand struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Source      string `json:"source"` // builtin | pitago | extension | prompt | skill
-	Location    string `json:"location,omitempty"`
-	Path        string `json:"path,omitempty"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Source      string      `json:"source"` // builtin | pitago | extension | prompt | skill
+	Location    string      `json:"location,omitempty"`
+	Path        string      `json:"path,omitempty"`
 	SourceInfo  *SourceInfo `json:"sourceInfo,omitempty"`
 }
 

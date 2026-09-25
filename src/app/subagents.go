@@ -11,6 +11,94 @@ import (
 // SubagentsNone — canonical value lives in ext (pi-extension domain).
 const SubagentsNone = ext.SubagentsNone
 
+// Progress notifications are emitted by the subagent integrations. These
+// are running-state updates, not transient confirmations, so the UI keeps
+// them in the conversation transcript.
+const (
+	agentTeamName           = "pi-agent-team"
+	agentTeamWidgetName     = "agent-team"
+	subagentAsyncWidget     = "subagent-async"
+	subagentProgressPrefix  = "[" + subagentAsyncWidget + "]"
+	agentTeamProgressPrefix = "[" + agentTeamName + "]"
+)
+
+// isSubagentProgressMessage recognizes the notification markers used by
+// the subagent integrations. Strip ANSI first because extensions may colorize
+// the prefix before sending it over RPC.
+func isSubagentProgressMessage(message string) bool {
+	message = strings.TrimSpace(stripANSI(message))
+	return strings.HasPrefix(message, subagentProgressPrefix) ||
+		strings.HasPrefix(message, agentTeamProgressPrefix)
+}
+
+// isTeamWidget recognizes both agent-team widget names used by the
+// extension. Match case-insensitively; ordinary plugin keys never qualify.
+func isTeamWidget(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(stripANSI(key))) {
+	case agentTeamWidgetName, agentTeamName:
+		return true
+	default:
+		return false
+	}
+}
+
+// isAgentProgressWidget recognizes widget protocols that remain transcript
+// blocks. The team widget is handled separately as a live editor dashboard.
+func isAgentProgressWidget(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(stripANSI(key)), subagentAsyncWidget)
+}
+
+// setTeamWidget replaces the live team state. An empty line list clears it.
+func (m *Model) setTeamWidget(lines []string, placement string) {
+	// A widget frame is authoritative Pi output. Keep the snapshot and all
+	// escape sequences intact; rendering owns width and overflow decisions.
+	m.TeamWidgetLines = append(m.TeamWidgetLines[:0], lines...)
+	m.TeamWidgetPlacement = strings.TrimSpace(placement)
+	if !strings.EqualFold(m.TeamWidgetPlacement, "belowEditor") {
+		m.TeamWidgetPlacement = "aboveEditor"
+	}
+	if len(m.TeamWidgetLines) == 0 {
+		// A clear starts a new widget cycle. The next update is a first
+		// widget and should show unless the user hides it again.
+		m.TeamWidgetSeen = false
+		m.TeamWidgetVisible = true
+		return
+	}
+	if !m.TeamWidgetSeen {
+		m.TeamWidgetVisible = true
+		m.TeamWidgetSeen = true
+	}
+}
+
+func (m *Model) clearTeamWidgetState() {
+	m.TeamWidgetLines = nil
+	m.TeamStatus = ""
+	m.TeamWidgetPlacement = ""
+	m.TeamWidgetSeen = false
+	m.TeamWidgetVisible = true
+}
+
+// setTeamStatus captures pi-agents-team status by statusKey. Status keys are
+// independent, so unrelated updates use extStat without changing the header.
+func (m *Model) setTeamStatus(key, status string) bool {
+	if !strings.EqualFold(strings.TrimSpace(stripANSI(key)), agentTeamName) {
+		return false
+	}
+	m.TeamStatus = status
+	return true
+}
+
+// ToggleTeamWidget toggles the live dashboard and reports whether live
+// state is available.
+func (m *Model) ToggleTeamWidget() bool {
+	if len(m.TeamWidgetLines) == 0 {
+		return false
+	}
+	m.TeamWidgetVisible = !m.TeamWidgetVisible
+	m.Refresh()
+	return true
+}
+
 // SubagentInfo — canonical type lives in ext; alias keeps call sites green.
 type SubagentInfo = ext.SubagentInfo
 

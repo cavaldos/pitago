@@ -177,6 +177,14 @@ func (c *Client) readLoop(r *os.File) {
 // Done closes when the pi process exits.
 func (c *Client) Done() <-chan struct{} { return c.done }
 
+// PID identifies the owned child so live-session discovery never attaches to it.
+func (c *Client) PID() int {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
+}
+
 // nextID mints a request id.
 func (c *Client) nextID() string {
 	c.mu.Lock()

@@ -48,45 +48,20 @@ pitago wraps the `pi` agent in a beautiful terminal interface with:
 
 ## Install
 
-### Option 1 — install into bin (use anywhere)
-
-From a release binary (latest version, pick your OS — single block, no variables):
-
-macOS (Apple Silicon):
+### Release binary (macOS and Linux)
 
 ```bash
-mkdir -p ~/.local/bin
-curl -L -o ~/.local/bin/pitago https://github.com/cavaldos/pitago/releases/latest/download/pitago-darwin-arm64
-chmod +x ~/.local/bin/pitago
-pitago --version
+curl -fsSL https://raw.githubusercontent.com/cavaldos/pitago/main/script/install.sh | bash
 ```
 
-macOS (Intel):
-
-```bash
-mkdir -p ~/.local/bin
-curl -L -o ~/.local/bin/pitago https://github.com/cavaldos/pitago/releases/latest/download/pitago-darwin-amd64
-chmod +x ~/.local/bin/pitago
-pitago --version
-```
-
-Linux:
-
-```bash
-mkdir -p ~/.local/bin
-curl -L -o ~/.local/bin/pitago https://github.com/cavaldos/pitago/releases/latest/download/pitago-linux-amd64
-chmod +x ~/.local/bin/pitago
-pitago --version
-```
-
-Windows (PowerShell):
+### Windows (PowerShell)
 
 ```powershell
 Invoke-WebRequest https://github.com/cavaldos/pitago/releases/latest/download/pitago-windows-amd64.exe -OutFile pitago.exe
 # move pitago.exe somewhere on your PATH, then: pitago --version
 ```
 
-From source:
+From source (requires Go ≥ 1.27):
 
 ```bash
 git clone https://github.com/cavaldos/pitago.git
@@ -119,27 +94,8 @@ del C:\path\to\pitago.exe              # wherever you placed it (a folder on you
 Remove-Item -Recurse -Force $HOME\.config\pitago   # optional: remove saved API keys + recent models
 ```
 
-### Option 2 — run local in the project (no install)
 
-From a release binary:
-
-```bash
-cd /path/to/your-project
-curl -L -o pitago https://github.com/cavaldos/pitago/releases/download/v0.0.1/pitago-v0.0.1-linux-amd64
-chmod +x pitago
-./pitago --version
-```
-
-From source:
-
-```bash
-git clone https://github.com/cavaldos/pitago.git
-cd pitago
-script/build.sh
-./bin/pitago --version
-```
-
-Or skip the build and run straight from source:
+Build and run straight from source:
 
 ```bash
 script/run.sh
@@ -171,6 +127,47 @@ go run ./src --update   # or /update inside the app
 # opt out with --mouse=false for plain highlight-to-copy
 go run ./src --mouse=false
 ```
+
+## Live external Pi session (read-only)
+
+Pitago can follow an already-running Pi session in another terminal without
+controlling it. The external Pi process must load the repository's bridge
+extension explicitly:
+
+```bash
+# Terminal A (the Pi session Pitago will display live)
+pi --extension /absolute/path/to/pitago/src/live/pitago-live-bridge.ts
+
+# Terminal B (keep Pitago open; it discovers the matching cwd automatically)
+pitago --cwd /path/to/your/project
+```
+
+The extension binds an unauthenticated HTTP listener only to `127.0.0.1`, uses
+a random bearer token, and writes a mode-`0600` descriptor. By default both
+sides use `${XDG_RUNTIME_DIR}/pitago-live` (or the OS temporary directory).
+Set the same explicit directory on both processes when needed:
+
+```bash
+export PITAGO_LIVE_DESCRIPTORS=/private/tmp/my-pitago-live
+```
+
+Pitago ignores its own child process and other working directories. When it
+attaches, the input and all prompt/steer/abort/model/session controls are
+blocked and the header shows `EXTERNAL · READ-ONLY`; `Ctrl+D` detaches and
+rebuilds the owned Pitago session. SSE reconnects automatically and a fresh
+active-branch snapshot on every connection prevents gaps or duplicate replay.
+
+To load the extension for every interactive Pi session, explicitly copy it to
+`~/.pi/agent/extensions/pitago-live-bridge.ts` (optional; Pitago never modifies
+your home directory during normal startup):
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+cp /absolute/path/to/pitago/src/live/pitago-live-bridge.ts ~/.pi/agent/extensions/
+```
+
+Pitago continues to own and control exactly one private `pi --mode rpc` child;
+it never attaches to or sends RPC commands to the external session.
 
 ## Build & Test
 
@@ -248,6 +245,7 @@ Type `/` to open the command popup. Two kinds:
 - `/thinking` — toggle thinking level
 - `/tree` — session tree, pi-style rows (read-only over RPC)
 - `/trajectory [all|tools|messages]` — harness-style run trace window (numbered steps with time + kind, type to filter, `Enter` views the full step in chat)
+- `/notification [filter]` — browse notification history (time + info/error, newest first; in RAM for the current Pitago run, max 200)
 - `/settings` — agent settings, pi parity (22 rows: model · thinking · steering · follow-up · auto-compact · auto-retry · theme + skill commands · show images · image width · auto-resize · block images · transport · http timeout · cache warming · hide thinking · cache-miss notices · project trust · quiet startup · telemetry · autocomplete max · tree filter; file rows save to `~/.pi/agent/settings.json` and reconnect pi; dialog shows pi-style position `(6/33)`)
 - `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login
 - `/login` / `/logout` — manage logins: API keys + pi OAuth/subscriptions (`/login`: left providers, right keys + auth — `Enter` use/add, `⌫` delete/disconnect, `s` show/hide key, `r` rename, `Ctrl+P` model picker, `Esc` close; stays open, pi reconnects behind)
@@ -279,34 +277,10 @@ Long content scrolls inside the sidebar (`Ctrl`/`Alt`+`↑↓ PgUp PgDn Home End
 
 ## Layout (MVC + core/ext/pitago)
 
-```
-src/main.go       # composition root: flags, spawn pi, wire packages, run
-src/app/          # MVC shell (Bubble Tea Elm): model.go=M (state+msgs),
-                  # update.go=C (event router), view.go=V (render only),
-                  # thin wrappers over components/ext/pitago (no pure logic)
-src/components/  # V primitives (pure, testable): chat, mention, image,
-                  # palette, pet, recent, yank, format, theme, markdown
-src/builtin/      # C: command controllers over RPC.
-                  # Origin "pi" = pi-thuần (model/tree/thinking/settings/
-                  # login/session/resume/reload); "pitago" = ours (delegate
-                  # to pitago/ext, never pure logic here)
-src/extension/    # middleware/protocol: extension_ui_request helpers
-                  # (select/confirm/input/editor), command sources
-src/ext/          # pi-extension domain (NOT pi-thuần, NOT pitago):
-                  # plan-mode (latch/heuristic), tasks/todos (parse/restore),
-                  # subagents (discovery/frontmatter) — pure, no UI state
-src/pitago/       # pitago-only domain (NOT pi-thuần): mouse, trajectory,
-                  # self-update, yank, recent, theme, sidebar — pure helpers
-src/pirpc/        # Backend: JSONL transport for `pi --mode rpc` (core/pi-thuần)
-src/update/       # Backend: self-update (pitago-only)
-tests/            # integration tests (black-box, public API only).
-                  # Unit white-box tests stay next to code as *_test.go
-                  # (Go requires this for private access) — see tests/README.md
-```
+Source tree and import rules — see [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md).
 
-**Rules** (`script/check-layers.sh` enforces): `app`/`builtin` → `{ext,pitago,components,pirpc,extension}` one-way;
-`ext`/`pitago`/`components`/`pirpc` never import `app`/`builtin`; `ext` ⇄ `pitago` never cross-import
-(pi-extension vs pitago-only stay separate); `app` never imports `builtin` (wired in main via `UseBuiltins`).
+In short: `app` is a thin MVC shell, `components` holds pure view primitives,
+`ext` and `pitago` are separate pure domain layers, `builtin` is a command surface over RPC, and `pirpc`/`update` are the backend edges. `script/check-layers.sh` enforces the one-way import graph.
 
 ## Configuration Files
 

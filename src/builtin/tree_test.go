@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"pitago/src/app"
 	"pitago/src/pirpc"
 )
 
@@ -159,5 +160,56 @@ func TestRenderTreeFilters(t *testing.T) {
 	}
 	if got := renderTree(nodes, "", "all"); !strings.Contains(got, "[model:") {
 		t.Errorf("all should show everything:\n%s", got)
+	}
+}
+
+func TestBuildTreeRowsForNativeTab(t *testing.T) {
+	opts, descs, payload, current := buildTreeRows(trajNodes(), "t1", "all")
+	if len(opts) != 8 || len(descs) != 8 || len(payload) != 8 {
+		t.Fatalf("tree rows must stay parallel: opts=%d descs=%d payload=%d", len(opts), len(descs), len(payload))
+	}
+	if current != 2 {
+		t.Fatalf("active leaf index = %d, want 2", current)
+	}
+	want := []string{
+		"• user: ",
+		"• assistant: I'll read it",
+		"• [read: a.go]",
+		"[compaction: 12k tokens]",
+		"[model: x]",
+		"[thinking: high]",
+		"[label: wip]",
+		"[title: demo]",
+	}
+	for i := range want {
+		if opts[i] != want[i] {
+			t.Errorf("row %d:\n got %q\nwant %q", i, opts[i], want[i])
+		}
+	}
+	if !strings.Contains(descs[0], "user") || !strings.Contains(descs[2], "tool") {
+		t.Errorf("descs should describe message kinds: %v", descs)
+	}
+	if !strings.Contains(payload[1], "user wants the file") || !strings.Contains(payload[1], `"path":"a.go"`) {
+		t.Errorf("assistant payload should include thinking and tool args: %q", payload[1])
+	}
+	if !strings.Contains(payload[2], "file content here") {
+		t.Errorf("tool payload should include result: %q", payload[2])
+	}
+}
+
+func TestConfirmTreeClosesTabAndPostsEntry(t *testing.T) {
+	m := &app.Model{}
+	d := &app.Dialog{Kind: "tree", Options: []string{"• user: hi"},
+		Descs: []string{"user · —"}, Payload: []string{"• user: hi\nuser · id abc · —\n\nhi"}}
+	d.Reindex()
+	m.Dialogs = append(m.Dialogs, d)
+	if _, ok := Confirmers()["tree"]; !ok {
+		t.Fatal("tree missing from Confirmers")
+	}
+	if _, cmd := confirmTree(m, m.Dialogs[0], 0); cmd != nil {
+		t.Error("confirm tree should be synchronous")
+	}
+	if len(m.Dialogs) != 0 {
+		t.Fatalf("tree dialog should close, got %d", len(m.Dialogs))
 	}
 }

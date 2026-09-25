@@ -15,7 +15,9 @@ import (
 	"pitago/src/components/mention"
 	"pitago/src/components/palette"
 	"pitago/src/components/recent"
+	terminal_image "pitago/src/components/terminal_image"
 	"pitago/src/components/theme"
+	"pitago/src/live"
 	"pitago/src/pirpc"
 	"pitago/src/pitago"
 )
@@ -26,44 +28,49 @@ type Block = chat.Block
 // Dialog is a modal: extension permission prompt or native picker/settings.
 
 type Dialog struct {
-	ID             string
-	Method         string // select | confirm (extension UI)
-	Kind           string // "ui" | "model" | "thinking" | "settings" | "pconfig" | "login" | "loginDone" | "secret" | "rename" | "sessions" | ...
-	Title          string
-	Message        string
-	Options        []string
-	Descs          []string
-	Providers      []string          // model picker: parallel provider per option
-	Models         []pirpc.ModelInfo // model picker: full specs parallel to Options
-	Provs          []string          // model picker: left pane (unique providers, [0]="All")
-	ProvConn       map[string]bool   // model picker: connected providers (green dot)
-	ProvCursor     int               // model picker: left-pane cursor
-	ProvFocus      bool              // model picker: true = providers focused
-	PsecIDs        []string          // pitago-setting: section id parallel to Provs (left pane)
-	Paths          []string          // sessions picker: parallel session file per option
-	Scope          string            // sessions picker: "current" | "all" (Tab toggles)
-	Payload        []string          // yank picker: full text per option; login: raw keys ("" for action rows)
-	Cursor         int
-	Filter         string // picker filter / secret buffer / rename buffer
-	FIdx           []int
-	FavSet         map[string]bool // model picker: starred provider\x00id (★ column, sorted first)
-	PIdx           []int           // login: filtered provider indices into Provs
-	KeyCursor      int             // login: cursor in the right (keys) pane
-	KeyActive      int             // login: active key index within keys (-1 = none)
-	ShowKeys       bool            // login: reveal full keys (s toggles, never persisted)
-	RenameIdx      int             // rename flow: key index being renamed (-1 = none)
-	LoginActions   []string        // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
-	LoginOAuth     bool            // login: selected provider has OAuth in pi
-	LoginOAuthExp  int64           // login: oauth expiry ms epoch (0 = unknown)
-	LoginOAuthAcct string          // login: oauth account id ("" = unknown)
-	OAuthConn      map[string]bool // login: provider -> oauth connected in pi
-	LoginCounts    map[string]int  // login: provider -> saved key count
-	Settings       SettingsState
-	LoginProvider  string // login flow: provider id
-	LoginEnv       string // login flow: env var
-	TrajOff        int    // trajectory dialog: detail-column scroll offset (lines)
-	UpdateTo       string // update flow: target tag (Kind "update")
-	ShortcutCmd    string // cmdshortcut capture: /command being assigned ("" = none)
+	ID                string
+	Method            string // select | confirm (extension UI)
+	Kind              string // "ui" | "model" | "thinking" | "settings" | "pconfig" | "login" | "loginDone" | "secret" | "rename" | "sessions" | ...
+	Title             string
+	Message           string
+	Options           []string
+	Descs             []string
+	Providers         []string          // model picker: parallel provider per option
+	Models            []pirpc.ModelInfo // model picker: full specs parallel to Options
+	Provs             []string          // model picker: left pane (unique providers, [0]="All")
+	ProvConn          map[string]bool   // model picker: connected providers (green dot)
+	ProvCursor        int               // model picker: left-pane cursor
+	ProvFocus         bool              // model picker: true = providers focused
+	PsecIDs           []string          // pitago-setting: section id parallel to Provs (left pane)
+	Paths             []string          // sessions picker: parallel session file per option
+	Scope             string            // sessions picker: "current" | "all" (Tab toggles)
+	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
+	Cursor            int
+	Filter            string // picker filter / secret buffer / rename buffer
+	FIdx              []int
+	FavSet            map[string]bool // model picker: starred provider\x00id (★ column, sorted first)
+	PIdx              []int           // login: filtered provider indices into Provs
+	KeyCursor         int             // login: cursor in the right (keys) pane
+	KeyActive         int             // login: active key index within keys (-1 = none)
+	ShowKeys          bool            // login: reveal full keys (s toggles, never persisted)
+	RenameIdx         int             // rename flow: key index being renamed (-1 = none)
+	LoginActions      []string        // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
+	LoginOAuth        bool            // login: selected provider has OAuth in pi
+	LoginOAuthExp     int64           // login: oauth expiry ms epoch (0 = unknown)
+	LoginOAuthAcct    string          // login: oauth account id ("" = unknown)
+	OAuthConn         map[string]bool // login: provider -> oauth connected in pi
+	LoginCounts       map[string]int  // login: provider -> saved key count
+	Settings          SettingsState
+	LoginProvider     string // login flow: provider id
+	LoginEnv          string // login flow: env var
+	TrajOff           int    // trajectory/team dialog: detail scroll offset (lines)
+	TeamTab           string // team dialog: workers | inspect | console | cost
+	TeamFollow        bool   // team dialog: follow worker activity
+	TeamDetail        bool   // team dialog: focused worker detail view
+	TeamReturnMessage string // dashboard text restored by Esc from worker detail
+	TeamReturnCursor  int    // selected worker restored by Esc from worker detail
+	UpdateTo          string // update flow: target tag (Kind "update")
+	ShortcutCmd       string // cmdshortcut capture: /command being assigned ("" = none)
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -85,109 +92,125 @@ type RecentModel = recent.RecentModel
 type FavEntry = favorite.Fav
 
 type Model struct {
-	vp             viewport.Model
-	sideVp         viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
-	ta             textarea.Model
-	Pi             *pirpc.Client
-	blocks         []Block
-	toasts         []Toast        // ephemeral popups (model switch, yank…): never in chat history
-	tools          map[string]int // toolCallId -> block index
-	curAsst        int
-	curThink       int
-	asstDelta      bool // text deltas streamed into curAsst (message_end must not re-add)
-	thinkDelta     bool // thinking deltas streamed into curThink (same)
-	thinking       bool
-	Status         string
-	extStat        string
-	planOn         bool // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
-	ready          bool
-	winW           int
-	winH           int
-	hideSide       bool // Ctrl+B: hide sidebar for clean drag-select of chat
-	Mouse          bool // --mouse: terminal reports clicks (sidebar recent switch)
-	baseVpH        int
-	cwd            string
-	ModelLbl       string
-	CurAgent       string // last-picked /subagents entry (shown on the input bar)
-	AppVersion     string // pitago build version for the welcome header ("" = omit)
-	UpdateAvail    string // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
-	thinkLvl       string // thinking level from get_state
-	autoCompact    bool   // auto-compaction from get_state
-	ctxWindow      int    // model context window from get_state/stats
-	session        string
-	sessStart      time.Time // session clock for sidebar "time"
-	turnStart      time.Time // last turn start (for "last" + speed)
-	turnOutBase    int       // stats.Out at last turn_start
-	pendSpeed      bool      // compute last/speed on next statsMsg
-	lastDur        time.Duration
-	lastSpeed      float64 // tok/s of last turn
-	ws             wsData  // workspace git status (polled)
-	Stats          pirpc.Stats
-	sessBreak      []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
-	queue          pirpc.Queue
-	Todos          []TodoItem      // tracked from todo-tool calls (sidebar)
-	MCP            []McpServer     // pi agent-dir MCP snapshot (sidebar)
-	Plugins        []Plugin        // installed pi packages (sidebar PLUGINS toggle)
-	Market         []MarketEntry   // npm registry pi-package list (marketplace tab)
-	MarketErr      string          // last marketplace fetch error ("" = ok/unloaded)
-	showPlugins    bool            // PLUGINS expanded (click header or /plugins)
-	Side           map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
-	Dialogs        []*Dialog
-	connErr        string
-	AutoRetry      bool          // no RPC getter; tracked locally (default on)
-	HideThinking   bool          // /settings: skip thinking blocks in chat (pi parity, pitago-local)
-	respawning     bool          // reconnecting pi: skip pi_exited notice
-	spawnOpts      pirpc.Options // for respawning pi (login)
-	KeyPath        string        // keystore API keys
-	AuthPath       string        // mirrored pi logins (oauth state pitago saves)
-	sessionFile    string        // respawn keeps the same session
-	Cmds           []pirpc.RepoCommand
-	cmdOpen        bool
-	cmdCursor      int
-	cmdOffset      int   // first visible row of the scroll window
-	cmdItems       []int // indices into cmds
-	atOpen         bool
-	atCursor       int
-	atOffset       int // first visible row of the @ scroll window
-	atRow          int // input row holding the @ token
-	atStart        int // rune index where the @ token starts
-	atPrefix       string
-	atItems        []mention.Item
-	imgAtts        []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
-	imgSeq         int         // chip counter, never renumbered
-	trayFocus      bool        // cursor moved into the tray (↓ from last input line)
-	imgCursor      int         // selected chip while trayFocus
-	trayRet        int         // input offset to restore on Esc
-	pet            petState
-	recentModels   []RecentModel
-	recentPath     string // persisted recent models ("" = don't persist)
-	favModels      []FavEntry
-	favSet         map[string]bool // starred models lookup (see components/favorite)
-	favPath        string          // persisted favorites ("" = don't persist)
-	hist           []string        // sent messages, oldest→newest (↑↓ recall when input empty)
-	histIdx        int             // -1 = live input, else index into hist while browsing
-	CmdShortcuts   map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
-	ThemeName      string          // active TUI theme (/theme, --theme flag)
-	themePath      string          // persisted theme ("" = don't persist)
-	prefsPath      string          // persisted pitago-local prefs ("" = don't persist)
-	builtins       []Builtin
-	confirm        map[string]ConfirmFunc
-	expandTools    bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
-	quitArm        time.Time // first Ctrl+C timestamp (second press within window quits)
-	quitGen        int       // arm generation (stale disarm ticks ignored)
-	escArm         time.Time // first Esc timestamp while running (second press within window cancels)
-	escGen         int       // arm generation (stale disarm ticks ignored)
-	mouseLeakAt    time.Time // last SGR mouse-report burst (split fragments within window are residue)
-	mouseBuf       string    // pending split tail ("[<65"…) waiting for its continuation (sequence, time-bound)
-	plugAction     string    // pending plugin op awaiting second confirm (auth gate)
-	plugSpec       string    // pending plugin spec (cleared on confirm/cancel/timeout)
-	plugAt         time.Time // first press timestamp for the pending plugin op
-	renderCache    []string  // per-block rendered output (renderBlocks reuses clean history)
-	renderCacheKey []uint64  // fingerprint parallel to renderCache (see blockKey)
-	sideCache      string    // last built sidebar content (streaming reuses within sideThrottle)
-	sideCacheAt    time.Time // last sidebar rebuild
-	lastPaint      time.Time // last chat viewport paint (streaming coalesces to streamFrame)
-	pendingPaint   bool      // a coalesced paint is waiting on its flush tick
+	vp                  viewport.Model
+	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
+	ta                  textarea.Model
+	Pi                  *pirpc.Client
+	liveBridge          *live.Bridge // foreign Pi SSE bridge (read-only)
+	followRemote        bool         // true while rendering a foreign session
+	liveConnected       bool
+	remoteSession       string
+	liveGeneration      uint64 // invalidates transport messages queued before detach
+	blocks              []Block
+	toasts              []Toast        // ephemeral popups (model switch, yank…): never in chat history
+	notificationHistory []Toast        // session-RAM log of emitted toasts; bounded, never persisted
+	tools               map[string]int // toolCallId -> block index
+	progressByKey       map[string]int // extension widget key -> live chat block index
+	curAsst             int
+	curThink            int
+	asstDelta           bool // text deltas streamed into curAsst (message_end must not re-add)
+	thinkDelta          bool // thinking deltas streamed into curThink (same)
+	thinking            bool
+	Status              string
+	extStat             string
+	TeamWidgetLines     []string // live pi-agents-team dashboard lines
+	TeamWidgetPlacement string   // aboveEditor (default) or belowEditor
+	TeamStatus          string   // pi-agent-team status text
+	TeamWidgetVisible   bool     // explicit /team visibility preference
+	TeamWidgetSeen      bool     // widget state exists in the current cycle
+	planOn              bool     // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
+	ready               bool
+	winW                int
+	winH                int
+	hideSide            bool // Ctrl+B: hide sidebar for clean drag-select of chat
+	Mouse               bool // --mouse: terminal reports clicks (sidebar recent switch)
+	baseVpH             int
+	cwd                 string
+	ModelLbl            string
+	CurAgent            string // last-picked /subagents entry (shown on the input bar)
+	AppVersion          string // pitago build version for the welcome header ("" = omit)
+	UpdateAvail         string // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
+	thinkLvl            string // thinking level from get_state
+	autoCompact         bool   // auto-compaction from get_state
+	ctxWindow           int    // model context window from get_state/stats
+	session             string
+	sessStart           time.Time // session clock for sidebar "time"
+	turnStart           time.Time // last turn start (for "last" + speed)
+	turnOutBase         int       // stats.Out at last turn_start
+	pendSpeed           bool      // compute last/speed on next statsMsg
+	lastDur             time.Duration
+	lastSpeed           float64 // tok/s of last turn
+	ws                  wsData  // workspace git status (polled)
+	Stats               pirpc.Stats
+	sessBreak           []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
+	queue               pirpc.Queue
+	Todos               []TodoItem      // tracked from todo-tool calls (sidebar)
+	MCP                 []McpServer     // pi agent-dir MCP snapshot (sidebar)
+	Plugins             []Plugin        // installed pi packages (sidebar PLUGINS toggle)
+	Market              []MarketEntry   // npm registry pi-package list (marketplace tab)
+	MarketErr           string          // last marketplace fetch error ("" = ok/unloaded)
+	showPlugins         bool            // PLUGINS expanded (click header or /plugins)
+	Side                map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
+	Dialogs             []*Dialog
+	connErr             string
+	AutoRetry           bool                    // no RPC getter; tracked locally (default on)
+	HideThinking        bool                    // /settings: skip thinking blocks in chat (pi parity, pitago-local)
+	ShowImages          bool                    // terminal.showImages
+	ImageWidthCells     int                     // terminal.imageWidthCells
+	ImageProtocol       terminal_image.Protocol // detected inline-image capability
+	respawning          bool                    // reconnecting pi: skip pi_exited notice
+	spawnOpts           pirpc.Options           // for respawning pi (login)
+	KeyPath             string                  // keystore API keys
+	AuthPath            string                  // mirrored pi logins (oauth state pitago saves)
+	sessionFile         string                  // respawn keeps the same session
+	Cmds                []pirpc.RepoCommand
+	cmdOpen             bool
+	cmdCursor           int
+	cmdOffset           int   // first visible row of the scroll window
+	cmdItems            []int // indices into cmds
+	atOpen              bool
+	atCursor            int
+	atOffset            int // first visible row of the @ scroll window
+	atRow               int // input row holding the @ token
+	atStart             int // rune index where the @ token starts
+	atPrefix            string
+	atItems             []mention.Item
+	imgAtts             []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
+	imgSeq              int         // chip counter, never renumbered
+	trayFocus           bool        // cursor moved into the tray (↓ from last input line)
+	imgCursor           int         // selected chip while trayFocus
+	trayRet             int         // input offset to restore on Esc
+	pet                 petState
+	task                taskRuntime
+	recentModels        []RecentModel
+	recentPath          string // persisted recent models ("" = don't persist)
+	favModels           []FavEntry
+	favSet              map[string]bool   // starred models lookup (see components/favorite)
+	favPath             string            // persisted favorites ("" = don't persist)
+	hist                []string          // sent messages, oldest→newest (↑↓ recall when input empty)
+	histIdx             int               // -1 = live input, else index into hist while browsing
+	CmdShortcuts        map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
+	ThemeName           string            // active TUI theme (/theme, --theme flag)
+	themePath           string            // persisted theme ("" = don't persist)
+	prefsPath           string            // persisted pitago-local prefs ("" = don't persist)
+	builtins            []Builtin
+	confirm             map[string]ConfirmFunc
+	expandTools         bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
+	quitArm             time.Time // first Ctrl+C timestamp (second press within window quits)
+	quitGen             int       // arm generation (stale disarm ticks ignored)
+	escArm              time.Time // first Esc timestamp while running (second press within window cancels)
+	escGen              int       // arm generation (stale disarm ticks ignored)
+	mouseLeakAt         time.Time // last SGR mouse-report burst (split fragments within window are residue)
+	mouseBuf            string    // pending split tail ("[<65"…) waiting for its continuation (sequence, time-bound)
+	plugAction          string    // pending plugin op awaiting second confirm (auth gate)
+	plugSpec            string    // pending plugin spec (cleared on confirm/cancel/timeout)
+	plugAt              time.Time // first press timestamp for the pending plugin op
+	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
+	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
+	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
+	sideCacheAt         time.Time // last sidebar rebuild
+	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
+	pendingPaint        bool      // a coalesced paint is waiting on its flush tick
 }
 
 // quitArmWindow is the double-press window for Ctrl+C quit.
@@ -296,8 +319,11 @@ type SettingsMsg struct {
 }
 
 type TreeMsg struct {
-	Text string
-	Err  error
+	Mode                    string
+	Options, Descs, Payload []string
+	Filter                  string
+	Current                 int
+	Err                     error
 }
 
 // TrajectoryMsg carries harness-style run-trace rows for the /trajectory
@@ -365,22 +391,24 @@ func New(pi *pirpc.Client, cwd string) Model {
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	return Model{
-		ta:          ta,
-		Pi:          pi,
-		tools:       make(map[string]int),
-		curAsst:     -1,
-		curThink:    -1,
-		histIdx:     -1,
-		Status:      "connecting to pi…",
-		cwd:         cwd,
-		ModelLbl:    "…",
-		AutoRetry:   true,
-		showPlugins: true, // PLUGINS starts expanded
+		ta:            ta,
+		Pi:            pi,
+		liveBridge:    &live.Bridge{CWD: cwd, OwnPID: pi.PID()},
+		tools:         make(map[string]int),
+		progressByKey: make(map[string]int),
+		curAsst:       -1,
+		curThink:      -1,
+		histIdx:       -1,
+		Status:        "connecting to pi…",
+		cwd:           cwd,
+		ModelLbl:      "…",
+		AutoRetry:     true,
+		showPlugins:   true, // PLUGINS starts expanded
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true))
+	return tea.Batch(m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true), m.runLiveBridge())
 }
 
 // fetchAll loads state/messages/stats/commands after (re)connect.
@@ -409,6 +437,33 @@ func (m *Model) AddBlock(b Block) int {
 	}
 	m.blocks = append(m.blocks, b)
 	return len(m.blocks) - 1
+}
+
+// addChatNotice appends a notice that is intentionally part of the
+// conversation. Most notices use AddBlock and stay ephemeral; subagent
+// progress is an exception because its running state must remain visible
+// in the transcript while the child is working.
+func (m *Model) addChatNotice(text string, isErr bool) int {
+	m.blocks = append(m.blocks, Block{Kind: "notice", Text: text, Err: isErr})
+	return len(m.blocks) - 1
+}
+
+// setChatProgressWidget keeps a live extension widget in one transcript
+// block. setWidget is state replacement, not a new event per refresh, so
+// updating in place avoids flooding chat with one row every second.
+func (m *Model) setChatProgressWidget(key, text string, isErr bool) int {
+	if m.progressByKey == nil {
+		m.progressByKey = make(map[string]int)
+	}
+	key = strings.ToLower(strings.TrimSpace(stripANSI(key)))
+	if i, ok := m.progressByKey[key]; ok && i >= 0 && i < len(m.blocks) && m.blocks[i].Kind == "notice" {
+		m.blocks[i].Text = text
+		m.blocks[i].Err = isErr
+		return i
+	}
+	i := m.addChatNotice(text, isErr)
+	m.progressByKey[key] = i
+	return i
 }
 
 func (m *Model) ensureAsst() int {
@@ -450,6 +505,23 @@ func (m *Model) setToolArgs(i int, name, raw string) {
 }
 
 // update -------------------------------------------------------------------
+
+// extensionCmdAckMsg reports extension-command RPC errors without changing
+// model-turn state. Successful synchronous commands emit no agent_start.
+type extensionCmdAckMsg struct{ err error }
+
+// ForwardExtensionCommand sends an extension slash command without entering
+// the model-turn "Working..." state. It always uses prompt (not steer), since
+// the command handler—not a new agent turn—consumes the request.
+func (m *Model) ForwardExtensionCommand(text string) tea.Cmd {
+	return func() tea.Msg {
+		if m.Pi == nil {
+			return extensionCmdAckMsg{err: fmt.Errorf("pi is not connected")}
+		}
+		_, err := m.Pi.Prompt(text)
+		return extensionCmdAckMsg{err: err}
+	}
+}
 
 func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) tea.Cmd {
 	m.thinking = true
@@ -838,6 +910,22 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts
 	palette.Win = prefs.EffectiveAutocompleteMax()
+	m.ApplyImageSettings()
+}
+
+// ApplyImageSettings refreshes rendering from pi settings and invalidates
+// image-heavy output after a settings change.
+func (m *Model) ApplyImageSettings() {
+	cfg := pirpc.ReadPiSettings()
+	m.ShowImages = pirpc.PiBool(cfg, "terminal.showImages", true)
+	width := pirpc.PiInt(cfg, "terminal.imageWidthCells", 60)
+	if width < 10 || width > 200 {
+		width = 60
+	}
+	m.ImageWidthCells = width
+	m.ImageProtocol = terminal_image.DetectProtocol()
+	m.renderCache = nil
+	m.renderCacheKey = nil
 }
 
 // FindBuiltin matches "/name" or "/name args" against the registry.
@@ -884,6 +972,24 @@ func BuiltinRepo(builtins []Builtin) []pirpc.RepoCommand {
 			src = "pitago"
 		}
 		out = append(out, pirpc.RepoCommand{Name: b.Name, Description: b.Desc, Source: src})
+	}
+	return out
+}
+
+// mergeCommands keeps the first command for each name. Builtins are passed
+// first, so a native /team alias wins over the extension's same-named entry
+// without showing duplicate rows in the command palette.
+func mergeCommands(builtins []Builtin, cmds []pirpc.RepoCommand) []pirpc.RepoCommand {
+	merged := append(BuiltinRepo(builtins), cmds...)
+	seen := make(map[string]bool, len(merged))
+	out := merged[:0]
+	for _, c := range merged {
+		key := strings.ToLower(strings.TrimSpace(c.Name))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
 	}
 	return out
 }

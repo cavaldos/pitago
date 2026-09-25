@@ -1,11 +1,15 @@
 package app
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"pitago/src/pirpc"
 )
 
 // The /tasks "Create task" flow drives two ui.input requests (subject,
@@ -66,6 +70,120 @@ func TestInputDialogTyping(t *testing.T) {
 	m2 = m2.handleUIRequest([]byte(`{"id":"r2","method":"input"}`))
 	if len(m2.Dialogs) != 1 || m2.Dialogs[0].Title != "Input" {
 		t.Fatalf("untitled dialog = %+v", m2.Dialogs)
+	}
+}
+
+func askOptionValue(t *testing.T, title, description string) string {
+	t.Helper()
+	raw, err := json.Marshal(pirpc.SelectOption{Title: title, Description: description})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pirpc.SelectOptionPrefix + base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func TestAskUserDialogMappingFilteringAndRichRendering(t *testing.T) {
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = tm.(Model)
+	raw := `{"id":"r1","method":"select","message":"Choose a rollout","options":[` +
+		`"` + askOptionValue(t, "Canary", "Release to a small cohort first") + `",` +
+		`"` + askOptionValue(t, "Stable", "Promote directly to all users") + `"]}`
+	m = m.handleUIRequest([]byte(raw))
+	if len(m.Dialogs) != 1 {
+		t.Fatalf("dialogs = %d", len(m.Dialogs))
+	}
+	d := m.Dialogs[0]
+	if d.Kind != "askUser" || d.Title != "Ask User" || len(d.Options) != 2 || len(d.Descs) != 2 {
+		t.Fatalf("rich mapping = %+v", d)
+	}
+	if d.Options[0] != "Canary" || d.Descs[1] != "Promote directly to all users" {
+		t.Fatalf("normalized details = %q / %q", d.Options, d.Descs)
+	}
+
+	wide := stripANSI(m.renderDialog())
+	for _, want := range []string{"1. Canary", "2. Stable", "Canary", "Release to a small cohort first", "│", "↵ Enter to select"} {
+		if !strings.Contains(wide, want) {
+			t.Fatalf("wide dialog missing %q:\n%s", want, wide)
+		}
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("stable")})
+	m = tm.(Model)
+	if got := m.Dialogs[0].FIdx; len(got) != 1 || got[0] != 1 {
+		t.Fatalf("filtered indices = %v", got)
+	}
+	if out := stripANSI(m.renderDialog()); !strings.Contains(out, "2. Stable") || strings.Contains(out, "1. Canary") {
+		t.Fatalf("filtered render:\n%s", out)
+	}
+
+	// The same private encoding collapses to one safe column on narrow
+	// terminals, retaining both the selected title and its detail.
+	m.winW = 64
+	narrow := stripANSI(m.renderDialog())
+	if strings.Contains(narrow, "▸ 2. Stable │ Stable") || !strings.Contains(narrow, "2. Stable") || !strings.Contains(narrow, "Promote directly to all users") {
+		t.Fatalf("narrow fallback:\n%s", narrow)
+	}
+}
+
+func TestAskUserDialogPreservesMultilineContextAndPendingHint(t *testing.T) {
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m = tm.(Model)
+	value := askOptionValue(t, "Continue", "Keep the current plan")
+	message := "Choose a rollout\n\nContext:\nFirst finding\nSecond finding"
+	raw, err := json.Marshal(map[string]any{
+		"id": "r1", "method": "select", "message": message, "options": []string{value},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = m.handleUIRequest(raw)
+	m.Dialogs = append(m.Dialogs, &Dialog{Kind: "secret"}) // second request waits
+
+	out := stripANSI(m.renderDialog())
+	for _, want := range []string{"Choose a rollout", "Context:", "First finding", "Second finding", "(1 more dialogs pending)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Ask User dialog missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAskUserLongDescriptionStaysInsideFrame(t *testing.T) {
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 24})
+	m = tm.(Model)
+	long := strings.TrimSpace(strings.Repeat("detailed rollout guidance ", 40))
+	value := askOptionValue(t, "Canary", long)
+	raw, err := json.Marshal(map[string]any{
+		"id": "r1", "method": "select", "message": "Choose\n\nContext:\nA long context", "options": []string{value},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = m.handleUIRequest(raw)
+
+	out := stripANSI(m.renderDialog())
+	if rows := len(strings.Split(out, "\n")); rows > m.winH-2 {
+		t.Fatalf("long Ask User dialog is %d rows, frame budget is %d:\n%s", rows, m.winH-2, out)
+	}
+	if !strings.Contains(out, "detailed rollout guidance") || !strings.Contains(out, "…") {
+		t.Fatalf("long description was not bounded with an overflow marker:\n%s", out)
+	}
+}
+
+func TestAskUserEnterAndEscAreNilSafe(t *testing.T) {
+	value := askOptionValue(t, "Continue", "Proceed")
+	raw := `{"id":"r1","method":"select","options":["` + value + `"]}`
+
+	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyEsc} {
+		m := New(nil, t.TempDir())
+		m = m.handleUIRequest([]byte(raw))
+		tm, _ := m.Update(tea.KeyMsg{Type: key})
+		m = tm.(Model)
+		if len(m.Dialogs) != 0 {
+			t.Fatalf("key %v left %d dialogs open", key, len(m.Dialogs))
+		}
 	}
 }
 

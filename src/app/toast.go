@@ -51,9 +51,15 @@ func scheduleToastTick() {
 // still clears (no timers in tests — ProgRef is nil there).
 func (m *Model) pushToast(text string, isErr bool) {
 	m.pruneToasts()
-	m.toasts = append(m.toasts, Toast{Text: text, Err: isErr, At: time.Now()})
+	now := time.Now()
+	t := Toast{Text: text, Err: isErr, At: now}
+	m.toasts = append(m.toasts, t)
 	if len(m.toasts) > maxToasts {
 		m.toasts = m.toasts[len(m.toasts)-maxToasts:]
+	}
+	m.notificationHistory = append(m.notificationHistory, t)
+	if len(m.notificationHistory) > maxNotificationHistory {
+		m.notificationHistory = m.notificationHistory[len(m.notificationHistory)-maxNotificationHistory:]
 	}
 	scheduleToastTick()
 }
@@ -190,7 +196,8 @@ func (m Model) overlayToasts(left string) string {
 	tlines := strings.Split(box, "\n")
 	// Input box is fixed-frame: textarea 3 + chips 0/1 + footer 1 + border 2.
 	inputH := 6 + m.chipH()
-	avail := len(lines) - 1 - inputH // rows below header, above input
+	taskH := lipgloss.Height(m.renderTaskWidget())
+	avail := len(lines) - 1 - inputH - taskH // rows below header, above persistent blocks
 	if avail <= 0 {
 		return left
 	}

@@ -104,37 +104,23 @@ func writeBlock(content string) Block {
 	}
 }
 
-func TestRenderToolBodyWriteCollapseExpand(t *testing.T) {
+func TestRenderToolBodyWriteAlwaysDetailed(t *testing.T) {
 	var sb strings.Builder
 	for i := 1; i <= 15; i++ {
 		sb.WriteString(fmt.Sprintf("line%d\n", i))
 	}
-	m := Model{}
 	bl := writeBlock(sb.String())
-	collapsed := m.renderToolBody(bl)
-	if !strings.Contains(collapsed, "line10") {
-		t.Fatalf("collapsed write missing line10: %q", collapsed)
+	for _, expanded := range []bool{false, true} {
+		m := Model{expandTools: expanded}
+		got := m.renderToolBody(bl)
+		if !strings.Contains(got, "line1") || !strings.Contains(got, "line15") {
+			t.Fatalf("write expanded=%v should show all content: %q", expanded, got)
+		}
+		if strings.Contains(got, "ctrl+g") {
+			t.Fatalf("write expanded=%v should not offer collapse: %q", expanded, got)
+		}
 	}
-	if strings.Contains(collapsed, "line11") {
-		t.Fatalf("collapsed write leaked line11: %q", collapsed)
-	}
-	if !strings.Contains(collapsed, "5 more lines") || !strings.Contains(collapsed, "15 total") {
-		t.Fatalf("collapsed write missing pi-style hint: %q", collapsed)
-	}
-	if !strings.Contains(collapsed, "ctrl+g to expand") {
-		t.Fatalf("collapsed write missing expand key hint: %q", collapsed)
-	}
-	m.expandTools = true
-	expanded := m.renderToolBody(bl)
-	if !strings.Contains(expanded, "line15") {
-		t.Fatalf("expanded write missing line15: %q", expanded)
-	}
-	if strings.Contains(expanded, "more lines") {
-		t.Fatalf("expanded write should not hide lines: %q", expanded)
-	}
-	if !strings.Contains(expanded, "ctrl+g to collapse") {
-		t.Fatalf("expanded write missing collapse hint: %q", expanded)
-	}
+
 	// full block header carries pi's "+N lines" suffix
 	mFull := Model{blocks: []Block{bl}}
 	mFull.vp = viewport.New(120, 20)
@@ -169,8 +155,8 @@ func TestRenderToolBodyReadCollapseExpand(t *testing.T) {
 	if strings.Contains(collapsed, "const a") {
 		t.Fatalf("collapsed read should hide content: %q", collapsed)
 	}
-	if !strings.Contains(collapsed, "2 lines") || !strings.Contains(collapsed, "ctrl+g to expand") {
-		t.Fatalf("collapsed read missing hint: %q", collapsed)
+	if !strings.Contains(collapsed, "… (2 lines, ctrl+g to expand)") {
+		t.Fatalf("collapsed read missing compact hint: %q", collapsed)
 	}
 	m.expandTools = true
 	expanded := m.renderToolBody(bl)
@@ -188,19 +174,79 @@ func TestRenderToolBodyReadCollapseExpand(t *testing.T) {
 	}
 }
 
-func TestRenderToolBodyEditDiff(t *testing.T) {
-	m := Model{}
-	bl := Block{Kind: "tool", ToolName: "edit", ToolStatus: "done",
-		ToolArgs: "a.go",
-		ToolArgsRaw: `{"path":"a.go","edits":[{"oldText":"foo","newText":"bar"}]}`,
-		ToolResult: ""}
-	if got := m.renderToolBody(bl); !strings.Contains(got, "foo") || !strings.Contains(got, "bar") {
-		t.Fatalf("edit fallback diff missing: %q", got)
+func TestRenderToolBodyGenericCompact(t *testing.T) {
+	for _, tool := range []string{"bash", "ffgrep", "custom_tool"} {
+		t.Run(tool, func(t *testing.T) {
+			bl := Block{Kind: "tool", ToolName: tool, ToolStatus: "done",
+				ToolResult: "first\nsecond\nthird"}
+			collapsed := (Model{}).renderToolBody(bl)
+			for _, line := range []string{"first", "second", "third"} {
+				if strings.Contains(collapsed, line) {
+					t.Fatalf("collapsed %s leaked partial result %q: %q", tool, line, collapsed)
+				}
+			}
+			if !strings.Contains(collapsed, "… (3 lines, ctrl+g to expand)") {
+				t.Fatalf("collapsed %s missing compact hint: %q", tool, collapsed)
+			}
+
+			bl.ToolResult = "No files found matching pattern"
+			oneLine := (Model{}).renderToolBody(bl)
+			if !strings.Contains(oneLine, "└ No files found matching pattern") {
+				t.Fatalf("one-line %s result should stay visible: %q", tool, oneLine)
+			}
+			if strings.Contains(oneLine, "ctrl+g") {
+				t.Fatalf("one-line %s result should not show expand hint: %q", tool, oneLine)
+			}
+
+			bl.ToolResult = "first\nsecond\nthird"
+			expanded := stripANSI((Model{expandTools: true}).renderToolBody(bl))
+			if !strings.Contains(expanded, "first") || !strings.Contains(expanded, "third") {
+				t.Fatalf("expanded %s missing full result: %q", tool, expanded)
+			}
+			if !strings.Contains(expanded, "ctrl+g to collapse") {
+				t.Fatalf("expanded %s missing collapse hint: %q", tool, expanded)
+			}
+
+			bl.ToolStatus = "error"
+			bl.ToolResult = "permission denied\nretry failed"
+			failed := (Model{}).renderToolBody(bl)
+			if !strings.Contains(failed, "permission denied") || !strings.Contains(failed, "retry failed") {
+				t.Fatalf("%s error should remain visible: %q", tool, failed)
+			}
+			if strings.Contains(failed, "ctrl+g") {
+				t.Fatalf("%s error should not advertise collapse: %q", tool, failed)
+			}
+		})
 	}
-	// details.diff from pi renders when present
-	bl.ToolResult = "--- a/a.go\n+++ b/a.go\n-foo\n+bar\n"
-	if got := m.renderToolBody(bl); !strings.Contains(got, "bar") {
-		t.Fatalf("edit diff missing: %q", got)
+}
+
+func TestRenderToolBodyEditDiff(t *testing.T) {
+	bl := Block{Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolArgs:    "a.go",
+		ToolArgsRaw: `{"path":"a.go","edits":[{"oldText":"foo","newText":"bar"}]}`,
+		ToolResult:  ""}
+	for _, expanded := range []bool{false, true} {
+		m := Model{expandTools: expanded}
+		if got := m.renderToolBody(bl); !strings.Contains(got, "foo") || !strings.Contains(got, "bar") {
+			t.Fatalf("edit expanded=%v fallback diff missing: %q", expanded, got)
+		}
+	}
+
+	// details.diff from pi stays complete in either global expand state.
+	var diff strings.Builder
+	diff.WriteString("--- a/a.go\n+++ b/a.go\n")
+	for i := 1; i <= 15; i++ {
+		diff.WriteString(fmt.Sprintf("+line%d\n", i))
+	}
+	bl.ToolResult = diff.String()
+	for _, expanded := range []bool{false, true} {
+		got := stripANSI((Model{expandTools: expanded}).renderToolBody(bl))
+		if !strings.Contains(got, "line1") || !strings.Contains(got, "line15") {
+			t.Fatalf("edit expanded=%v should show full diff: %q", expanded, got)
+		}
+		if strings.Contains(got, "ctrl+g") {
+			t.Fatalf("edit expanded=%v should not offer collapse: %q", expanded, got)
+		}
 	}
 }
 

@@ -10,6 +10,32 @@ import (
 )
 
 // Two columns: left = step names, right = the selected step's detail.
+func TestTrajectoryDiffColors(t *testing.T) {
+	cases := []struct {
+		name string
+		kind trajDiffKind
+		want lipgloss.Color
+	}{
+		{name: "removed", kind: trajDiffRemove, want: cRed},
+		{name: "added", kind: trajDiffAdd, want: cGreen},
+		{name: "header", kind: trajDiffHeader, want: cYellow},
+		{name: "normal", kind: trajDiffNone, want: cText},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := trajDetailRowStyle("line", tc.kind).GetForeground(); got != tc.want {
+				t.Fatalf("foreground = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if got := trajDiffKindOf("- old"); got != trajDiffRemove {
+		t.Fatalf("remove classification = %v", got)
+	}
+	if got := trajDiffKindOf("+ new"); got != trajDiffAdd {
+		t.Fatalf("add classification = %v", got)
+	}
+}
+
 func TestRenderTrajectoryDialog(t *testing.T) {
 	m := Model{winW: 120, winH: 40}
 	d := &Dialog{Kind: "trajectory", Title: "Trajectory (all)", Scope: "all",
@@ -245,5 +271,49 @@ func TestTrajColorRow(t *testing.T) {
 	}
 	if leg := trajLegend(70); !strings.Contains(leg, "\x1b[") || lipgloss.Width(leg) != 70 {
 		t.Errorf("legend should be colored and exactly 70 cells, got width %d", lipgloss.Width(leg))
+	}
+}
+
+func TestTreeMsgOpensTrajectoryStyleTab(t *testing.T) {
+	var m Model
+	um, _ := m.Update(TreeMsg{Mode: "all", Current: 1,
+		Options: []string{"• user: hi", "• assistant: ok"},
+		Descs:   []string{"user · 10:00:01", "assistant · 10:00:02"},
+		Payload: []string{"• user: hi\nuser · id u1 · 10:00:01\n\nhi", "• assistant: ok\nassistant · id a1 · 10:00:02\n\nok"}})
+	m = um.(Model)
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Kind != "tree" {
+		t.Fatalf("/tree should open a tree tab, got %+v", m.Dialogs)
+	}
+	if len(m.Dialogs[0].FIdx) != 2 || m.Dialogs[0].Scope != "all" || m.Dialogs[0].Cursor != 1 {
+		t.Fatalf("tree tab rows not indexed or active row not selected: %+v", m.Dialogs[0])
+	}
+}
+
+func TestRenderTreeDialogUsesTreeLabelsAndPiRows(t *testing.T) {
+	m := Model{winW: 140, winH: 40}
+	d := &Dialog{Kind: "tree", Title: "Tree (all)", Scope: "all",
+		Options: []string{"• user: hi", "• assistant: ok"},
+		Descs:   []string{"user · 10:00:01", "assistant · 10:00:02"},
+		Payload: []string{"• user: hi\nuser · id u1 · 10:00:01\n\nhi", "• assistant: ok\nassistant · id a1 · 10:00:02\n\nok"}}
+	d.Reindex()
+	got := stripANSI(m.renderTreeDialog(d))
+	for _, want := range []string{"Session Tree", "↑/↓ move", "←/→ page", "Type to search:", "• user: hi", "user: hi", "(1/2)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tree tab missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestTreePagingAndWheelMoveFlatList(t *testing.T) {
+	m := Model{winW: 120, winH: 40}
+	d := &Dialog{Kind: "tree", Options: []string{"a", "b", "c", "d", "e"},
+		Descs: []string{"x", "x", "x", "x", "x"}}
+	d.Reindex()
+	m.treePage(d, true)
+	if d.Cursor != 4 {
+		t.Fatalf("tree page down should clamp to last row, cursor=%d", d.Cursor)
+	}
+	if _, _ = m.updateTreeWheel(d, tea.MouseMsg{Button: tea.MouseButtonWheelUp}); d.Cursor != 3 {
+		t.Fatalf("tree wheel up should move one row, cursor=%d", d.Cursor)
 	}
 }

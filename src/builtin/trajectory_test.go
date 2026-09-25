@@ -92,6 +92,64 @@ func TestBuildTrajectoryAll(t *testing.T) {
 	}
 }
 
+func TestTrajBodyRendersAssistantEditDiff(t *testing.T) {
+	editArgs := json.RawMessage(`{"path":"a.go","edits":[{"oldText":"before","newText":"after"}]}`)
+	assistant := pirpc.TreeEntry{Type: "message", ID: "assistant"}
+	assistant.Message.Role = "assistant"
+	assistant.Message.Content = json.RawMessage(`[{"type":"toolCall","id":"edit-call","name":"edit","arguments":` + string(editArgs) + `}]`)
+
+	body := trajBody(assistant, nil)
+	if !strings.Contains(body, "tool: [edit: a.go]\ndiff:\n- before\n+ after") {
+		t.Fatalf("assistant edit call should render a readable diff: %q", body)
+	}
+	if strings.Contains(body, string(editArgs)) || strings.Contains(body, "args:") {
+		t.Fatalf("valid assistant edit args should be replaced by diff: %q", body)
+	}
+}
+
+func TestTrajBodyRendersEditDiff(t *testing.T) {
+	editArgs := json.RawMessage(`{"path":"a.go","edits":[{"oldText":"before","newText":"after"}]}`)
+	result := pirpc.TreeEntry{Type: "message", ID: "result"}
+	result.Message.Role = "toolResult"
+	result.Message.ToolCallID = "edit-call"
+	result.Message.Content = json.RawMessage(`[{"type":"text","text":"edited a.go"}]`)
+
+	body := trajBody(result, map[string]pirpc.ContentBlock{
+		"edit-call": {Type: "toolCall", Name: "edit", Arguments: editArgs},
+	})
+	if !strings.Contains(body, "call: [edit: a.go]") || !strings.Contains(body, "diff:\n- before\n+ after") {
+		t.Fatalf("edit result should render a readable diff: %q", body)
+	}
+	if strings.Contains(body, "args:") {
+		t.Fatalf("valid edit args should be replaced by diff: %q", body)
+	}
+	if !strings.Contains(body, "result:\nedited a.go") {
+		t.Fatalf("edit result text should be preserved: %q", body)
+	}
+}
+
+func TestTrajBodyKeepsRawArgsForMalformedEditAndNonEdit(t *testing.T) {
+	for _, tc := range []struct {
+		name, tool, args string
+	}{
+		{name: "malformed edit", tool: "edit", args: `{"edits":[`},
+		{name: "non-edit", tool: "read", args: `{"path":"a.go"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := pirpc.TreeEntry{Type: "message", ID: "result"}
+			result.Message.Role = "toolResult"
+			result.Message.ToolCallID = "call"
+			result.Message.Content = json.RawMessage(`[{"type":"text","text":"ok"}]`)
+			body := trajBody(result, map[string]pirpc.ContentBlock{
+				"call": {Type: "toolCall", Name: tc.tool, Arguments: json.RawMessage(tc.args)},
+			})
+			if !strings.Contains(body, "args: "+tc.args) || !strings.Contains(body, "result:\nok") {
+				t.Fatalf("raw args/result should be preserved: %q", body)
+			}
+		})
+	}
+}
+
 // Tabs filter: tools = tool activity only, messages = chat only.
 func TestBuildTrajectoryScopes(t *testing.T) {
 	nodes := trajNodes()

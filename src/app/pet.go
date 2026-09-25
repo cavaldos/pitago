@@ -44,6 +44,15 @@ type petState struct {
 	sawStop bool // a done(stop) closed a round (gates the Done flash)
 }
 
+// taskRuntime tracks the one task currently executing above the editor.
+// Usage totals come from authoritative finalized assistant messages.
+type taskRuntime struct {
+	activeID     string
+	startedAt    time.Time
+	inputTokens  int
+	outputTokens int
+}
+
 type petTickMsg struct{}
 type petFlashMsg struct{ gen int }
 

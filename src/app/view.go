@@ -10,6 +10,7 @@ import (
 
 	"pitago/src/components/format"
 	"pitago/src/components/markdown"
+	terminal_image "pitago/src/components/terminal_image"
 	"pitago/src/extension"
 	"pitago/src/pirpc"
 )
@@ -111,6 +112,12 @@ func (m *Model) renderBlocks() string {
 	}
 	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
 	for i, bl := range m.blocks {
+		// Image-bearing transcript blocks are always rebuilt as safe squares.
+		// This purges any cache entry created by an older image-render path
+		// before scroll/repaint can re-emit Kitty/iTerm placement escapes.
+		if len(bl.Images) > 0 {
+			m.renderCache[i], m.renderCacheKey[i] = "", 0
+		}
 		key := blockKey(bl, cw, hide, expand, theme)
 		if m.renderCacheKey[i] == key {
 			b.WriteString(m.renderCache[i])
@@ -155,6 +162,7 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string) uint64 {
 	} else {
 		h.Write([]byte{0})
 	}
+	fmt.Fprintf(h, "\x00images\x00%d", len(bl.Images))
 	fmt.Fprintf(h, "\x00%d\x00%v\x00%v\x00%s", cw, hide, expand, theme)
 	return h.Sum64()
 }
@@ -177,7 +185,18 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 	switch bl.Kind {
 	case "user":
 		icon = statusBarStyle.Render("●")
-		body = userStyle.Width(cw-2).Render(bl.Text) + "\n\n"
+		// Transcript is fallback-only until an image-aware viewport can manage
+		// Kitty/iTerm placement lifecycle. Never put real image escapes into
+		// the scrollable Bubbletea output.
+		body = strings.TrimSuffix(userStyle.Width(cw-2).Render(bl.Text), "\n")
+		imageLines := make([]string, len(bl.Images))
+		for i := range imageLines {
+			imageLines[i] = terminal_image.Fallback()
+		}
+		if len(imageLines) > 0 {
+			body += "\n" + strings.Join(imageLines, "\n")
+		}
+		body += "\n\n"
 		boxed = true
 	case "assistant":
 		icon = statusBarStyle.Render("●")
@@ -315,68 +334,72 @@ func toolBg(status string) lipgloss.Color {
 	}
 }
 
-// renderToolBody renders a tool's collapsible content like pi's TUI:
-// write shows the file text from the call args (10 lines collapsed,
-// ctrl+g expands), read shows the file content only when expanded (or on
-// error), edit shows the diff, and bash/grep/ls show head/tail previews.
-// Collapsed previews end with "... (N more lines[, T total], ctrl+g to
-// expand)"; expanded blocks end with "(ctrl+g to collapse)" when lines
-// were hidden.
+// renderToolBody renders a tool's content like pi's TUI. File-changing
+// tools stay detailed by default so additions and edits remain visible.
+// Other successful tools collapse to one compact summary line and expand
+// with ctrl+g; errors are always shown in full.
 func (m Model) renderToolBody(bl Block) string {
-	expanded := m.expandTools
-	switch strings.ToLower(bl.ToolName) {
+	tool := strings.ToLower(bl.ToolName)
+	if bl.ToolStatus == "error" {
+		return renderToolResultFull(tool, bl.ToolResult)
+	}
+
+	switch tool {
 	case "write":
 		if content, ok := format.WriteContent(bl.ToolArgsRaw); ok && strings.TrimSpace(content) != "" {
-			p := format.CallPreview(content, expanded)
-			if p.Hidden || len(p.Lines) == 0 {
-				return ""
-			}
-			return renderPreview(p, format.LangFromPath(toolPath(bl)), expanded)
+			p := format.CallPreview(content, true)
+			return renderPreview(p, format.LangFromPath(toolPath(bl)), false)
 		}
-		return renderToolResultExpanded(bl.ToolName, bl.ToolStatus, bl.ToolResult, expanded)
-	case "read":
-		if bl.ToolStatus == "error" {
-			return renderToolResultExpanded(bl.ToolName, bl.ToolStatus, bl.ToolResult, expanded)
-		}
-		if !expanded {
-			if n := countLines(bl.ToolResult); n > 0 {
-				return toolStyle.Render(fmt.Sprintf("  ... (%d lines, %s)", n, expandHint))
-			}
-			return ""
-		}
-		p := format.ToolResultPreviewExpanded(bl.ToolName, bl.ToolStatus, bl.ToolResult, true)
-		if p.Hidden || len(p.Lines) == 0 {
-			return ""
-		}
-		return renderPreview(p, format.LangFromPath(toolPath(bl)), true)
+		return renderToolResultFull(tool, bl.ToolResult)
 	case "edit":
-		if bl.ToolStatus == "error" {
-			return renderToolResultExpanded(bl.ToolName, bl.ToolStatus, bl.ToolResult, expanded)
-		}
 		text := strings.TrimSpace(bl.ToolResult)
 		lang := ""
 		if text == "" {
-			// no details.diff reported: preview - old / + new from args
+			// no details.diff reported: reconstruct - old / + new from args
 			text = format.EditDiffFallback(bl.ToolArgsRaw)
 			lang = "diff"
 		}
 		if text == "" {
 			return ""
 		}
-		p := format.CallPreview(text, expanded)
-		if p.Hidden || len(p.Lines) == 0 {
-			return ""
-		}
+		p := format.CallPreview(text, true)
 		if lang == "" {
 			lang = format.LangFromPath(toolPath(bl))
 			if _, ok := codeLang(text); ok {
 				lang = "diff"
 			}
 		}
-		return renderPreview(p, lang, expanded)
+		// The preview is already complete, so pass expanded=false only to
+		// suppress the generic ctrl+g-to-collapse affordance.
+		return renderPreview(p, lang, false)
 	default:
-		return renderToolResultExpanded(bl.ToolName, bl.ToolStatus, bl.ToolResult, expanded)
+		return renderToolResultCompact(tool, bl.ToolStatus, bl.ToolResult, m.expandTools)
 	}
+}
+
+// renderToolResultCompact shows no partial output while a generic tool is
+// collapsed: multi-line results become a single line-count hint, while a
+// useful one-line result remains visible. Expanding still uses the shared
+// full renderer and its collapse hint.
+func renderToolResultCompact(tool, status, result string, expanded bool) string {
+	n := countLines(result)
+	if n == 0 {
+		return ""
+	}
+	if expanded {
+		return renderToolResultExpanded(tool, status, result, true)
+	}
+	if n == 1 {
+		return toolStyle.Render("  └ " + strings.TrimSpace(result))
+	}
+	return toolStyle.Render(fmt.Sprintf("  … (%d lines, %s)", n, expandHint))
+}
+
+// renderToolResultFull keeps errors and edit/write receipts visible without
+// advertising a collapse action that would not change their rendering.
+func renderToolResultFull(tool, result string) string {
+	p := format.ToolResultPreviewExpanded(tool, "error", result, true)
+	return renderPreview(p, "", false)
 }
 
 // toolPath is the file path for highlight-language detection: raw args
@@ -512,9 +535,9 @@ func renderToolResultExpanded(tool, status, s string, expanded bool) string {
 }
 
 // renderSidebar mirrors pi's session panel: SESSION, model+ctx, STATS,
-// RECENT MODELS (clickable), COMMANDS, WORKSPACE, cwd. Content is built by
-// buildSidebarContent and shown through sideVp, so a tall sidebar clips to
-// the box and scrolls (wheel over it) instead of overflowing the layout.
+// RECENT MODELS (clickable), COMMANDS, TOOLS, WORKSPACE, cwd. Content is
+// built by buildSidebarContent and shown through sideVp, so a tall sidebar
+// clips to the box and scrolls (wheel over it) instead of overflowing the layout.
 // recentAt maps clicks with sideVp.YOffset, so it stays correct scrolled.
 
 func (m Model) buildSidebarContent() string {
@@ -682,6 +705,25 @@ func (m Model) buildSidebarContent() string {
 	if m.SideVisible(SideTodos) {
 		b.WriteString(m.renderTodosSection(inner))
 	}
+	if m.SideVisible(SideTools) {
+		if tools := m.invokedTools(); len(tools) > 0 {
+			b.WriteString(sideTitleStyle.Render("TOOLS") + "\n")
+			for _, bl := range tools {
+				var mark, state string
+				switch bl.ToolStatus {
+				case "done":
+					mark, state = okStyle.Render("✓"), bl.ToolStatus
+				case "error":
+					mark, state = errStyle.Render("×"), bl.ToolStatus
+				default:
+					mark, state = statusBarStyle.Render("●"), "running"
+				}
+				row := mark + " " + statusBarStyle.Render(bl.ToolName) + toolStyle.Render(" · "+state)
+				b.WriteString(truncANSI(row, inner) + "\n")
+			}
+			b.WriteString(sep() + "\n")
+		}
+	}
 	if m.SideVisible(SideWorkspace) {
 		if m.ws.ok {
 			b.WriteString(sideTitleStyle.Render(Short("WORKSPACE · "+m.ws.branch, inner)) + "\n")
@@ -705,6 +747,19 @@ func (m Model) buildSidebarContent() string {
 		b.WriteString(toolStyle.Render(Short(pirpc.Shorten(m.cwd), inner)) + "\n")
 	}
 	return b.String()
+}
+
+// invokedTools returns only tool calls represented by transcript blocks.
+// Block order is the stable invocation order; m.tools is only an index used
+// to update a call in place and intentionally cannot define sidebar order.
+func (m Model) invokedTools() []Block {
+	tools := make([]Block, 0)
+	for _, bl := range m.blocks {
+		if bl.Kind == "tool" && bl.ToolName != "" {
+			tools = append(tools, bl)
+		}
+	}
+	return tools
 }
 
 // renderSidebar draws the sidebar box around the visible sideVp slice.
@@ -779,8 +834,12 @@ func (m Model) statsLine() string {
 func (m Model) renderHeader() string {
 	left := Short(pirpc.Shorten(m.cwd), 48)
 	if m.session != "" {
-		left = Short(m.session+" · "+pirpc.Shorten(m.cwd), 48)
+		left = m.session + " · " + pirpc.Shorten(m.cwd)
 	}
+	if m.followRemote {
+		left = "external · " + left
+	}
+	left = Short(left, 48)
 	// Status lives on the pet row (sidebar) — header keeps cwd/session only.
 	return headerStyle.Render(left)
 }
@@ -798,7 +857,15 @@ func (m Model) renderInput() string {
 	if m.CurAgent != "" {
 		agentTag = " · @" + Short(m.CurAgent, 20)
 	}
-	if m.thinking {
+	if m.followRemote {
+		border = cInputDim
+		title = "EXTERNAL · READ-ONLY"
+		left = "Ctrl+D detach · remote events only"
+		if m.thinking {
+			border = cGreen
+			title = "EXTERNAL · " + spinFrame(m.pet.tick) + " " + m.inputStatus()
+		}
+	} else if m.thinking {
 		if plan {
 			border = cPlan
 			title = "PLAN · " + spinFrame(m.pet.tick) + " " + m.inputStatus() + agentTag
@@ -934,8 +1001,17 @@ func (m Model) renderDialog() string {
 	if d.Kind == "trajectory" {
 		return m.renderTrajectoryDialog(d)
 	}
+	if d.Kind == "notification" {
+		return m.renderNotificationDialog(d)
+	}
+	if d.Kind == "tree" {
+		return m.renderTreeDialog(d)
+	}
 	if d.Kind == "sessions" {
 		return m.renderResumeDialog(d)
+	}
+	if d.Kind == "askUser" {
+		return m.renderAskUserDialog(d)
 	}
 	if d.Kind == "shortcuts" {
 		return m.renderShortcutsDialog(d)
@@ -1579,8 +1655,170 @@ func (m Model) renderSettingsDialog(d *Dialog) string {
 	)
 }
 
+// renderAskUserDialog mirrors pi's rich single-select fallback: numbered,
+// filterable choices on the left and the selected title/description on the
+// right. Below a usable width it becomes a safe single column with the
+// selected detail directly under the list.
+func (m Model) renderAskUserDialog(d *Dialog) string {
+	boxW := m.winW - 4
+	if boxW < 20 {
+		boxW = 20
+	}
+	if boxW > 100 {
+		boxW = 100
+	}
+	placeH := max(1, m.winH-2)
+	pending := len(m.Dialogs) > 1
+	if pending {
+		placeH = max(1, placeH-1)
+	}
+	// dlgStyle adds two border and two padding rows. The remaining body is
+	// divided between the wrapped prompt, list/detail pane, and two-row footer.
+	bodyBudget := max(1, placeH-5-5)
+	messageLimit := min(8, max(1, bodyBudget/3))
+	messageLines := wrapAskMessage(d.Message, boxW-8)
+	if len(messageLines) > messageLimit {
+		missing := len(messageLines) - messageLimit + 1
+		messageLines = append(messageLines[:messageLimit-1], fmt.Sprintf("…(+%d context lines)", missing))
+	}
+	paneRows := min(14, max(1, bodyBudget-len(messageLines)))
+
+	var head strings.Builder
+	head.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
+	for _, line := range messageLines {
+		head.WriteString(statusBarStyle.Render(line) + "\n")
+	}
+	head.WriteString(statusBarStyle.Render("filter: "+d.Filter+"▌") + "\n\n")
+
+	total := len(d.FIdx)
+	start, end, above, below := fixedWin(d.Cursor, total, paneRows)
+	selected := -1
+	if d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
+		selected = d.FIdx[d.Cursor]
+	}
+
+	split := boxW >= 76
+	leftW := boxW - 8
+	rightW := boxW - 8 - leftW
+	if split {
+		leftW = (boxW - 8) * 42 / 100
+		rightW = boxW - 8 - leftW
+	}
+	left := make([]string, 0, paneRows)
+	if above {
+		left = append(left, toolStyle.Render(fmt.Sprintf("…(+%d above)", start)))
+	}
+	for fi := start; fi < end; fi++ {
+		ri := d.FIdx[fi]
+		mark, style := "  ", statusBarStyle
+		if fi == d.Cursor {
+			mark, style = "▸ ", rowHiStyle
+		}
+		titleStyle := lipgloss.NewStyle().Foreground(cText)
+		if strings.Contains(strings.ToLower(d.Options[ri]), "type custom response") {
+			titleStyle = lipgloss.NewStyle().Foreground(cAccent)
+		}
+		row := mark + titleStyle.Render(fmt.Sprintf("%d. %s", ri+1, Short(d.Options[ri], leftW-lipgloss.Width(mark)-3)))
+		left = append(left, style.Width(leftW).Render(row))
+	}
+	if below {
+		left = append(left, toolStyle.Render(fmt.Sprintf("…(+%d below)", total-end)))
+	}
+	if total == 0 {
+		left = append(left, toolStyle.Render("— no match —"))
+	}
+
+	right := []string{}
+	if selected >= 0 {
+		selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(cText)
+		if strings.Contains(strings.ToLower(d.Options[selected]), "type custom response") {
+			selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(cAccent)
+		}
+		right = append(right, selectedStyle.Render(d.Options[selected]))
+		desc := DescOf(d, selected)
+		descWidth := rightW
+		if !split {
+			descWidth = leftW
+		}
+		descLines := []string{}
+		if desc != "" {
+			for _, line := range wrapWords(desc, descWidth) {
+				descLines = append(descLines, statusBarStyle.Render(line))
+			}
+		}
+		if split {
+			descBudget := paneRows - 4 // title + gap + divider + Enter hint
+			if descBudget > 0 {
+				if len(descLines) > descBudget {
+					descLines = append(descLines[:max(1, descBudget-1)], toolStyle.Render("…"))
+				}
+				right = append(right, "")
+				right = append(right, descLines...)
+			}
+			right = append(right, "", sepStyle.Render(strings.Repeat("─", max(10, rightW))), toolStyle.Render("↵ Enter to select"))
+		} else {
+			rightBudget := max(0, paneRows-len(left))
+			if rightBudget > 0 {
+				if len(descLines) > rightBudget-1 {
+					descLines = append(descLines[:max(0, rightBudget-2)], toolStyle.Render("…"))
+				}
+				right = append(right, descLines...)
+			}
+		}
+	}
+
+	content := []string{}
+	if split {
+		n := min(paneRows, max(len(left), len(right)))
+		sep := sepStyle.Render("│")
+		for i := 0; i < n; i++ {
+			l, r := strings.Repeat(" ", leftW), ""
+			if i < len(left) {
+				l = statusBarStyle.Width(leftW).Render(left[i])
+			}
+			if i < len(right) {
+				r = statusBarStyle.Width(rightW).Render(right[i])
+			}
+			content = append(content, l+" "+sep+" "+r)
+		}
+	} else {
+		content = append(content, left...)
+		if len(right) > 0 {
+			content = append(content, right[:min(len(right), paneRows-len(content))]...)
+		}
+	}
+	foot := "↑↓ select · type to filter · Enter confirm · Esc cancel"
+	if !split {
+		foot = "↑↓ select · type · Enter · Esc cancel"
+	}
+	content = append(content, "", toolStyle.Render(foot))
+	box := dlgStyle.Width(boxW).Render(head.String() + strings.Join(content, "\n"))
+	placed := lipgloss.Place(m.winW, max(1, m.winH-2), lipgloss.Center, lipgloss.Center, box)
+	if pending {
+		return lipgloss.JoinVertical(lipgloss.Center, placed, statusBarStyle.Render(fmt.Sprintf("(%d more dialogs pending)", len(m.Dialogs)-1)))
+	}
+	return placed
+}
+
+// wrapAskMessage preserves logical lines and blank lines while wrapping each
+// non-empty line to the dialog's available width.
+func wrapAskMessage(message string, width int) []string {
+	var out []string
+	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, wrapWords(line, width)...)
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	return out
+}
+
 func DescOf(d *Dialog, ri int) string {
-	if ri < len(d.Descs) {
+	if ri >= 0 && ri < len(d.Descs) {
 		return d.Descs[ri]
 	}
 	return ""
@@ -1791,17 +2029,249 @@ func (m Model) renderLoginDialog(d *Dialog) string {
 	)
 }
 
+// teamWidgetHeightLimit reserves the fixed frame, task widget, popup and at
+// least three chat rows. renderInput already includes chip rows.
+func (m Model) teamWidgetHeightLimit() int {
+	if m.winH <= 0 {
+		return len(m.TeamWidgetLines) + boolInt(m.TeamStatus != "")
+	}
+	fixed := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + lipgloss.Height(m.renderTaskWidget())
+	popup := m.popupH() + m.atPopupH() + m.uiPopupH() + m.inputPopupH()
+	return max(0, m.winH-fixed-popup-3)
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func teamWorkerStart(line string) bool {
+	plain := strings.TrimSpace(stripANSI(line))
+	if teamWorkerSummary(line) {
+		return false
+	}
+	return strings.HasPrefix(plain, "├ ") || strings.HasPrefix(plain, "└ ")
+}
+
+func teamWorkerSummary(line string) bool {
+	plain := strings.TrimSpace(stripANSI(line))
+	return strings.HasPrefix(plain, "└ +")
+}
+
+// renderTeamWidget preserves pi-agents-team's authoritative hierarchy. The
+// package prefix and roster heading are structural anchors; only complete
+// worker/activity blocks are selected when rows are scarce.
+func (m Model) renderTeamWidget() string {
+	budget := m.teamWidgetHeightLimit()
+	if budget <= 0 {
+		return ""
+	}
+	// mainW has a small-terminal floor for the main layout; the widget must
+	// never inherit that floor and paint past the actual terminal width.
+	width := max(1, min(m.winW, m.mainW()))
+	fit := func(line string) string { return truncANSI(line, width) }
+
+	status := ""
+	if m.TeamStatus != "" {
+		status = toolStyle.Render("TEAM") + "  " + truncANSI(m.TeamStatus, max(1, width-6))
+	}
+	statusOnly := func() string {
+		if status == "" {
+			return ""
+		}
+		return fit(status)
+	}
+	if len(m.TeamWidgetLines) == 0 || !m.TeamWidgetSeen {
+		return statusOnly()
+	}
+	if !m.TeamWidgetVisible {
+		return statusOnly()
+	}
+
+	// Everything before the roster heading is a structural prefix. This
+	// includes the optional standalone usage line emitted by pi-agents-team.
+	agents := -1
+	for i, line := range m.TeamWidgetLines {
+		if strings.Contains(stripANSI(line), "● Agents") {
+			agents = i
+			break
+		}
+	}
+	prefixEnd := len(m.TeamWidgetLines)
+	if agents >= 0 {
+		prefixEnd = agents
+	}
+	base := append([]string{}, m.TeamWidgetLines[:prefixEnd]...)
+	if status != "" {
+		base = append([]string{status}, base...)
+	}
+	if len(base) >= budget {
+		return statusOnly()
+	}
+
+	// Legacy/test snapshots may not contain a roster heading. Keep them
+	// lossless while still reserving one row for an honest overflow marker.
+	if agents < 0 {
+		all := append(append([]string{}, base...), m.TeamWidgetLines[prefixEnd:]...)
+		if len(all) <= budget {
+			return strings.Join(mapLines(all, fit), "\n")
+		}
+		available := budget - len(base)
+		if available <= 0 {
+			return statusOnly()
+		}
+		keep := available - 1
+		lines := append([]string{}, base...)
+		lines = append(lines, m.TeamWidgetLines[prefixEnd:prefixEnd+keep]...)
+		lines = append(lines, fmt.Sprintf("  … %d rows hidden", len(m.TeamWidgetLines[prefixEnd:])-keep))
+		return strings.Join(mapLines(lines, fit), "\n")
+	}
+
+	heading := m.TeamWidgetLines[agents]
+	blocks := make([][]string, 0)
+	summary := ""
+	for _, line := range m.TeamWidgetLines[agents+1:] {
+		switch {
+		case teamWorkerSummary(line):
+			summary = line
+		case teamWorkerStart(line):
+			blocks = append(blocks, []string{line})
+		case len(blocks) > 0:
+			blocks[len(blocks)-1] = append(blocks[len(blocks)-1], line)
+		}
+	}
+
+	all := append(append([]string{}, base...), heading)
+	all = append(all, flattenTeamBlocks(blocks)...)
+	if summary != "" {
+		all = append(all, summary)
+	}
+	if len(all) <= budget {
+		return strings.Join(mapLines(all, fit), "\n")
+	}
+
+	// The heading is mandatory whenever there is room for worker content. The
+	// last row is always a local, truthful overflow marker; if the package
+	// summary is meaningful and there is room, preserve it as an additional
+	// row so `/team to view` remains discoverable.
+	mandatory := append(append([]string{}, base...), heading)
+	if len(mandatory) >= budget {
+		return statusOnly()
+	}
+	available := budget - len(mandatory)
+	reserveSummary := 0
+	if summary != "" && available >= 2 {
+		reserveSummary = 1
+	}
+	blockBudget := available - 1 - reserveSummary
+	if blockBudget < 0 {
+		blockBudget = 0
+	}
+	selected := 0
+	used := 0
+	for selected < len(blocks) && used+len(blocks[selected]) <= blockBudget {
+		used += len(blocks[selected])
+		selected++
+	}
+
+	lines := append([]string{}, mandatory...)
+	lines = append(lines, flattenTeamBlocks(blocks[:selected])...)
+	hiddenBlocks := len(blocks) - selected
+	hiddenRows := teamRowsHidden(blocks, selected)
+	if reserveSummary == 1 {
+		lines = append(lines, summary)
+	} else if summary != "" {
+		hiddenRows++
+	}
+	overflow := fmt.Sprintf("  … %d rows hidden", hiddenRows)
+	if hiddenBlocks > 0 {
+		overflow = fmt.Sprintf("  … %d worker blocks hidden · %d rows hidden", hiddenBlocks, hiddenRows)
+	}
+	lines = append(lines, overflow)
+	if len(lines) > budget {
+		lines = lines[:budget]
+	}
+	return strings.Join(mapLines(lines, fit), "\n")
+}
+
+func mapLines(lines []string, fit func(string) string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = fit(line)
+	}
+	return out
+}
+
+func flattenTeamBlocks(blocks [][]string) []string {
+	rows := 0
+	for _, block := range blocks {
+		rows += len(block)
+	}
+	out := make([]string, 0, rows)
+	for _, block := range blocks {
+		out = append(out, block...)
+	}
+	return out
+}
+
+func teamRowsHidden(blocks [][]string, selected int) int {
+	rows := 0
+	for _, block := range blocks[selected:] {
+		rows += len(block)
+	}
+	return rows
+}
+
 func (m Model) View() string {
 	if !m.ready {
 		return "starting…"
 	}
 	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" {
+		if m.Dialogs[0].Kind == "team" {
+			return m.renderFloatingTeamDashboard()
+		}
 		return m.renderDialog()
 	}
 	inlineUI := m.isInlineUI()
-	body := lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), m.renderInput())
+	teamPanel := m.renderTeamWidget()
+	teamAbove := teamPanel != "" && m.TeamWidgetPlacement != "belowEditor"
+	teamBelow := teamPanel != "" && m.TeamWidgetPlacement == "belowEditor"
+	taskPanel := m.renderTaskWidget()
+	chatVp := m.vp
+	// Persistent panels consume chat rows from a local viewport copy; keeping
+	// m.vp unchanged avoids mutating layout state during render. lipgloss
+	// reports an empty string as one row, so only measure panels that exist.
+	reserved := 0
+	if teamPanel != "" {
+		reserved += lipgloss.Height(teamPanel)
+	}
+	if taskPanel != "" {
+		reserved += lipgloss.Height(taskPanel)
+	}
+	chatVp.Height = max(0, chatVp.Height-reserved)
+	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
+	bodyParts := []string{chatView()}
+	if teamAbove {
+		bodyParts = append(bodyParts, teamPanel)
+	}
+	if taskPanel != "" {
+		bodyParts = append(bodyParts, taskPanel)
+	}
+	bodyParts = append(bodyParts, m.renderInput())
+	if teamBelow {
+		bodyParts = append(bodyParts, teamPanel)
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
 	if m.cmdOpen || m.atOpen || inlineUI || m.inputOpen() {
-		parts := []string{m.vp.View()}
+		parts := []string{chatView()}
+		if teamAbove {
+			parts = append(parts, teamPanel)
+		}
+		if taskPanel != "" {
+			parts = append(parts, taskPanel)
+		}
 		if inlineUI {
 			// extension menu (plan-mode) floats above chat like /commands;
 			// cmd/@ popups stay hidden underneath until it closes.
@@ -1820,6 +2290,9 @@ func (m Model) View() string {
 			parts = append(parts, m.renderInputBox())
 		}
 		parts = append(parts, m.renderInput())
+		if teamBelow {
+			parts = append(parts, teamPanel)
+		}
 		body = lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
 	left := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body)
@@ -1856,6 +2329,22 @@ func (m Model) renderInputBox() string {
 }
 
 // utils ------------------------------------------------------------------------
+
+// padToHeight keeps a viewport's allocated rows visible even when its
+// content is shorter (for example, the welcome screen in a new session).
+// bubbles/viewport intentionally returns only the content rows in that
+// case; without this padding, the editor and sidebar no longer share a
+// bottom edge and the editor appears pushed up.
+func padToHeight(s string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	rows := strings.Split(s, "\n")
+	if len(rows) >= height {
+		return s
+	}
+	return s + strings.Repeat("\n", height-len(rows))
+}
 
 // shortTree caps a multi-line block at n runes without touching newlines:
 // Short would flatten the session-tree connectors into one ⏎ line.

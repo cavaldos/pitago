@@ -32,13 +32,14 @@ const (
 	SidePlugins   = "plugins"
 	SideMCP       = "mcp"
 	SideTodos     = "todos"
+	SideTools     = "tools"
 	SideWorkspace = "workspace"
 )
 
 // sideOrder is the Sidebar tab row order (top-to-bottom like the sidebar).
 var sideOrder = []string{
 	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
-	SideCommands, SidePlugins, SideMCP, SideTodos, SideWorkspace,
+	SideCommands, SidePlugins, SideMCP, SideTodos, SideTools, SideWorkspace,
 }
 
 // sideLabel is the Sidebar tab display name per section key.
@@ -64,6 +65,8 @@ func sideLabel(key string) string {
 		return "MCP servers"
 	case SideTodos:
 		return "Todos"
+	case SideTools:
+		return "Tools"
 	case SideWorkspace:
 		return "Workspace"
 	}
@@ -261,6 +264,7 @@ func (m *Model) updateTodosFromRaw(cands ...json.RawMessage) {
 		}
 		if t, ok := parseTodos(c); ok {
 			m.Todos = t
+			m.syncTaskRuntime()
 			return
 		}
 	}
@@ -293,6 +297,9 @@ func parseTaskID(text string) string {
 // argsRaw is the tool-call arguments JSON, resultText the tool result text.
 // Returns true when the tool was a single-task op (handled or no-op).
 func (m *Model) applyPiTaskResult(toolName, argsRaw, resultText string) bool {
+	// Store-backed fields are refreshed immediately; RPC-only transitions
+	// still drive the active marker between disk refreshes.
+	defer m.syncTaskRuntime()
 	switch {
 	case piTaskName(toolName, "TaskCreate"):
 		var args struct {
@@ -671,7 +678,26 @@ func loadPiTaskFile(path string) ([]TodoItem, bool) {
 		if sub == "" {
 			sub, _ = m["subAction"].(string)
 		}
-		out = append(out, TodoItem{ID: id, Content: subj, Status: normTodoStatus(m), SubAct: strings.TrimSpace(sub)})
+		var blocked []string
+		if raw, ok := m["blockedBy"].([]any); ok {
+			for _, b := range raw {
+				if s, ok := b.(string); ok && s != "" {
+					blocked = append(blocked, s)
+				}
+			}
+		}
+		millis := func(key string) int64 {
+			switch n := m[key].(type) {
+			case float64:
+				return int64(n)
+			case int64:
+				return n
+			case int:
+				return int64(n)
+			}
+			return 0
+		}
+		out = append(out, TodoItem{ID: id, Content: subj, Status: normTodoStatus(m), SubAct: strings.TrimSpace(sub), BlockedBy: blocked, CreatedAt: millis("createdAt"), UpdatedAt: millis("updatedAt")})
 	}
 	return out, true
 }
@@ -734,6 +760,7 @@ func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
 func (m *Model) refreshPiTasks() {
 	if t, ok := readPiTasks(m.cwd, m.sessionFile); ok {
 		m.Todos = t
+		m.syncTaskRuntime()
 	}
 }
 
@@ -770,7 +797,7 @@ func readJSONFile(path string) map[string]any {
 }
 
 func estimateMcpTokens(name, desc string, schemaLen int) int {
-	return (len(name) + len(desc) + schemaLen) / 4 + 10
+	return (len(name)+len(desc)+schemaLen)/4 + 10
 }
 
 // readMcpServers lists configured MCP servers with tool counts, same source
@@ -1063,9 +1090,9 @@ func (m Model) renderTodosSection(inner int) string {
 			if t.Status == TodoInProgress && t.SubAct != "" {
 				full := t.Content + " (" + t.SubAct + ")"
 				if lipgloss.Width(full) <= inner-3 {
-					b.WriteString(statusBarStyle.Render(" ")+glyph+" "+
-						lipgloss.NewStyle().Foreground(cText).Render(t.Content)+
-						toolStyle.Render(" ("+Short(t.SubAct, inner)+")")+"\n")
+					b.WriteString(statusBarStyle.Render(" ") + glyph + " " +
+						lipgloss.NewStyle().Foreground(cText).Render(t.Content) +
+						toolStyle.Render(" ("+Short(t.SubAct, inner)+")") + "\n")
 					continue
 				}
 				line = Short(t.Content, inner-7)

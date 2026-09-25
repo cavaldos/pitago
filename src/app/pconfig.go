@@ -746,7 +746,7 @@ func (m *Model) FillCommand(name string) {
 // updateDialog path).
 func isFilterKind(kind string) bool {
 	switch kind {
-	case "model", "thinking", "sessions", "login", "logout", "shortcuts", "trajectory", "settings", "subagents":
+	case "model", "thinking", "sessions", "login", "logout", "shortcuts", "trajectory", "tree", "settings", "subagents", "notification":
 		return true
 	}
 	return false

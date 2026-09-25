@@ -64,12 +64,36 @@ func TitleFor(method, title string) string {
 // OptionsFor fills the option defaults per method.
 func OptionsFor(req pirpc.UIRequest) []string {
 	if len(req.Options) > 0 {
-		return req.Options
+		out := make([]string, len(req.Options))
+		for i, value := range req.Options {
+			if option, ok := pirpc.DecodeSelectOption(value); ok {
+				out[i] = option.Title
+			} else {
+				out[i] = value
+			}
+		}
+		return out
 	}
 	if req.Method == "confirm" {
 		return []string{"Allow", "Decline"}
 	}
 	return []string{"Agree", "Decline"}
+}
+
+// DescriptionsFor returns rich select descriptions parallel to OptionsFor.
+// Legacy strings, confirms, and malformed private values deliberately get no
+// description and therefore keep the generic dialog behavior.
+func DescriptionsFor(req pirpc.UIRequest) []string {
+	if !pirpc.IsAskUserSelect(req) {
+		return nil
+	}
+	descs := make([]string, len(req.Options))
+	for i, value := range req.Options {
+		if option, ok := pirpc.DecodeSelectOption(value); ok {
+			descs[i] = option.Description
+		}
+	}
+	return descs
 }
 
 func boolPtr(b bool) *bool { return &b }

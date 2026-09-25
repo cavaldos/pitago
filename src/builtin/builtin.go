@@ -620,6 +620,9 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 		st.Vals = map[string]string{}
 	}
 	st.Vals[fr.path] = next
+	if fr.path == "terminal.showImages" || fr.path == "terminal.imageWidthCells" {
+		m.ApplyImageSettings() // this TUI owns rendering; invalidate it immediately
+	}
 	opts, descs, cats := settingsOptions(st)
 	d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
 	d.Reindex()
@@ -1017,23 +1020,10 @@ func All() []app.Builtin {
 				return app.PickerMsg{Kind: "model", Options: opts, Descs: descs, Providers: provs, Models: models, Current: m.ModelLbl}
 			}
 		}),
-		pi("tree", "Navigate session tree (switch branches)", "/tree", func(m *app.Model, arg string) tea.Cmd {
+		pi("tree", "Pi-style session tree (Enter views an entry)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
 			m.Status = "loading session tree…"
 			m.Refresh()
-			return func() tea.Msg {
-				nodes, leaf, err := m.Pi.GetTree()
-				if err != nil {
-					return app.TreeMsg{Err: err}
-				}
-				filter := pirpc.PiString(pirpc.ReadPiSettings(), "treeFilterMode", "default")
-				if a := strings.ToLower(strings.TrimSpace(arg)); a != "" {
-					switch a {
-					case "default", "no-tools", "user-only", "labeled-only", "all":
-						filter = a // one-shot override: /tree all
-					}
-				}
-				return app.TreeMsg{Text: renderTree(nodes, leaf, filter)}
-			}
+			return loadTree(m, arg)
 		}),
 		pi("thinking", "<level> — Set thinking level", "/thinking", func(m *app.Model, arg string) tea.Cmd {
 			return m.OpenThinking()
@@ -1045,6 +1035,14 @@ func All() []app.Builtin {
 				m.Status = "loading trajectory…"
 				m.Refresh()
 				return loadTrajectory(m, arg)
+			},
+		},
+		{
+			Name: "notification", Desc: "Browse notification history from this RAM run", Usage: "/notification [filter]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				m.OpenNotifications(arg)
+				return nil
 			},
 		},
 		pi("reload", "Reload keybindings, extensions, skills, prompts, themes, and context files", "/reload", func(m *app.Model, arg string) tea.Cmd {
@@ -1158,6 +1156,22 @@ func All() []app.Builtin {
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
 				return m.OpenSubagents(arg)
+			},
+		},
+		{
+			Name: "team", Desc: "Open the live agent-team dashboard", Usage: "/team [worker-id]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				arg = strings.TrimSpace(arg)
+				if arg != "" && len(strings.Fields(arg)) != 1 {
+					m.AddBlock(app.Block{Kind: "notice", Text: "usage: /team [worker-id]"})
+					m.Refresh()
+					return nil
+				}
+				// The extension command is synchronous and does not start a
+				// model turn. In RPC mode it answers with a custom message,
+				// which the app turns into the full dashboard overlay.
+				return m.ForwardExtensionCommand("/team " + arg)
 			},
 		},
 	}

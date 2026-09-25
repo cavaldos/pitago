@@ -20,7 +20,7 @@ func TestAllCoversPi(t *testing.T) {
 		"changelog", "hotkeys", "fork", "clone", "trust",
 		"login", "logout", "new", "compact", "resume", "reload", "quit",
 		"recent", "yank", "sidebar", "update", "plugins", "mouse", "theme", "pitago-setting",
-		"trajectory", "subagents",
+		"trajectory", "notification", "subagents", "team",
 	} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("builtin /%s missing", want)
@@ -31,6 +31,35 @@ func TestAllCoversPi(t *testing.T) {
 	}
 	if got["model"] != OriginPi {
 		t.Error("/model must be marked pi origin")
+	}
+}
+
+func TestNotificationCommandOpensPaletteDialog(t *testing.T) {
+	var command app.Builtin
+	for _, candidate := range All() {
+		if candidate.Name == "notification" {
+			command = candidate
+			break
+		}
+	}
+	if command.Name == "" {
+		t.Fatal("notification command missing")
+	}
+	discoverable := false
+	for _, row := range app.BuiltinRepo(All()) {
+		if row.Name == "notification" && row.Source == "pitago" {
+			discoverable = true
+		}
+	}
+	if !discoverable {
+		t.Fatal("notification command missing from palette registry")
+	}
+	m := &app.Model{}
+	if cmd := command.Run(m, ""); cmd != nil {
+		t.Fatalf("notification command returned async work: %v", cmd)
+	}
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Kind != "notification" {
+		t.Fatalf("notification command did not open dialog: %+v", m.Dialogs)
 	}
 }
 
