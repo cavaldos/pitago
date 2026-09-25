@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/components/palette"
+	"pitago/src/ext"
 )
 
 // Matching + window size live in components/palette; this file keeps the
@@ -254,28 +255,20 @@ func (m Model) isInlineUI() bool {
 }
 
 // containsPlan matches plan-mode text (menu title/options, setStatus).
-func containsPlan(s string) bool {
-	return strings.Contains(strings.ToLower(s), "plan")
-}
+// Canonical impl lives in ext (pi-extension domain); kept here for compat.
+func containsPlan(s string) bool { return ext.ContainsPlan(s) }
 
 // isPlanMode reports whether the plan indicator should show (live only).
 // The extension exposes no plan flag in get_state, so this is a heuristic:
 // latched Start choice, open plan menu, or plan in extension status.
+// Menu text match delegates to ext (pi-extension domain).
 func (m Model) isPlanMode() bool {
 	if m.planOn {
 		return true
 	}
 	if len(m.Dialogs) > 0 && m.Dialogs[0].Kind == "ui" {
 		d := m.Dialogs[0]
-		if containsPlan(d.Title) || containsPlan(d.Message) {
-			return true
-		}
-		for _, o := range d.Options {
-			if containsPlan(o) {
-				return true
-			}
-		}
-		return false
+		return ext.MenuHasPlan(d.Title, d.Message, d.Options)
 	}
 	return containsPlan(m.extStat)
 }

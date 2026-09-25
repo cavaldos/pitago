@@ -17,6 +17,7 @@ import (
 	"pitago/src/components/recent"
 	"pitago/src/components/theme"
 	"pitago/src/pirpc"
+	"pitago/src/pitago"
 )
 
 // Block is one rendered unit in the chat column (see components/chat).
@@ -266,6 +267,7 @@ type ModelCycleMsg struct {
 	Label    string
 	Provider string // may be "" (cycle path); resolved label-only entry
 	ID       string // model id when known, else ""
+	Restored bool   // true when re-applied after /new (notice says "restored")
 	Err      error
 }
 
@@ -647,17 +649,10 @@ func (m *Model) TogglePlugins() {
 }
 
 // ToggleMouse flips mouse capture at runtime (/mouse): on = clickable
-// sidebar + wheel scroll (hold Option/Shift to select text), off = native
-// text selection (sidebar still scrolls with Ctrl/Alt+↑↓). Returns the tea
-// command that enables/disables terminal mouse reporting.
+// sidebar + wheel scroll, off = native text selection.
+// Arg parsing is pitago-owned (src/pitago); this is the thin MVC controller.
 func (m *Model) ToggleMouse(arg string) tea.Cmd {
-	on := !m.Mouse
-	switch strings.ToLower(strings.TrimSpace(arg)) {
-	case "on", "enable", "true", "1":
-		on = true
-	case "off", "disable", "false", "0":
-		on = false
-	}
+	on := pitago.ResolveMouse(arg, m.Mouse)
 	m.Mouse = on
 	if on {
 		m.AddBlock(Block{Kind: "notice", Text: "mouse on — click sidebar · wheel scrolls · hold Option/Shift to select text"})

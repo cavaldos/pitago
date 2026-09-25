@@ -268,3 +268,37 @@ func TestSettingsTwoPaneRenders(t *testing.T) {
 		t.Errorf("no All line\n%s", outAll)
 	}
 }
+
+func TestRememberModelRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	m := &Model{prefsPath: path}
+	m.recentModels = []RecentModel{{Provider: "anthropic", ID: "claude-sonnet", Label: "Sonnet"}}
+	m.rememberModel("anthropic", "claude-sonnet", "Sonnet")
+	if prov, id := m.savedModel(); prov != "anthropic" || id != "claude-sonnet" {
+		t.Errorf("savedModel = (%q,%q), want (anthropic,claude-sonnet)", prov, id)
+	}
+	// Label-only (cycle path) resolves provider/id via recents.
+	m2 := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
+	m2.recentModels = m.recentModels
+	m2.rememberModel("", "", "Sonnet")
+	if prov, id := m2.savedModel(); prov != "anthropic" || id != "claude-sonnet" {
+		t.Errorf("label-only savedModel = (%q,%q), want resolved pair", prov, id)
+	}
+	// Empty id never persists.
+	m3 := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
+	m3.rememberModel("", "", "")
+	if prov, id := m3.savedModel(); prov != "" || id != "" {
+		t.Errorf("empty remember must not persist, got (%q,%q)", prov, id)
+	}
+}
+
+func TestApplySavedModelEmpty(t *testing.T) {
+	// Nothing persisted and no Pi: silent no-op, never panics.
+	m := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
+	if got := m.ApplySavedModel(); got != "" {
+		t.Errorf("empty ApplySavedModel = %q, want \"\"", got)
+	}
+	if prov, id := m.resolveSavedModel("", "x"); prov != "" || id != "x" {
+		t.Errorf("nil-Pi resolve = (%q,%q), want input unchanged", prov, id)
+	}
+}

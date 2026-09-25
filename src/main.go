@@ -87,6 +87,12 @@ func main() {
 		_ = theme.Save(theme.ThemePath(), *themeFlag)
 	}
 	m.Configure(opts, keyPath)
+	// Restore the last explicitly chosen model when no --provider/--model
+	// flags: pi spawns on its own default, pitago re-applies the saved
+	// choice (persisted on every model switch) before the first frame.
+	if *provider == "" && *modelFlag == "" {
+		m.ApplySavedModel()
+	}
 	// Preload the update cache so the welcome banner ("⬆ … pitago
 	// --update") shows on the first frame — the async auto-check in
 	// Init() refreshes it right after.

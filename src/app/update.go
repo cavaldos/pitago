@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/extension"
+	"pitago/src/ext"
 	"pitago/src/pirpc"
 )
 
@@ -428,6 +429,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendSpeed = false
 		m.lastDur, m.lastSpeed = 0, 0
 		m.RefreshFollow()
+		if prov, id := m.savedModel(); strings.TrimSpace(id) != "" {
+			m.Status = "ready — restoring model…"
+			m.Refresh()
+			return m, tea.Batch(m.queryStats(), m.restoreModelCmd(prov, id))
+		}
 		return m, m.queryStats()
 
 	case ModelCycleMsg:
@@ -437,14 +443,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 			return m, nil
 		} else {
-			m.ModelLbl = msg.Label
-			id := msg.ID
-			if id == "" {
-				id = msg.Label
-			}
-			m.pushRecent(msg.Provider, id, msg.Label)
-			m.Status = "ready"
-			m.AddBlock(Block{Kind: "notice", Text: "model switched → " + msg.Label})
+		m.ModelLbl = msg.Label
+		id := msg.ID
+		if id == "" {
+			id = msg.Label
+		}
+		m.pushRecent(msg.Provider, id, msg.Label)
+		m.rememberModel(msg.Provider, id, msg.Label)
+		m.Status = "ready"
+		verb := "model switched → "
+		if msg.Restored {
+			verb = "model restored → "
+		}
+		m.AddBlock(Block{Kind: "notice", Text: verb + msg.Label})
 			m.Refresh()
 			return m, m.fetchStateOnce()
 		}
@@ -1948,19 +1959,12 @@ func (m *Model) answerInput(d *Dialog, cancelled bool) {
 
 // answerDialog replies to an extension permission dialog
 // (response shape built by src/extension).
+// Plan latch heuristic lives in ext (pi-extension domain, no plan flag in
+// get_state); this stays the thin MVC controller.
 func (m *Model) answerDialog(d *Dialog, choice int) {
-	// ponytail: plan latch is a text heuristic (no plan flag in get_state);
-	// Start choice latches on, Stop/Exit/Leave/End/Disable latches off.
 	if d.Kind == "ui" && choice >= 0 && choice < len(d.Options) {
-		sel := strings.ToLower(d.Options[choice])
-		if strings.Contains(sel, "plan") {
-			switch {
-			case strings.Contains(sel, "start") || strings.Contains(sel, "enable") || strings.Contains(sel, "enter"):
-				m.planOn = true
-			case strings.Contains(sel, "stop") || strings.Contains(sel, "exit") || strings.Contains(sel, "leave") ||
-				strings.Contains(sel, "end") || strings.Contains(sel, "disable") || strings.Contains(sel, "off"):
-				m.planOn = false
-			}
+		if v, ok := ext.ShouldLatchPlan(d.Options[choice]); ok {
+			m.planOn = v
 		}
 	}
 	m.Dialogs = m.Dialogs[1:]

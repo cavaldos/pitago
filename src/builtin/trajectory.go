@@ -9,6 +9,7 @@ import (
 
 	"pitago/src/app"
 	"pitago/src/pirpc"
+	"pitago/src/pitago"
 )
 
 // Trajectory is pitago's harness-style run trace (deepseek-harness-like):
@@ -17,20 +18,9 @@ import (
 // /trajectory opens it as a filterable window; Enter posts the full step
 // detail into the chat. Rows reuse treeRow so text matches /tree.
 
-// trajScopeOf maps the /trajectory arg to a step tab. Unknown args become
-// free-text pre-filter (the /login pattern), never an error.
-func trajScopeOf(arg string) (scope, filter string) {
-	switch a := strings.ToLower(strings.TrimSpace(arg)); a {
-	case "", "all":
-		return "all", ""
-	case "tools", "tool":
-		return "tools", ""
-	case "messages", "message", "user-only", "user":
-		return "messages", ""
-	default:
-		return "all", strings.TrimSpace(arg)
-	}
-}
+// trajScopeOf — canonical impl lives in pitago (pitago-only feature);
+// kept here so existing tests/callers don't move.
+func trajScopeOf(arg string) (scope, filter string) { return pitago.ScopeOf(arg) }
 
 // loadTrajectory fetches the session tree and builds the dialog rows.
 func loadTrajectory(m *app.Model, arg string) tea.Cmd {

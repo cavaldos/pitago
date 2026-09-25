@@ -1,114 +1,32 @@
 package app
 
 import (
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pitago/src/ext"
 )
 
-// SubagentsNone is the first picker row: clear the selection.
-const SubagentsNone = "— none —";
+// SubagentsNone — canonical value lives in ext (pi-extension domain).
+const SubagentsNone = ext.SubagentsNone
 
-// SubagentInfo is one pickable subagent (pi-subagents discovery, trimmed).
-type SubagentInfo struct {
-	Name, Source, Description, Model, FilePath string
-}
+// SubagentInfo — canonical type lives in ext; alias keeps call sites green.
+type SubagentInfo = ext.SubagentInfo
 
 // DiscoverSubagents lists effective subagents: project > user > package >
-// builtin (dedupe by name, sorted). Stdlib only; tolerant of missing dirs.
+// DiscoverSubagents — canonical discovery lives in ext (pi-extension
+// domain); this keeps the (cwd) signature used by UI/tests.
 func DiscoverSubagents(cwd string) []SubagentInfo {
-	agentDir := piAgentDir()
-	var builtin, pkg, user, project []SubagentInfo
-
-	if agentDir != "" {
-		builtin = scanAgentDir(filepath.Join(agentDir, "npm", "node_modules", "pi-subagents", "agents"), "builtin")
-		// Other installed packages ship their own agents too.
-		if roots, err := filepath.Glob(filepath.Join(agentDir, "npm", "node_modules", "*", "agents")); err == nil {
-			for _, r := range roots {
-				if strings.Contains(r, "pi-subagents") {
-					continue
-				}
-				pkg = append(pkg, scanAgentDir(r, "package")...)
-			}
-		}
-		if roots, err := filepath.Glob(filepath.Join(agentDir, "npm", "node_modules", "@*", "*", "agents")); err == nil {
-			for _, r := range roots {
-				pkg = append(pkg, scanAgentDir(r, "package")...)
-			}
-		}
-		user = scanAgentDir(filepath.Join(agentDir, "agents"), "user")
-	}
-	if cwd != "" {
-		project = scanAgentDir(filepath.Join(cwd, ".pi", "agents"), "project")
-		project = append(project, scanAgentDir(filepath.Join(cwd, ".pi", "agent", "agents"), "project")...)
-	}
-
-	// First wins: project, user, package, builtin.
-	seen := map[string]bool{}
-	var out []SubagentInfo
-	for _, group := range [][]SubagentInfo{project, user, pkg, builtin} {
-		for _, a := range group {
-			if a.Name == "" || seen[a.Name] {
-				continue
-			}
-			seen[a.Name] = true
-			out = append(out, a)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	return ext.DiscoverSubagents(cwd, piAgentDir())
 }
 
-// scanAgentDir reads *.md agent definitions (frontmatter without opening
-// "---", like pi-subagents ships: name/description/model/thinking lines
-// before the first "---").
-func scanAgentDir(dir, source string) []SubagentInfo {
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var out []SubagentInfo
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		p := filepath.Join(dir, e.Name())
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		name, desc, model := parseAgentFrontmatter(string(raw))
-		if name == "" {
-			name = strings.TrimSuffix(e.Name(), ".md")
-		}
-		out = append(out, SubagentInfo{Name: name, Source: source, Description: desc, Model: model, FilePath: p})
-	}
-	return out
-}
+// scanAgentDir — canonical impl in ext.
+func scanAgentDir(dir, source string) []SubagentInfo { return ext.ScanAgentDir(dir, source) }
 
-// parseAgentFrontmatter scans key: value lines up to the first "---".
+// parseAgentFrontmatter — canonical impl in ext.
 func parseAgentFrontmatter(raw string) (name, desc, model string) {
-	for _, ln := range strings.Split(raw, "\n") {
-		if strings.TrimSpace(ln) == "---" {
-			break
-		}
-		k, v, ok := strings.Cut(ln, ":")
-		if !ok {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(k)) {
-		case "name":
-			name = strings.TrimSpace(v)
-		case "description":
-			desc = strings.TrimSpace(v)
-		case "model":
-			model = strings.TrimSpace(v)
-		}
-	}
-	return name, desc, model
+	return ext.ParseAgentFrontmatter(raw)
 }
 
 // CurrentSubagent is the last-picked subagent (persisted in prefs.json).
@@ -127,21 +45,8 @@ func (m *Model) SetCurrentSubagent(name string) {
 	_ = SavePrefs(m.prefsPath, prefs)
 }
 
-// subagentDesc is one picker row: "● current · [source] · model — desc".
-func subagentDesc(a SubagentInfo, current string) string {
-	var b strings.Builder
-	if a.Name == current {
-		b.WriteString("● current · ")
-	}
-	b.WriteString("[" + a.Source + "]")
-	if a.Model != "" {
-		b.WriteString(" · " + a.Model)
-	}
-	if a.Description != "" {
-		b.WriteString(" — " + a.Description)
-	}
-	return b.String()
-}
+// subagentDesc — canonical impl in ext.
+func subagentDesc(a SubagentInfo, current string) string { return ext.Desc(a, current) }
 
 // OpenSubagents shows the native subagent picker (/subagents). RPC mode
 // can't render pi-subagents' custom UI (ui.custom returns undefined), so

@@ -277,28 +277,36 @@ The right column (pi session-panel style) shows:
 Hidden on terminals narrower than 80 columns.
 Long content scrolls inside the sidebar (`Ctrl`/`Alt`+`↑↓ PgUp PgDn Home End`, or mouse wheel over it).
 
-## Layout
+## Layout (MVC + core/ext/pitago)
 
 ```
-src/main.go       # entry: flags, spawn pi, wire packages, run
-src/app/          # TUI shell: Model, update, view, dialogs, sidepanels;
-                  # thin wiring over src/components (no pure logic here)
-src/components/  # feature components (pure, testable without TUI state):
-                   # chat (Block), mention (@file lookup), image (@image vision),
-                   # palette (/ match),
-                  # pet (status core), recent (models store), yank (copy),
-                  # format (shared string/number helpers)
-src/builtin/      # pi builtin features re-implemented over RPC
-                  # Origin "pi" = pi TUI builtin, "pitago" = ours (/recent)
-src/extension/    # extension protocol: UI requests, permission replies,
-                  # command sources (extension/prompt/skill)
-src/pirpc/        # JSONL transport for `pi --mode rpc` (stdlib only)
+src/main.go       # composition root: flags, spawn pi, wire packages, run
+src/app/          # MVC shell (Bubble Tea Elm): model.go=M (state+msgs),
+                  # update.go=C (event router), view.go=V (render only),
+                  # thin wrappers over components/ext/pitago (no pure logic)
+src/components/  # V primitives (pure, testable): chat, mention, image,
+                  # palette, pet, recent, yank, format, theme, markdown
+src/builtin/      # C: command controllers over RPC.
+                  # Origin "pi" = pi-thuần (model/tree/thinking/settings/
+                  # login/session/resume/reload); "pitago" = ours (delegate
+                  # to pitago/ext, never pure logic here)
+src/extension/    # middleware/protocol: extension_ui_request helpers
+                  # (select/confirm/input/editor), command sources
+src/ext/          # pi-extension domain (NOT pi-thuần, NOT pitago):
+                  # plan-mode (latch/heuristic), tasks/todos (parse/restore),
+                  # subagents (discovery/frontmatter) — pure, no UI state
+src/pitago/       # pitago-only domain (NOT pi-thuần): mouse, trajectory,
+                  # self-update, yank, recent, theme, sidebar — pure helpers
+src/pirpc/        # Backend: JSONL transport for `pi --mode rpc` (core/pi-thuần)
+src/update/       # Backend: self-update (pitago-only)
 tests/            # integration tests (black-box, public API only).
                   # Unit white-box tests stay next to code as *_test.go
                   # (Go requires this for private access) — see tests/README.md
 ```
 
-**Rules**: `app` never imports `builtin`/`extension` (wired in main via `UseBuiltins`); `builtin` operates on `*app.Model`, `extension` is pure protocol helpers.
+**Rules** (`script/check-layers.sh` enforces): `app`/`builtin` → `{ext,pitago,components,pirpc,extension}` one-way;
+`ext`/`pitago`/`components`/`pirpc` never import `app`/`builtin`; `ext` ⇄ `pitago` never cross-import
+(pi-extension vs pitago-only stay separate); `app` never imports `builtin` (wired in main via `UseBuiltins`).
 
 ## Configuration Files
 
