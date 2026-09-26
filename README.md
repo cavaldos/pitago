@@ -128,46 +128,20 @@ go run ./src --update   # or /update inside the app
 go run ./src --mouse=false
 ```
 
-## Live external Pi session (read-only)
+## Live sessions (read-only)
 
-Pitago can follow an already-running Pi session in another terminal without
-controlling it. The external Pi process must load the repository's bridge
-extension explicitly:
+Press `/live` to list the `pi` sessions running in the current directory and
+attach to one of them. It appears live in an `EXTERNAL · READ-ONLY` view;
+`/live` again or `Ctrl+D` detaches and you can type prompts normally.
 
-```bash
-# Terminal A (the Pi session Pitago will display live)
-pi --extension /absolute/path/to/pitago/src/live/pitago-live-bridge.ts
+You start the `pi` sessions yourself; pitago only views them. Two sources are
+offered in the same picker: a **bridge** session (token-level streaming, busy
+spinner) and a **session file** session, which works with any running `pi` —
+no restart, no extension, nothing required of that process. The bridge
+extension is installed for you on the first `/live`.
 
-# Terminal B (keep Pitago open; it discovers the matching cwd automatically)
-pitago --cwd /path/to/your/project
-```
-
-The extension binds an unauthenticated HTTP listener only to `127.0.0.1`, uses
-a random bearer token, and writes a mode-`0600` descriptor. By default both
-sides use `${XDG_RUNTIME_DIR}/pitago-live` (or the OS temporary directory).
-Set the same explicit directory on both processes when needed:
-
-```bash
-export PITAGO_LIVE_DESCRIPTORS=/private/tmp/my-pitago-live
-```
-
-Pitago ignores its own child process and other working directories. When it
-attaches, the input and all prompt/steer/abort/model/session controls are
-blocked and the header shows `EXTERNAL · READ-ONLY`; `Ctrl+D` detaches and
-rebuilds the owned Pitago session. SSE reconnects automatically and a fresh
-active-branch snapshot on every connection prevents gaps or duplicate replay.
-
-To load the extension for every interactive Pi session, explicitly copy it to
-`~/.pi/agent/extensions/pitago-live-bridge.ts` (optional; Pitago never modifies
-your home directory during normal startup):
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-cp /absolute/path/to/pitago/src/live/pitago-live-bridge.ts ~/.pi/agent/extensions/
-```
-
-Pitago continues to own and control exactly one private `pi --mode rpc` child;
-it never attaches to or sends RPC commands to the external session.
+Full documentation, including what each source can and cannot show:
+[resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md).
 
 ## Build & Test
 

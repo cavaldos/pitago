@@ -32,7 +32,16 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"tree":        confirmTree,
 		"fork":        confirmFork,
 		"subagents":   confirmSubagents,
+		"live":        confirmLive,
 	}
+}
+
+// confirmLive attaches to the picked /live row. Attaching (or the refusal on
+// a session with no bridge) is the whole action — the dialog closes first so
+// the transcript notice and the follow-mode repaint have no popup on top.
+func confirmLive(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	m.Dialogs = m.Dialogs[1:]
+	return m, m.AttachLive(ri)
 }
 
 // confirmSubagents selects the highlighted subagent: persists it as current

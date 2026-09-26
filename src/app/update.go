@@ -127,7 +127,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyLive(lm.generation, lm.message)
 	}
 	// Detach and owned-child isolation are global, even behind a read-only
-	// picker/dialog. In particular, Ctrl+D must never become "close dialog".
+	// picker/dialog. In particular, Ctrl+D must never become "close dialog":
+	// in follow mode it detaches (Ctrl+Q is the same detach key).
 	if km, ok := msg.(tea.KeyMsg); ok && m.followRemote && km.Type == tea.KeyCtrlD {
 		return m, m.detachLive()
 	}
@@ -1217,6 +1218,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (warning pinned to the sidebar corner) and auto-disarms.
 			// Esc is the double-press mid-turn cancel key (same window).
 			if m.quitArmed() {
+				// Stop the live transport on the way out: a tail is a
+				// goroutine we own, and leaving it reading a foreign
+				// session file after the window is gone is a leak, not a
+				// feature.
+				m.StopLiveTransport()
 				return m, tea.Quit
 			}
 			m.quitArm = time.Now()
@@ -1901,6 +1907,24 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		}
 		return m
 	}
+	// Follow mode is one-way and read-only, and the owned session keeps
+	// running underneath it. The bridge exports remote events and never
+	// carries an answer back, while fireUI would reply on the OWNED pi, which
+	// has no pending request under this id: a dialog would trap the user
+	// behind a prompt a read-only view cannot answer. And a remote
+	// set_editor_text would overwrite the user's OWN prompt textbox — they
+	// would unknowingly send the subagent's prefill to their own pi. So an
+	// explicit allowlist (notify/setStatus/setWidget/setTitle, the pure
+	// information the remote window already shows) is all a follower renders;
+	// everything else, known or added to pi later, is refused by default.
+	if m.followRemote && !extension.IsFollowSafeUI(req.Method) {
+		// addChatNotice, not a toast: the remote user is waiting on that
+		// prompt, so the refusal belongs in the transcript.
+		m.addChatNotice("remote plugin prompt ignored while following: "+req.Method, false)
+		m.refreshPiTasks()
+		m.Refresh()
+		return m
+	}
 	switch {
 	case req.Method == "select" || req.Method == "confirm":
 		kind := "ui"
@@ -1975,7 +1999,16 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		// appear for an instant and then vanish.
 		switch {
 		case isTeamWidget(req.WidgetKey):
-			m.setTeamWidget(req.WidgetLines, req.WidgetPlacement)
+			// A team widget drawn as a TUI component factory cannot cross a
+			// process boundary, so the bridge reports it as opaque and the
+			// live per-worker detail is simply unavailable. The worker roster
+			// itself is not lost: the followed session writes it to disk, so
+			// rebuild it from there instead of leaving the widget blank.
+			if req.WidgetOpaque {
+				m.refreshTeamFromSession()
+			} else {
+				m.setTeamWidget(req.WidgetLines, req.WidgetPlacement)
+			}
 		case isAgentProgressWidget(req.WidgetKey):
 			if len(req.WidgetLines) == 0 {
 				m.clearChatProgressWidget(req.WidgetKey)

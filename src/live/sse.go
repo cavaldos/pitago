@@ -23,14 +23,21 @@ import (
 const DescriptorVersion = 1
 
 // Descriptor is the mode-0600 record written by the Pi extension.
+// Descriptor is the mode-0600 record written by the Pi extension.
+//
+// SessionName and Model are additive and optional: a descriptor published by
+// an older bridge simply lacks them and is still valid, which is why
+// DescriptorVersion is unchanged and why they are omitempty.
 type Descriptor struct {
-	Version   int    `json:"version"`
-	Endpoint  string `json:"endpoint"`
-	Token     string `json:"token"`
-	SessionID string `json:"sessionId"`
-	CWD       string `json:"cwd"`
-	PID       int    `json:"pid"`
-	StartedAt int64  `json:"startedAt"`
+	Version     int    `json:"version"`
+	Endpoint    string `json:"endpoint"`
+	Token       string `json:"token"`
+	SessionID   string `json:"sessionId"`
+	SessionName string `json:"sessionName,omitempty"`
+	Model       string `json:"model,omitempty"`
+	CWD         string `json:"cwd"`
+	PID         int    `json:"pid"`
+	StartedAt   int64  `json:"startedAt"`
 }
 
 // Snapshot replaces the rendered transcript after attach/reconnect.
@@ -75,7 +82,7 @@ func DescriptorDir() string {
 }
 
 // Discover returns descriptors for cwd, excluding the owned Pi PID. Invalid,
-// non-loopback, or incorrectly permissioned records are ignored.
+// non-loopback, incorrectly permissioned, or dead-PID records are ignored.
 func Discover(cwd, dir string, ownPID int) ([]Descriptor, error) {
 	if dir == "" {
 		dir = DescriptorDir()
@@ -106,12 +113,20 @@ func Discover(cwd, dir string, ownPID int) ([]Descriptor, error) {
 		if json.Unmarshal(raw, &d) != nil || d.Version != DescriptorVersion || d.Token == "" || d.PID == ownPID {
 			continue
 		}
+		// A SIGKILLed broadcasting pi leaves its descriptor behind (pi unlinks
+		// it only on an orderly shutdown), and descriptors sort newest-first —
+		// so every other window in that cwd would pick the dead one and retry
+		// connect-refused forever. With /live that is the routine case, not a
+		// rare one. The pid is the only liveness evidence the record carries.
+		if !pidAlive(d.PID) {
+			continue
+		}
 		u, err := url.Parse(d.Endpoint)
 		if err != nil || u.Scheme != "http" || !isLoopbackHost(u.Hostname()) || d.CWD == "" {
 			continue
 		}
 		dc, _ := filepath.Abs(d.CWD)
-		if filepath.Clean(dc) != filepath.Clean(want) {
+		if !sameDir(dc, want) {
 			continue
 		}
 		out = append(out, d)
@@ -131,6 +146,41 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// sameDir reports whether two absolute paths name the same directory. Plain
+// comparison is not enough: pi resolves its cwd to a physical path, so a
+// descriptor published for a symlinked project directory (macOS /tmp,
+// /var/folders, a symlinked checkout) would otherwise never match the window
+// that opened it, and /live would silently find nothing. Resolved paths are
+// compared first; unresolvable paths fall back to the lexical comparison so a
+// not-yet-existing or permission-denied path still degrades to the old rule.
+func sameDir(a, b string) bool {
+	ca, cb := filepath.Clean(a), filepath.Clean(b)
+	if ca == cb {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(ca)
+	rb, errB := filepath.EvalSymlinks(cb)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return ra == rb
+}
+
+// physicalPath resolves p the way pi resolves its own cwd, so a path that
+// feeds a name derived from the path string (a session directory) names what
+// pi named. A path that cannot be resolved — it does not exist, or a symlink
+// loop — comes back cleaned but unresolved, so the caller degrades to the
+// pre-existing behaviour instead of failing: physicalPath is best-effort by
+// the same policy sameDir applies.
+func physicalPath(p string) string {
+	clean := filepath.Clean(p)
+	real, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return clean
+	}
+	return real
 }
 
 // SSE is one decoded server-sent event.
@@ -208,6 +258,7 @@ type Bridge struct {
 	OwnPID   int
 	mu       sync.Mutex
 	cancel   context.CancelFunc
+	target   *Descriptor
 }
 
 // Start begins discovery/reconnect until ctx is cancelled.
@@ -242,14 +293,39 @@ func (b *Bridge) ownPID() int {
 	return b.OwnPID
 }
 
+// SetTarget pins the Bridge to exactly one descriptor; nil restores
+// discovery. Mutex discipline matches SetOwnPID, since both are called from
+// the Bubble Tea loop while run() reads them from its own goroutine.
+func (b *Bridge) SetTarget(d *Descriptor) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if d == nil {
+		b.target = nil
+		return
+	}
+	cp := *d
+	b.target = &cp
+}
+
+func (b *Bridge) targetDescriptor() *Descriptor {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.target
+}
+
 func (b *Bridge) run(ctx context.Context, emit func(Message)) {
 	var lastRev int64
 	selected := ""
 	attempt := 0
 	for ctx.Err() == nil {
-		ds, err := Discover(b.CWD, b.Dir, b.ownPID())
-		if err == nil && len(ds) > 0 {
-			d := ds[0]
+		// A pinned target wins over discovery and is never replaced by
+		// "newest discovered": silently hopping to a different session would
+		// attach the user to a session they did not pick, and the worst case
+		// is showing them someone else's terminal. If the pinned session
+		// dies we report Disconnected and retry the SAME target under the
+		// normal backoff, so a bridge restart on that pid is picked up.
+		d, ok := b.nextDescriptor()
+		if ok {
 			key := d.SessionID + "\x00" + d.Endpoint
 			if key != selected {
 				selected = key
@@ -269,6 +345,26 @@ func (b *Bridge) run(ctx context.Context, emit func(Message)) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// nextDescriptor resolves the descriptor to follow: the pinned target when
+// one is set, otherwise the newest discovered one.
+//
+// A pinned target is used as-is, without re-probing it here. The user chose
+// it explicitly, and the reconnect path already reports a dead or vanished
+// target as a normal Disconnected message and retries it under the usual
+// backoff — so a bridge that restarts on the same pid reconnects, and one
+// that stays dead surfaces as an error the app can report, which is the
+// behaviour the pin is for.
+func (b *Bridge) nextDescriptor() (Descriptor, bool) {
+	if t := b.targetDescriptor(); t != nil {
+		return *t, true
+	}
+	ds, err := Discover(b.CWD, b.Dir, b.ownPID())
+	if err != nil || len(ds) == 0 {
+		return Descriptor{}, false
+	}
+	return ds[0], true
 }
 
 const heartbeatTimeout = 35 * time.Second // server heartbeats arrive every 15s

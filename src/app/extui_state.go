@@ -43,6 +43,20 @@ const extWidgetHeightLimit = 6
 
 // ---------------------------------------------------------------- status --
 
+// clearExtUIState drops the whole plugin status/widget registry, the way
+// clearTeamWidgetState drops the team widget. Used when the sessions the
+// registry describes are gone (leaving follow mode): the tapped setStatus /
+// setWidget traffic belonged to a session this window is no longer following,
+// and a stale panel or status line would otherwise sit in the owned footer
+// and input box until that same key happened to be cleared by its own plugin.
+func (m *Model) clearExtUIState() {
+	m.extStatus = nil
+	m.extStatusSeq = nil
+	m.extWidget = nil
+	m.extWidgetSeq = nil
+	m.syncExtStat()
+}
+
 // setExtStatus routes a setStatus into the per-key registry and recomputes
 // the one-line footer summary. An empty text clears that key only; it never
 // clears a sibling plugin's status (the old single-slot behaviour did).

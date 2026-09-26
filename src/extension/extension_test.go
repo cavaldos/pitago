@@ -129,6 +129,27 @@ func TestMethodClassifiers(t *testing.T) {
 	}
 }
 
+// Follow mode's allowlist is a strict subset of the fire-and-forget methods:
+// everything a follower renders is informational and needs no answer, and the
+// one fire-and-forget method it refuses (set_editor_text) is exactly the one
+// that would write into the OWNED composer. Anything pi adds later is refused
+// by default, so this must never grow a non-fire-and-forget method.
+func TestIsFollowSafeUIStaysInsideFireAndForget(t *testing.T) {
+	for _, m := range []string{"notify", "setStatus", "setWidget", "setTitle"} {
+		if !IsFollowSafeUI(m) {
+			t.Fatalf("%s must render in follow mode", m)
+		}
+		if !IsFireAndForget(m) {
+			t.Fatalf("%s is follow-safe but not fire-and-forget", m)
+		}
+	}
+	for _, m := range []string{"set_editor_text", "select", "confirm", "input", "editor", "unknown_future_method", ""} {
+		if IsFollowSafeUI(m) {
+			t.Fatalf("%s must be refused in follow mode", m)
+		}
+	}
+}
+
 func TestFallbackResponse(t *testing.T) {
 	// Unknown future methods cancel safely: dialog callers get
 	// undefined/false and use defaults; pi ignores responses with no

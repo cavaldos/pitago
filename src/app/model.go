@@ -97,8 +97,13 @@ type Model struct {
 	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
 	ta                  textarea.Model
 	Pi                  *pirpc.Client
-	liveBridge          *live.Bridge // foreign Pi SSE bridge (read-only)
-	followRemote        bool         // true while rendering a foreign session
+	liveBridge          *live.Bridge     // foreign Pi SSE bridge (read-only)
+	liveTail            *live.Tail       // foreign Pi session-file tail (read-only, any running pi)
+	liveSource          live.Source      // which transport is attached; empty when none is
+	liveSessionFile     string           // owned session file displaced by follow mode, restored on detach
+	liveBridgeInstalled bool             // the bridge extension install was already attempted/reported
+	liveCands           []live.Candidate // /live picker rows (parallel to the live dialog Options)
+	followRemote        bool             // true while rendering a foreign session
 	liveConnected       bool
 	remoteSession       string
 	liveGeneration      uint64 // invalidates transport messages queued before detach
@@ -524,7 +529,9 @@ func New(pi *pirpc.Client, cwd string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true), m.runLiveBridge())
+	// No auto-attach: /live is the only way into follow mode, and it starts
+	// the transport on demand (see ToggleLiveSession).
+	return tea.Batch(m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true))
 }
 
 // fetchAll loads state/messages/stats/commands after (re)connect.
@@ -931,9 +938,17 @@ func (m *Model) SwitchSession(path string) tea.Cmd {
 	}
 }
 
+// paintHook observes every repaint. It is nil in production (one nil check
+// per frame) and set only by tests that pin the paint policy — e.g. that a
+// forwarded live event is painted once instead of twice.
+var paintHook func()
+
 func (m *Model) Refresh() {
 	if !m.ready {
 		return
+	}
+	if paintHook != nil {
+		paintHook()
 	}
 	// only stick to bottom when already there — no jump while reading history
 	follow := m.vp.AtBottom()
@@ -1026,6 +1041,9 @@ func (m *Model) RefreshFollow() {
 func (m *Model) refreshStreaming() tea.Cmd {
 	if !m.ready {
 		return nil
+	}
+	if paintHook != nil && (m.lastPaint.IsZero() || time.Since(m.lastPaint) >= streamFrame) {
+		paintHook()
 	}
 	now := time.Now()
 	if !m.lastPaint.IsZero() && now.Sub(m.lastPaint) < streamFrame {

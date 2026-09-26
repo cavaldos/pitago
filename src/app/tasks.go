@@ -66,8 +66,7 @@ func (m *Model) ensureTaskTick() tea.Cmd {
 	if !m.taskActive() || m.pet.ticking {
 		return nil
 	}
-	m.pet.ticking = true
-	return petTickCmd()
+	return m.armPetTick()
 }
 
 func (m *Model) addTaskUsage(input, output int) {

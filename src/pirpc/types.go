@@ -383,8 +383,13 @@ type UIRequest struct {
 	WidgetKey       string   `json:"widgetKey,omitempty"`
 	WidgetLines     []string `json:"widgetLines,omitempty"`
 	WidgetPlacement string   `json:"widgetPlacement,omitempty"`
-	Timeout         int      `json:"timeout,omitempty"`
-	Text            string   `json:"text,omitempty"`
+	// WidgetOpaque marks a widget whose content was a TUI component factory
+	// and could not be serialized. It is the difference between "this widget
+	// has content we cannot read" and "this widget is gone": both arrive
+	// without lines, and only the first should fall back to other state.
+	WidgetOpaque bool   `json:"widgetOpaque,omitempty"`
+	Timeout      int    `json:"timeout,omitempty"`
+	Text         string `json:"text,omitempty"`
 }
 
 // SelectOptionPrefix identifies pi-ask-user's private RPC fallback encoding.

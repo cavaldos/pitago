@@ -1151,6 +1151,9 @@ func All() []app.Builtin {
 			}
 		}),
 		pi("quit", "Quit pi", "/quit", func(m *app.Model, arg string) tea.Cmd {
+			// Same reason as the Ctrl+C path: a live tail is a goroutine
+			// pitago owns and must not outlive the window.
+			m.StopLiveTransport()
 			return tea.Quit
 		}),
 		pi("session", "Show session info and stats", "/session", func(m *app.Model, arg string) tea.Cmd {
@@ -1239,6 +1242,18 @@ func All() []app.Builtin {
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
 				return m.OpenSubagents(arg)
+			},
+		},
+		{
+			Name: "live", Desc: "Follow a running pi session, read-only: live stream or its session file (/live again detaches)", Usage: "/live",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, _ string) tea.Cmd {
+				// No argument: /live lists the pi sessions in this
+				// directory — streamable bridges first, then the session
+				// files of pis that are running without the bridge — and
+				// attaches to the picked one, or detaches when already
+				// following. pitago never publishes its own session.
+				return m.ToggleLiveSession()
 			},
 		},
 		{

@@ -92,6 +92,14 @@ func (m *Model) petSet(next petStatus) tea.Cmd {
 	}
 }
 
+// armPetTick latches the 500ms loop. Every path that starts the loop goes
+// through here, so the latch has exactly one owner: a path that arms it must
+// also return the command, or the pet freezes for the rest of the session.
+func (m *Model) armPetTick() tea.Cmd {
+	m.pet.ticking = true
+	return petTickCmd()
+}
+
 // petAnchor runs on agent_start: a fresh run anchors as working, but
 // re-issued starts between rounds must not override thinking/writing, and a
 // queued follow-up must not wipe the Done flash (its stream events re-anchor

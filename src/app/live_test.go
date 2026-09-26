@@ -11,7 +11,7 @@ import (
 	"pitago/src/pirpc"
 )
 
-func TestFollowModeBlocksInputAndDetaches(t *testing.T) {
+func TestFollowModeBlocksInputAndCtrlDDetaches(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.followRemote = true
 	m.liveConnected = true
@@ -26,10 +26,24 @@ func TestFollowModeBlocksInputAndDetaches(t *testing.T) {
 		t.Fatal("follow mode returned a command for Enter")
 	}
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if cmd == nil {
+		t.Fatal("Ctrl+D in follow mode must detach")
+	}
 	m = updated.(Model)
 	if m.followRemote || m.liveConnected {
-		t.Fatalf("Ctrl+D did not detach: %+v", m)
+		t.Fatalf("Ctrl+D did not detach: follow=%v connected=%v", m.followRemote, m.liveConnected)
+	}
+}
+
+func TestFollowModeCtrlQDetaches(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.followRemote = true
+	m.liveConnected = true
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	m = updated.(Model)
+	if m.followRemote || m.liveConnected {
+		t.Fatalf("Ctrl+Q did not detach: follow=%v connected=%v", m.followRemote, m.liveConnected)
 	}
 }
 
@@ -94,6 +108,9 @@ func TestLiveSnapshotRestoresRunningIndicator(t *testing.T) {
 
 func TestLiveRunningStateRendersComposerSignal(t *testing.T) {
 	m := New(nil, t.TempDir())
+	m.winW, m.winH = 120, 40 // real width: the footer is truncated on a narrow box
+	m.ready = true
+	m.renderInput()
 
 	applyEvent := func(eventType string) {
 		t.Helper()
@@ -190,5 +207,74 @@ func TestRemoteEventReusesExistingRenderer(t *testing.T) {
 	m.applyLive(m.liveGeneration, live.Message{Event: &live.Event{Revision: 1, Raw: json.RawMessage(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"remote answer"}]}}`)}})
 	if len(m.blocks) != 1 || m.blocks[0].Text != "remote answer" {
 		t.Fatalf("remote blocks = %+v", m.blocks)
+	}
+}
+
+// A subagent/team notice only exists as an extension_ui_request notify on the
+// wire, so follow mode is where it must become a transcript block.
+func TestFollowModeRendersSubagentNotice(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.applyLive(m.liveGeneration, live.Message{Event: &live.Event{Revision: 1, Raw: json.RawMessage(
+		`{"type":"extension_ui_request","id":"r1","method":"notify","message":"[subagent-async] worker-2 finished","notifyType":"info"}`,
+	)}})
+	if len(m.blocks) != 1 || !strings.Contains(m.blocks[0].Text, "subagent-async") {
+		t.Fatalf("subagent notice not rendered in follow mode: %+v", m.blocks)
+	}
+	if m.pet.ticking {
+		t.Fatal("a fire-and-forget notice must not latch the pet tick loop")
+	}
+}
+
+// Regression for the discarded petTickCmd: tool_execution_start returns a pet
+// command, and dropping it used to latch pet.ticking forever (frozen pet,
+// spinner and elapsed timer for the rest of the session).
+func TestFollowModeToolStartKeepsPetTickAlive(t *testing.T) {
+	m := New(nil, t.TempDir())
+	cmd := m.applyLive(m.liveGeneration, live.Message{Event: &live.Event{Revision: 1, Raw: json.RawMessage(
+		`{"type":"tool_execution_start","toolCallId":"t1","toolName":"read","args":{"path":"a.go"}}`,
+	)}})
+	if !m.pet.ticking {
+		t.Fatal("tool_execution_start must keep the pet tick loop latched")
+	}
+	if cmd == nil {
+		t.Fatal("follow mode must deliver the pet tick command")
+	}
+}
+
+// A remote extension dialog can never be answered from follow mode: the
+// bridge is one-way and fireUI would reply on the OWNED pi. The prompt must
+// be reported, not opened, and must not touch the owned client.
+func TestFollowModeIgnoresRemoteDialogRequest(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.followRemote = true
+	m.liveConnected = true
+	nm := m.handleUIRequest([]byte(`{"id":"r2","method":"select","title":"Pick","options":["a","b"]}`))
+	if len(nm.Dialogs) != 0 {
+		t.Fatalf("follow mode opened a remote dialog: %+v", nm.Dialogs)
+	}
+	if len(nm.blocks) != 1 || !strings.Contains(nm.blocks[0].Text, "ignored while following") {
+		t.Fatalf("remote prompt not reported: %+v", nm.blocks)
+	}
+}
+
+// set_editor_text is fire-and-forget, so the fire-and-forget follow-mode guard
+// used to let it through: a remote subagent's editor prefill overwrote the
+// user's OWN prompt textbox (still rendered, still live) and they would
+// unknowingly send it to their own pi. Follow mode renders an allowlist, so
+// this one is refused like any dialog.
+func TestFollowModeRefusesRemoteSetEditorText(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.followRemote = true
+	m.liveConnected = true
+	m.ta.SetValue("my own prompt")
+	m.applyLive(m.liveGeneration, live.Message{Event: &live.Event{Revision: 1, Raw: json.RawMessage(
+		`{"type":"extension_ui_request","id":"r3","method":"set_editor_text","text":"remote prefill"}`,
+	)}})
+	if got := m.ta.Value(); got != "my own prompt" {
+		t.Fatalf("remote set_editor_text clobbered the owned composer: %q", got)
+	}
+	if len(m.blocks) != 1 || !strings.Contains(m.blocks[0].Text, "set_editor_text") ||
+		!strings.Contains(m.blocks[0].Text, "ignored while following") {
+		t.Fatalf("refused remote prefill was not reported: %+v", m.blocks)
 	}
 }

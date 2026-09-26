@@ -22,6 +22,8 @@ var shortcutsDb = []ShortcutItem{
 	{"Esc", "Cancel running turn (double-press within 3s)", "Global"},
 	{"Ctrl+Shift+/", "Open shortcuts page", "Global"},
 	{"/?", "Open command palette / shortcuts", "Global"},
+	{"Ctrl+D", "Detach from external Pi session (back to owned session)", "Global"},
+	{"Ctrl+Q", "Detach from external Pi session (back to owned session)", "Global"},
 
 	// Navigation / Chat
 	{"↑↓", "Scroll chat (recall history when empty, mouse on)", "Chat"},

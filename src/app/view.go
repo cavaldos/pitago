@@ -1097,7 +1097,7 @@ func (m Model) renderInput() string {
 	if m.followRemote {
 		border = cInputDim
 		title = "EXTERNAL · READ-ONLY"
-		left = "Ctrl+D detach · remote events only"
+		left = "Ctrl+D detach · read-only"
 		if m.thinking {
 			border = cGreen
 			title = "EXTERNAL · " + spinFrame(m.pet.tick) + " " + m.inputStatus()

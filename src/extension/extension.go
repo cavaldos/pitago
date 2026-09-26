@@ -159,6 +159,21 @@ func IsFireAndForget(method string) bool {
 	return false
 }
 
+// IsFollowSafeUI reports the extension_ui_request methods follow mode still
+// renders. An allowlist, not a denylist: a follow-mode window renders a remote
+// session read-only, so anything that would touch the OWNED composer
+// (set_editor_text) or open a prompt must be refused by default — including
+// fire-and-forget methods added to pi later, which the client never waits on
+// and therefore cannot recognize safely. The four listed here are pure
+// information the remote side already shows in its own window.
+func IsFollowSafeUI(method string) bool {
+	switch method {
+	case "notify", "setStatus", "setWidget", "setTitle":
+		return true
+	}
+	return false
+}
+
 // FallbackResponse builds a safe cancellation for an extension_ui_request
 // pitago cannot render (unknown future method, custom widget payload).
 // Dialog callers receive undefined/false and fall back to defaults; pi
