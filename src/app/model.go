@@ -232,6 +232,7 @@ type Model struct {
 	PetStyle            string            // sidebar pet look: pet.StyleASCII (default) | pet.StyleClassic
 	prefsPath           string            // persisted pitago-local prefs ("" = don't persist)
 	savedModel          *ModelRef         // last user-picked model this process wrote (in-memory mirror of prefs.currentModel)
+	hideTaskWidget      bool              // suppress the above-editor task widget (prefs.taskWidgetOff); zero = show, so a bare Model{} keeps upstream behaviour
 	blockRows           []int             // rendered start line of each block (mouse hit-testing)
 	chatLines           []string          // absolute rendered chat content lines (selection source)
 	gutterCols          []int             // leading gutter cells per chat line (0 or 2), parallel to chatLines
@@ -1367,6 +1368,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts
 	m.RecentCmds = prefs.RecentCmds
+	m.hideTaskWidget = !prefs.TaskWidgetVisible()
 	palette.Win = prefs.EffectiveAutocompleteMax()
 	m.ApplyImageSettings()
 }

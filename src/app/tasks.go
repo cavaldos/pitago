@@ -153,8 +153,13 @@ func taskBlockedSuffix(tasks []TodoItem, t TodoItem) string {
 }
 
 // renderTaskWidget mirrors pi-tasks' borderless aboveEditor widget.
+// Gated on hideTaskWidget (prefs.taskWidgetOff): the todos are already
+// mirrored into the sidebar Todos panel, and this widget claims chat rows
+// directly above the input, so users who keep tasks in the sidebar turn it
+// off. The field is stored inverted so a zero Model{} still shows the
+// widget — upstream behaviour, and what the existing tests assert.
 func (m Model) renderTaskWidget() string {
-	if len(m.Todos) == 0 {
+	if m.hideTaskWidget || len(m.Todos) == 0 {
 		return ""
 	}
 	width := max(10, m.mainW())
@@ -207,4 +212,27 @@ func (m Model) renderTaskWidget() string {
 		lines = append(lines, muted.Render(fmt.Sprintf("    … and %d more", hidden)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TaskWidgetVisible reports whether the above-editor task widget paints.
+func (m Model) TaskWidgetVisible() bool { return !m.hideTaskWidget }
+
+// SetTaskWidget persists the above-editor task widget preference and
+// repaints. Kept in prefs.json (not tasks-config.json) so the render path
+// reads it from the cached Model field instead of a file per tick.
+func (m *Model) SetTaskWidget(on bool) {
+	m.hideTaskWidget = !on
+	prefs := LoadPrefs(m.prefsPath)
+	prefs.TaskWidgetOff = !on
+	if err := SavePrefs(m.prefsPath, prefs); err != nil {
+		m.AddBlock(Block{Kind: "notice", Text: "task widget preference not saved: " + err.Error(), Err: true})
+		m.Refresh()
+		return
+	}
+	state := "on"
+	if !on {
+		state = "off"
+	}
+	m.AddBlock(Block{Kind: "notice", Text: "task widget · above editor → " + state})
+	m.Refresh()
 }

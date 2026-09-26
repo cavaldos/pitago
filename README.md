@@ -231,7 +231,7 @@ Type `/` to open the command popup. Two kinds:
 - `/trajectory [all|tools|messages]` — harness-style run trace window (numbered steps with time + kind, type to filter, `Enter` views the full step in chat)
 - `/notification [filter]` — browse notification history (time + info/error, newest first; in RAM for the current Pitago run, max 200)
 - `/settings` — agent settings, pi parity (22 rows: model · thinking · steering · follow-up · auto-compact · auto-retry · theme + skill commands · show images · image width · auto-resize · block images · transport · http timeout · cache warming · hide thinking · cache-miss notices · project trust · quiet startup · telemetry · autocomplete max · tree filter; file rows save to `~/.pi/agent/settings.json` and reconnect pi; dialog shows pi-style position `(6/33)`)
-- `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login
+- `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login (Tasks also carries **Show task widget above editor** — the todos are already mirrored into the sidebar, and the widget claims chat rows above the input)
 - `/login` / `/logout` — manage logins: API keys + pi OAuth/subscriptions (`/login`: left providers, right keys + auth — `Enter` use/add, `⌫` delete/disconnect, `s` show/hide key, `r` rename, `Ctrl+P` model picker, `Esc` close; stays open, pi reconnects behind)
 - `/reload` — reload extensions
 - `/new` — new session
@@ -271,7 +271,7 @@ In short: `app` is a thin MVC shell, `components` holds pure view primitives,
 - `~/.config/pitago/keys.json` (0600) — saved API keys, several per provider with one active + optional name/added-date (`/login`, `/logout`; active key is also written to pi's `auth.json` so pi sees models)
 - `~/.config/pitago/pi_auth.json` (0600) — mirrored pi logins (OAuth account/expiry, no secrets) so `/login` lists + disconnects subscriptions done in stock pi
 - `~/.config/pitago/recent_models.json` — recent models (max 5)
-- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win); also the sidebar pet (`pet`, missing = default `cat`) and its look (`petStyle`: `ascii` (default) or `classic`)
+- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win); also the sidebar pet (`pet`, missing = default `cat`) and its look (`petStyle`: `ascii` (default) or `classic`); `taskWidgetOff: true` hides the above-editor task widget (default shown)
 - `~/.config/pitago/theme.json` — active TUI theme (25 built-ins: default, one-dark, gruvbox, catppuccin-mocha, dracula… — `/theme` lists all)
 - `~/.config/pitago/update.json` — last update-check timestamp + tag (24h TTL)
 - `/tmp/pitago-pi-stderr.log` — pi child stderr

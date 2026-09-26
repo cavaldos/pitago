@@ -2560,7 +2560,10 @@ func (m Model) teamWidgetHeightLimit() int {
 	if m.winH <= 0 {
 		return len(m.TeamWidgetLines) + boolInt(m.TeamStatus != "")
 	}
-	fixed := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + lipgloss.Height(m.renderTaskWidget())
+	// panelHeight, not lipgloss.Height: an empty string measures as one row
+	// under lipgloss, which would reserve a phantom row every time the task
+	// widget is hidden (prefs.taskWidgetOff) or has no todos.
+	fixed := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + panelHeight(m.renderTaskWidget())
 	popup := m.popupH() + m.atPopupH() + m.uiPopupH() + m.inputPopupH()
 	return max(0, m.winH-fixed-popup-3)
 }

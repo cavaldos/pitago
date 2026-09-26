@@ -38,7 +38,15 @@ type Prefs struct {
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 	RecentCmds      []string          `json:"recentCmds,omitempty"`      // last-run /command names, most recent first (floated to the top of the "/" popup)
 	Tidy            bool              `json:"tidy,omitempty"`            // tidy mode: tool blocks collapse to their header (no args detail, no result/diff/output)
+	TaskWidgetOff   bool              `json:"taskWidgetOff,omitempty"`   // hide the above-editor task widget
 }
+
+// TaskWidgetVisible reports whether the above-editor task widget should paint.
+// Default is on: that is upstream behaviour, and the widget carries live
+// elapsed time and token counts per task that the sidebar Todos panel does
+// not. Off is opt-in because the same todos are already mirrored into the
+// sidebar, and the widget takes chat rows right above the input.
+func (p Prefs) TaskWidgetVisible() bool { return !p.TaskWidgetOff }
 
 // PrefsPath is ~/.config/pitago/prefs.json ("" when unresolvable).
 func PrefsPath() string {

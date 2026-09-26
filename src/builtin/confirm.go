@@ -254,6 +254,15 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		}
 		m.Refresh()
 		return m, sideCmd
+	case p == "taskwidget":
+		m.SetTaskWidget(!m.TaskWidgetVisible())
+		cur := d.Cursor
+		m.LoadPsecRows(d)
+		if cur < len(d.FIdx) {
+			d.Cursor = cur
+		}
+		m.Refresh()
+		return m, nil
 	case strings.HasPrefix(p, "tasks:"):
 		m.CycleTasksSetting(strings.TrimPrefix(p, "tasks:"))
 		cur := d.Cursor // cycle rebuilds rows: keep the cursor where it was

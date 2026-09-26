@@ -196,7 +196,10 @@ func (m Model) overlayToasts(left string) string {
 	tlines := strings.Split(box, "\n")
 	// Input box is fixed-frame: textarea 3 + chips 0/1 + footer 1 + border 2.
 	inputH := 6 + m.chipH()
-	taskH := lipgloss.Height(m.renderTaskWidget())
+	// panelHeight, not lipgloss.Height: an empty string measures as one row
+	// under lipgloss, so a hidden task widget (prefs.taskWidgetOff) or an
+	// empty list would reserve a phantom row and shift the toast up.
+	taskH := panelHeight(m.renderTaskWidget())
 	avail := len(lines) - 1 - inputH - taskH // rows below header, above persistent blocks
 	if avail <= 0 {
 		return left

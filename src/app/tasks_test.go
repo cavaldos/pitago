@@ -9,6 +9,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+
+	"pitago/src/pirpc"
 )
 
 func TestLoadPiTaskFilePreservesWidgetFields(t *testing.T) {
@@ -123,5 +125,80 @@ func TestTaskWidgetOverflow(t *testing.T) {
 	panel := stripANSI(m.renderTaskWidget())
 	if !strings.Contains(panel, "… and 2 more") {
 		t.Fatalf("missing task overflow row: %q", panel)
+	}
+}
+
+// The above-editor task widget duplicates the sidebar Todos panel and claims
+// chat rows right above the input, so it needs a real off switch. The field is
+// stored inverted so a zero Model{} keeps upstream behaviour (widget shown).
+func TestTaskWidgetPrefHidesWidget(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.prefsPath = filepath.Join(t.TempDir(), "prefs.json")
+	m.Todos = []TodoItem{{ID: "1", Content: "a task", Status: TodoPending}}
+
+	if got := m.renderTaskWidget(); got == "" {
+		t.Fatal("widget should render by default (upstream behaviour)")
+	}
+
+	m.SetTaskWidget(false)
+	if got := m.renderTaskWidget(); got != "" {
+		t.Fatalf("widget should be hidden, got %d rows", len(strings.Split(got, "\n")))
+	}
+
+	// Turning it off must persist, and turning it back on must too.
+	prefs := LoadPrefs(m.prefsPath)
+	if !prefs.TaskWidgetOff {
+		t.Error("prefs should record taskWidgetOff")
+	}
+	if LoadPrefs(m.prefsPath).TaskWidgetVisible() {
+		t.Error("TaskWidgetVisible should report off")
+	}
+	m.SetTaskWidget(true)
+	if LoadPrefs(m.prefsPath).TaskWidgetOff {
+		t.Error("prefs should clear taskWidgetOff")
+	}
+	if m.renderTaskWidget() == "" {
+		t.Error("widget should be back")
+	}
+
+	// An empty list still hides it regardless of the pref.
+	m.Todos = nil
+	if got := m.renderTaskWidget(); got != "" {
+		t.Error("no todos means no widget")
+	}
+}
+
+// The promise the toggle makes is "it stays off next run", which is the
+// startup path (Configure) reading taskWidgetOff — not the setter. A prefs
+// file written by a previous process must silence a fresh Model.
+func TestTaskWidgetPrefSurvivesRestart(t *testing.T) {
+	// Configure assigns prefsPath = PrefsPath(), which resolves through
+	// os.UserHomeDir, so scoping HOME is what keeps this test off the real
+	// ~/.config/pitago/prefs.json.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := SavePrefs(filepath.Join(home, ".config", "pitago", "prefs.json"), Prefs{TaskWidgetOff: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(nil, t.TempDir())
+	m.Configure(pirpc.Options{}, "")
+	m.Todos = []TodoItem{{ID: "1", Content: "a task", Status: TodoPending}}
+	if m.TaskWidgetVisible() {
+		t.Error("Configure should have loaded taskWidgetOff")
+	}
+	if got := m.renderTaskWidget(); got != "" {
+		t.Errorf("widget should be hidden after restart, got %d rows", len(strings.Split(got, "\n")))
+	}
+
+	// The default (no key in the file) must still show it, or the toggle
+	// would silently flip upstream behaviour for existing users.
+	home2 := t.TempDir()
+	t.Setenv("HOME", home2)
+	m2 := New(nil, t.TempDir())
+	m2.Configure(pirpc.Options{}, "")
+	m2.Todos = []TodoItem{{ID: "1", Content: "a task", Status: TodoPending}}
+	if !m2.TaskWidgetVisible() {
+		t.Error("absent key must default to the widget shown")
 	}
 }

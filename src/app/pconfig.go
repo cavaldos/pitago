@@ -389,6 +389,16 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			descs = append(descs, vals[td.key]+" · Enter: next")
 			payload = append(payload, "tasks:"+td.key)
 		}
+		// The widget lives in prefs.json, not tasks-config.json: it is a
+		// pitago render decision, and reading it from a file on every tick
+		// would be a read per repaint.
+		widget := "off"
+		if m.TaskWidgetVisible() {
+			widget = "on"
+		}
+		opts = append(opts, "Show task widget above editor")
+		descs = append(descs, widget+" · Enter: toggle · todos also show in the sidebar")
+		payload = append(payload, "taskwidget")
 	case PsecSide:
 		msg = "Enter shows/hides a sidebar section · MCP + Plugins + Commands start hidden · Esc closes"
 		for _, k := range sideOrder {

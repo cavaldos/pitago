@@ -410,8 +410,10 @@ func TestTasksHubRowsAndPersist(t *testing.T) {
 	}
 	d.ProvCursor = ti
 	m.LoadPsecRows(d)
-	if len(d.Options) != len(taskSettings) {
-		t.Fatalf("tasks rows = %d, want %d", len(d.Options), len(taskSettings))
+	// +1 for the task-widget row, which lives in prefs.json rather than
+	// tasks-config.json (it is a pitago render decision, not an extension value).
+	if want := len(taskSettings) + 1; len(d.Options) != want {
+		t.Fatalf("tasks rows = %d, want %d", len(d.Options), want)
 	}
 	valOf := func(key string) string {
 		for i, p := range d.Payload {
@@ -520,7 +522,9 @@ func TestOpenTasksSettingsFocusesTab(t *testing.T) {
 	if d.ProvFocus {
 		t.Error("right pane should start focused, ready to cycle values")
 	}
-	if len(d.Options) != len(taskSettings) {
-		t.Fatalf("tasks rows = %d, want %d", len(d.Options), len(taskSettings))
+	// +1 for the task-widget row, which lives in prefs.json rather than
+	// tasks-config.json (it is a pitago render decision, not an extension value).
+	if want := len(taskSettings) + 1; len(d.Options) != want {
+		t.Fatalf("tasks rows = %d, want %d", len(d.Options), want)
 	}
 }
