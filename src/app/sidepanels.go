@@ -661,6 +661,7 @@ func (m *Model) CycleTasksSetting(key string) {
 		return
 	}
 	_ = os.WriteFile(path, append(raw, '\n'), 0o644)
+	m.loadTaskDisplay()
 }
 
 // loadPiTaskFile parses one store file: ok=false when missing/unreadable,

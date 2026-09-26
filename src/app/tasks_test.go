@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,5 +202,171 @@ func TestTaskWidgetPrefSurvivesRestart(t *testing.T) {
 	m2.Todos = []TodoItem{{ID: "1", Content: "a task", Status: TodoPending}}
 	if !m2.TaskWidgetVisible() {
 		t.Error("absent key must default to the widget shown")
+	}
+}
+
+// The five display settings in /pitago-setting -> Tasks were written to
+// tasks-config.json and read by no renderer. These cover each one, in the
+// compose order pi-tasks documents: sort, then collapse, then truncate.
+func TestTaskDisplaySettingsAffectWidget(t *testing.T) {
+	// 12 open + 3 completed, so collapse and truncation are both visible.
+	build := func() Model {
+		m := New(nil, t.TempDir())
+		m.winW = 80
+		for i := 1; i <= 12; i++ {
+			m.Todos = append(m.Todos, TodoItem{
+				ID: fmt.Sprintf("o%02d", i), Content: fmt.Sprintf("open%02d", i), Status: TodoPending,
+			})
+		}
+		for i := 1; i <= 3; i++ {
+			m.Todos = append(m.Todos, TodoItem{
+				ID: fmt.Sprintf("d%02d", i), Content: fmt.Sprintf("done%02d", i), Status: TodoCompleted,
+			})
+		}
+		return m
+	}
+	// The header must total every task no matter what the body does.
+	headerAll := "15 tasks"
+
+	t.Run("defaults cap at 10 and keep completed", func(t *testing.T) {
+		m := build()
+		panel := stripANSI(m.renderTaskWidget())
+		if !strings.Contains(panel, headerAll) {
+			t.Errorf("header must count all tasks, got:\n%s", panel)
+		}
+		if !strings.Contains(panel, "… and 5 more") {
+			t.Errorf("default cap is 10 of 15, got:\n%s", panel)
+		}
+		// 12 open come first, so the default cap of 10 truncates the
+		// completed ones away. That is correct, not a collapse: with
+		// collapseCompleted off they are still ordinary rows in the list,
+		// which the showAll case below proves by rendering all 15.
+		if strings.Contains(panel, "done01") {
+			t.Error("cap of 10 should exclude the trailing completed tasks")
+		}
+		if strings.Contains(panel, "3 completed") {
+			t.Error("no completed summary when collapseCompleted is off")
+		}
+		if !strings.Contains(panel, "open10") || strings.Contains(panel, "open11") {
+			t.Errorf("default cap should render exactly open01..open10, got:\n%s", panel)
+		}
+	})
+
+	t.Run("maxVisible caps", func(t *testing.T) {
+		m := build()
+		m.taskDisplay.maxVisible = 5
+		panel := stripANSI(m.renderTaskWidget())
+		if !strings.Contains(panel, "… and 10 more") {
+			t.Errorf("maxVisible=5 should hide 10, got:\n%s", panel)
+		}
+	})
+
+	t.Run("showAll overrides the cap", func(t *testing.T) {
+		m := build()
+		m.taskDisplay.maxVisible = 5
+		m.taskDisplay.showAll = true
+		panel := stripANSI(m.renderTaskWidget())
+		if strings.Contains(panel, "more") {
+			t.Errorf("showAll must suppress the overflow line, got:\n%s", panel)
+		}
+		if !strings.Contains(panel, "open12") {
+			t.Error("showAll must render every task")
+		}
+	})
+
+	t.Run("collapseCompleted replaces rows with one summary", func(t *testing.T) {
+		m := build()
+		m.taskDisplay.collapseCompleted = true
+		panel := stripANSI(m.renderTaskWidget())
+		if !strings.Contains(panel, "3 completed") {
+			t.Errorf("expected a completed summary line, got:\n%s", panel)
+		}
+		if strings.Contains(panel, "done01") {
+			t.Errorf("completed rows must be gone when collapsed, got:\n%s", panel)
+		}
+		// Collapse happens before truncation, so the cap now counts the 12
+		// open tasks: 2 overflow rather than 5.
+		if !strings.Contains(panel, "… and 2 more") {
+			t.Errorf("cap should count open tasks only, got:\n%s", panel)
+		}
+		if !strings.Contains(panel, headerAll) {
+			t.Error("header still counts every task")
+		}
+	})
+
+	t.Run("hiddenAt top moves the overflow line and keeps the tail", func(t *testing.T) {
+		m := build()
+		m.taskDisplay.maxVisible = 5
+		m.taskDisplay.hiddenAt = "top"
+		panel := stripANSI(m.renderTaskWidget())
+		lines := strings.Split(panel, "\n")
+		if !strings.Contains(lines[1], "… and 10 more") {
+			t.Errorf("overflow line should come first, got:\n%s", panel)
+		}
+		if !strings.Contains(panel, "open12") {
+			t.Error("hiddenAt=top keeps the tail of the list")
+		}
+		if strings.Contains(panel, "open01") {
+			t.Error("hiddenAt=top drops the head of the list")
+		}
+	})
+
+	t.Run("sortOrder active puts in-progress first", func(t *testing.T) {
+		m := build()
+		m.Todos[0].Status = TodoInProgress
+		m.taskDisplay.sortOrder = "active"
+		panel := stripANSI(m.renderTaskWidget())
+		lines := strings.Split(panel, "\n")
+		if !strings.Contains(lines[1], "open01") {
+			t.Errorf("in-progress task should be the first row, got:\n%s", panel)
+		}
+	})
+
+	t.Run("sortOrder status is completed-first", func(t *testing.T) {
+		m := build()
+		m.taskDisplay.sortOrder = "status"
+		panel := stripANSI(m.renderTaskWidget())
+		lines := strings.Split(panel, "\n")
+		if !strings.Contains(lines[1], "done01") {
+			t.Errorf("completed task should be the first row, got:\n%s", panel)
+		}
+	})
+}
+
+// The config must survive a restart, and the loader must clamp junk.
+func TestLoadTaskDisplayReadsConfigAndClamps(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, ".pi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"sortOrder":         "active",
+		"collapseCompleted": true,
+		"showAll":           true,
+		"maxVisible":        20,
+		"hiddenAt":          "top",
+	})
+	if err := os.WriteFile(filepath.Join(cwd, ".pi", "tasks-config.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, cwd)
+	m.cwd = cwd
+	m.loadTaskDisplay()
+	d := m.taskDisplay
+	if d.sortOrder != "active" || !d.collapseCompleted || !d.showAll || d.maxVisible != 20 || d.hiddenAt != "top" {
+		t.Fatalf("config not applied: %+v", d)
+	}
+
+	// Out-of-range and unknown values must not break rendering.
+	raw, _ = json.Marshal(map[string]any{"maxVisible": 9999, "sortOrder": "nonsense"})
+	if err := os.WriteFile(filepath.Join(cwd, ".pi", "tasks-config.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.loadTaskDisplay()
+	if got := m.taskDisplay.maxRows(); got != 10 {
+		t.Errorf("maxRows should clamp to the default 10, got %d", got)
+	}
+	if m.taskDisplay.sortOrder != "id" {
+		t.Errorf("unknown sortOrder should fall back to id, got %q", m.taskDisplay.sortOrder)
 	}
 }
