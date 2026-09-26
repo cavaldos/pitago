@@ -46,17 +46,26 @@ func main() {
 		return
 	}
 
-	// Two-way key sync with pi (auth.json wins over env inside pi):
-	// 1. push pitago actives where pi has nothing yet so pitago-added keys
-	//    reach pi; 2. import pi → pitago (union, never moves active) so keys
-	//    added via stock `pi` show up here; 3. export actives to env.
+	// pi credential hygiene at launch: pi → pitago ONLY.
+	//
+	// Nothing here writes pi's auth.json and nothing mutates pitago's own
+	// environment. Pitago's credentials reach pi exclusively through the
+	// explicit /login and /logout actions (pirpc.PushActiveToPi), so
+	// launching pitago is as side-effect-free as launching pi:
+	//  1. import pi's api_keys into pitago's keystore (union, never moves
+	//     the active pointer) so /login lists what the user added in
+	//     stock pi;
+	//  2. mirror pi's logins (presence only, no secrets) for the picker.
 	keyPath := pirpc.KeyPath()
-	pirpc.EnsurePiHasActive(keyPath)
 	pirpc.SyncFromPi(keyPath)
 	pirpc.SyncAuthStateFromPi(pirpc.AuthStatePath())
+	// The saved active key reaches the pi child through the child-env
+	// overlay, not os.Setenv: nothing else pitago starts (or a crash dump)
+	// ever sees the secret, and an env var the user exported themselves
+	// still wins, same as before.
 	for env, key := range pirpc.LoadKeys(keyPath) {
 		if key != "" && os.Getenv(env) == "" {
-			_ = os.Setenv(env, key)
+			pirpc.SetPiChildEnv(env, key)
 		}
 	}
 
@@ -87,12 +96,10 @@ func main() {
 		_ = theme.Save(theme.ThemePath(), *themeFlag)
 	}
 	m.Configure(opts, keyPath)
-	// Restore the last explicitly chosen model when no --provider/--model
-	// flags: pi spawns on its own default, pitago re-applies the saved
-	// choice (persisted on every model switch) before the first frame.
-	if *provider == "" && *modelFlag == "" {
-		m.ApplySavedModel()
-	}
+	// No model to restore: pi owns the default (settings.json
+	// defaultProvider/defaultModel, or the --provider/--model flags above)
+	// and the sidebar reads the live value back from get_state. pitago keeps
+	// no second copy, so the footer can never disagree with pi.
 	// Preload the update cache so the welcome banner ("⬆ … pitago
 	// --update") shows on the first frame — the async auto-check in
 	// Init() refreshes it right after.

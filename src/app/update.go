@@ -324,6 +324,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressByKey = make(map[string]int)
 		m.hist = nil
 		m.histIdx = -1
+		// A fresh pi process has no bash running and no retry in flight;
+		// stale latches would block Esc and "!cmd" forever.
+		m.bashRunning = false
+		m.retrying = false
 		m.restore(msg.msgs)
 		m.Status = "ready"
 		m.planOn = false // fresh connect: plan latch is live-only
@@ -414,11 +418,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sentAckMsg:
 		if msg.err != nil {
+			// A refused send must not cost the user their words: pi took
+			// nothing, so the text (and the image chips it carried) go
+			// back into the editor, pi's own reason on top.
+			if msg.text != "" {
+				m.restoreQueuedToEditor([]string{msg.text})
+			}
+			if len(msg.tray) > 0 {
+				m.imgAtts = append(msg.tray, m.imgAtts...)
+				m.applyPopupH()
+			}
 			m.AddBlock(Block{Kind: "notice", Text: msg.err.Error(), Err: true})
 			m.thinking = false
 			m.Status = "ready"
 			m.Refresh()
+			return m, nil
 		}
+		if msg.queued {
+			// Healed: the message is in pi's follow-up queue, not lost.
+			m.AddBlock(Block{Kind: "notice", Text: "pi was still streaming — queued as a follow-up"})
+			m.Refresh()
+		}
+		return m, nil
+
+	case PiOpMsg:
+		return m.handlePiOp(msg)
+
+	case escAbortMsg:
+		// Queued steer/follow-up text goes back above whatever the user
+		// has typed now; only the abort itself is reported.
+		if len(msg.restored) > 0 {
+			m.restoreQueuedToEditor(msg.restored)
+		}
+		if msg.err != nil {
+			m.AddBlock(Block{Kind: "notice", Text: msg.err.Error(), Err: true})
+			m.thinking = false
+			m.Status = "ready"
+		}
+		m.Refresh()
 		return m, nil
 
 	case extensionCmdAckMsg:
@@ -499,7 +536,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionResetMsg:
 		if msg.Err != nil {
+			// pi refused the switch (an extension vetoed it through
+			// session_before_switch, or the RPC failed). The session did
+			// NOT change, so the transcript must stay: clearing it here is
+			// how a veto used to look like a successful new session with
+			// an empty chat.
 			m.AddBlock(Block{Kind: "notice", Text: msg.Err.Error(), Err: true})
+			m.Status = "ready"
+			m.Refresh()
+			return m, nil
 		}
 		m.blocks = nil
 		m.tools = make(map[string]int)
@@ -526,11 +571,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendSpeed = false
 		m.lastDur, m.lastSpeed = 0, 0
 		m.RefreshFollow()
-		if prov, id := m.savedModel(); strings.TrimSpace(id) != "" {
-			m.Status = "ready — restoring model…"
-			m.Refresh()
-			return m, tea.Batch(m.queryStats(), m.restoreModelCmd(prov, id))
-		}
+		// No model restore: pi's NewSession resets to its own default and
+		// the label is re-read from get_state below, exactly like pi.
 		return m, m.queryStats()
 
 	case ModelCycleMsg:
@@ -546,14 +588,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				id = msg.Label
 			}
 			m.pushRecent(msg.Provider, id, msg.Label)
-			m.rememberModel(msg.Provider, id, msg.Label)
 			m.Status = "ready"
-			verb := "model switched → "
-			if msg.Restored {
-				verb = "model restored → "
-			}
-			m.AddBlock(Block{Kind: "notice", Text: verb + msg.Label})
+			m.AddBlock(Block{Kind: "notice", Text: "model switched → " + msg.Label})
 			m.Refresh()
+			// fetchStateOnce re-reads get_state because setModel also
+			// adjusts the thinking level for the new model (pi parity):
+			// the footer and /thinking picker must not keep the old one.
 			return m, m.fetchStateOnce()
 		}
 
@@ -576,6 +616,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Scope == "all" {
 				title = "Resume session (all)"
 			}
+		}
+		if msg.Kind == "fork" {
+			title = "Fork from a previous message"
 		}
 		if msg.Replace && len(m.Dialogs) > 0 && m.Dialogs[0].Kind == msg.Kind {
 			// Tab scope swap: keep the typed filter, reload rows in place.
@@ -1226,7 +1269,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Status = "opening new session…"
 			m.Refresh()
 			return m, func() tea.Msg {
-				return SessionResetMsg{Err: m.Pi.NewSession()}
+				// NewSessionResult, not NewSession: pi answers
+				// new_session with {cancelled} when an extension vetoes the
+				// switch through session_before_switch, and the old
+				// wrapper dropped that flag — a cancelled Ctrl+N looked
+				// like a new session while the conversation stayed put.
+				res, err := m.Pi.NewSessionResult("")
+				return SessionResetMsg{Err: res.VetoErr("new_session", err)}
 			}
 		case tea.KeyCtrlP:
 			m.Status = "switching model…"
@@ -1243,6 +1292,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.escArm = time.Time{}
 				return m, nil
 			}
+			// A running !cmd is cancelled with one Esc (pi: onEscape →
+			// isBashRunning → session.abortBash(),
+			// interactive-mode.js:2336-2338). No turn is streaming then,
+			// so this never races the double-Esc turn cancel below.
+			if m.bashRunning {
+				return m, m.abortBashCmd()
+			}
+			// Same for pi's auto-retry loop: pi swaps Esc to abortRetry()
+			// while auto_retry_start is live (interactive-mode.js:2921-2929).
+			if m.retrying {
+				return m, m.abortRetryCmd()
+			}
 			if m.thinking {
 				// Double-press within 3s to cancel (Ctrl+C parity):
 				// a stray Esc only arms + auto-disarms.
@@ -1251,13 +1312,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Status = "cancelling…"
 					m.Refresh()
 					return m, func() tea.Msg {
+						// Pi parity: an abort first pulls every queued
+						// steer/follow-up back into the editor
+						// (restoreQueuedMessagesToEditor) — the text the
+						// user already sent must survive the cancel.
 						steer, follow, _ := m.Pi.ClearQueue()
 						restored := append(steer, follow...)
-						if len(restored) > 0 {
-							_ = restored // returned text, shown as notice for brevity
-						}
 						_, err := m.Pi.Abort()
-						return sentAckMsg{err: err}
+						return escAbortMsg{restored: restored, err: err}
 					}
 				}
 				m.escArm = time.Now()
@@ -1268,6 +1330,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.KeyEnter:
+			// Alt+Enter queues a follow-up while pi is streaming, exactly
+			// like pi (prompt(text,{streamingBehavior:'followUp'}),
+			// interactive-mode.js:3546); idle, it is a plain submit.
+			if msg.Alt {
+				return m, m.submitFollowUp()
+			}
 			return m, m.submitInput()
 		}
 	}
@@ -1442,8 +1510,10 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	case "compaction_end":
 		m.AddBlock(Block{Kind: "notice", Text: "context compacted"})
 	case "auto_retry_start":
-		m.AddBlock(Block{Kind: "notice", Text: "provider error, retrying…"})
+		m.retrying = true // Esc now aborts the retry (pi parity)
+		m.AddBlock(Block{Kind: "notice", Text: "provider error, retrying… (Esc to stop)"})
 	case "auto_retry_end":
+		m.retrying = false
 		var p struct {
 			Success bool `json:"success"`
 		}
@@ -1460,6 +1530,8 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	case "pi_exited":
 		m.thinking = false
 		m.escArm = time.Time{}
+		m.bashRunning = false
+		m.retrying = false
 		m.pet = petState{}
 		m.clearTeamWidgetState()
 		if m.respawning {
@@ -1809,10 +1881,6 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		return m
 	}
 	switch {
-	case extension.ShouldAutoCancel(req.Method):
-		// MVP: auto-cancel so the agent uses defaults/timeout
-		m.AddBlock(Block{Kind: "notice", Text: "plugin muốn mở editor — đã dùng mặc định"})
-		m.fireUI(extension.FallbackResponse(req.ID))
 	case req.Method == "select" || req.Method == "confirm":
 		kind := "ui"
 		title := extension.TitleFor(req.Method, req.Title)
@@ -1830,16 +1898,26 @@ func (m Model) handleUIRequest(raw []byte) Model {
 		d.Reindex()
 		m.Dialogs = append(m.Dialogs, d)
 		m.applyPopupH()
-	case req.Method == "input":
-		// free-text prompt (e.g. pi-tasks createTask subject/description):
-		// a real typing dialog, Esc cancels, Enter submits.
-		title := req.Title
-		if title == "" {
-			title = "Input"
+	case extension.IsTextMethod(req.Method):
+		// free-text prompt: ui.input (pi-tasks createTask subject/description)
+		// and ui.editor, which pi renders with the same input component and
+		// answers with {value}/{cancelled:true}. One dialog serves both: a
+		// real typing field, Esc cancels, Enter submits.
+		// pi seeds ui.editor with `prefill` and hints ui.input with
+		// `placeholder`; both are the value the extension means the user to
+		// start from. Seed the buffer from the prefill (tolerating the older
+		// `text` field) and keep the hint for an empty buffer, so the reply
+		// carries what the extension offered instead of a bare empty string.
+		prefill := req.Prefill
+		if prefill == "" {
+			prefill = req.Text
 		}
 		d := &Dialog{
 			ID: req.ID, Method: req.Method, Kind: "input",
-			Title: title, Message: req.Message, Filter: req.Text,
+			Title:       extension.TextTitleFor(req.Method, req.Title),
+			Message:     req.Message,
+			Filter:      prefill,
+			Placeholder: req.Placeholder,
 		}
 		m.Dialogs = append(m.Dialogs, d)
 		m.applyPopupH()
@@ -2460,8 +2538,8 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		}
 	}
 	if d.Kind == "input" {
-		// free-text prompt: Enter submits the typed value (even empty —
-		// the extension treats empty as back/cancel).
+		// free-text prompt (ui.input / ui.editor): Enter submits the typed
+		// value (even empty — the extension treats empty as back/cancel).
 		m.answerInput(d, false)
 		return m, nil
 	}
@@ -2484,9 +2562,10 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// answerInput replies to an extension free-text input dialog (Enter submits
-// the typed value, Esc cancels). Either way the extension resumes — e.g.
-// pi-tasks createTask advances to the description prompt or back to its menu.
+// answerInput replies to an extension free-text dialog (ui.input /
+// ui.editor). Enter submits the typed value, Esc cancels. Either way the
+// extension resumes — e.g. pi-tasks createTask advances to the description
+// prompt or back to its menu.
 // dismissDialog closes the top dialog the way Esc does — used by Esc and by
 // the new Ctrl+C case — and promotes the next parked extension request.
 func (m Model) dismissDialog(d *Dialog) (tea.Model, tea.Cmd) {
@@ -2513,7 +2592,7 @@ func (m *Model) answerInput(d *Dialog, cancelled bool) {
 	// path (the drain promotes one after every close), and a nil client —
 	// tests, or the window before a respawn reconnects — used to panic and
 	// take the whole TUI down.
-	m.fireUI(extension.InputResponse(d.ID, d.Filter, cancelled))
+	m.fireUI(extension.TextResponse(d.ID, d.Filter, cancelled))
 	m.refreshPiTasks() // /tasks-menu writes land in the store file
 	m.applyPopupH()
 	m.drainQueuedDialogs()

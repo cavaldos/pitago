@@ -16,21 +16,21 @@ const maxRecent = recent.MaxRecent // recent models kept in the sidebar
 // palette slots (vars: ApplyTheme swaps them at runtime; defaults are the
 // opencode-like monochrome — subtle borders, dim text, no rainbow).
 var (
-	cAccent      = lipgloss.Color("15")  // selected / emphasis: white
-	cBorder      = lipgloss.Color("240") // subtle borders (opencode BorderNormal)
-	cMuted       = lipgloss.Color("243") // dim text
-	cText        = lipgloss.Color("252") // normal text
-	cCode        = lipgloss.Color("250") // code / output
-	cGreen       = lipgloss.Color("114") // success dot
-	cRed         = lipgloss.Color("203") // error
-	cYellow      = lipgloss.Color("11")  // warning (quit arm)
-	cCyan        = lipgloss.Color("6")   // command names in the / popup
-	cPlan        = lipgloss.Color("13")  // plan mode input border (purple)
-	cSide        = lipgloss.Color("240") // unused now, kept subtle
-	cInput       = lipgloss.Color("252") // input focus: white, not cyan
-	cInputDim    = lipgloss.Color("240") // input idle: subtle gray
-	cHiBg        = lipgloss.Color("238") // selected-row background
-	cHiFg        = lipgloss.Color("15")  // selected-row foreground
+	cAccent   = lipgloss.Color("15")  // selected / emphasis: white
+	cBorder   = lipgloss.Color("240") // subtle borders (opencode BorderNormal)
+	cMuted    = lipgloss.Color("243") // dim text
+	cText     = lipgloss.Color("252") // normal text
+	cCode     = lipgloss.Color("250") // code / output
+	cGreen    = lipgloss.Color("114") // success dot
+	cRed      = lipgloss.Color("203") // error
+	cYellow   = lipgloss.Color("11")  // warning (quit arm)
+	cCyan     = lipgloss.Color("6")   // command names in the / popup
+	cPlan     = lipgloss.Color("13")  // plan mode input border (purple)
+	cSide     = lipgloss.Color("240") // unused now, kept subtle
+	cInput    = lipgloss.Color("252") // input focus: white, not cyan
+	cInputDim = lipgloss.Color("240") // input idle: subtle gray
+	cHiBg     = lipgloss.Color("238") // selected-row background
+	cHiFg     = lipgloss.Color("15")  // selected-row foreground
 	// tool block backgrounds, resolved from pi's dark theme vars:
 	// toolPendingBg / toolSuccessBg / toolErrorBg (pi wraps every tool
 	// execution in a Box with these: pending while running, green on
@@ -59,7 +59,7 @@ var (
 			Padding(0, 1)
 	sideTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	sepStyle       = lipgloss.NewStyle().Foreground(cBorder)
-	cmdPopStyle = lipgloss.NewStyle().
+	cmdPopStyle    = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(cBorder).
 			Padding(0, 1)

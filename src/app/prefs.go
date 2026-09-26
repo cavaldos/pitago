@@ -4,25 +4,27 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Pitago-local TUI prefs (~/.config/pitago/prefs.json, 0600 like theme.json):
 // display toggles pi stores in its own TUI but pitago renders itself.
 // HideThinking mirrors pi's "Hide thinking"; AutocompleteMax mirrors pi's
 // "Autocomplete max items" (applied to the / popup window).
+//
+// The model and the thinking level are deliberately NOT here: pi owns them
+// (settings.json defaultProvider/defaultModel + defaultThinkingLevel) and
+// serves the live values over get_state. A second copy in prefs.json is a
+// shadow that disagrees with pi — pi would answer with its own default while
+// pitago displayed the remembered one. Model/thinking switches are session
+// scope, exactly like pi's RPC set_model / set_thinking_level.
 
 // Prefs is the persisted pitago-local display prefs (zero = pi defaults).
 type Prefs struct {
 	HideThinking    bool              `json:"hideThinking,omitempty"`
 	AutocompleteMax int               `json:"autocompleteMax,omitempty"`
 	CurrentSubagent string            `json:"currentSubagent,omitempty"` // last-picked /subagents entry (● marker)
-	ModelProvider   string            `json:"modelProvider,omitempty"` // last explicitly chosen model: restored after /new (pi resets to default)
-	ModelID         string            `json:"modelID,omitempty"`       // model id paired with ModelProvider ("" = never switched)
-	Side            map[string]bool   `json:"side,omitempty"` // sidebar section key → visible (missing = default)
-	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"` // /command name → "alt+x" (hub-assigned, Alt+key fires it)
+	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
+	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 }
 
 // PrefsPath is ~/.config/pitago/prefs.json ("" when unresolvable).
@@ -90,91 +92,4 @@ func (p Prefs) EffectiveAutocompleteMax() int {
 		return 10
 	}
 	return p.AutocompleteMax
-}
-
-// rememberModel persists the user's explicit model choice so /new can
-// restore it (pi resets to its own default on NewSession). Blank provider/id
-// resolve via the recent list (the cycle path only reports a label).
-func (m *Model) rememberModel(provider, id, label string) {
-	if provider == "" || id == "" {
-		for _, r := range m.recentModels {
-			if r.ID == label || r.DispLabel() == label || (id != "" && r.ID == id) {
-				if provider == "" {
-					provider = r.Provider
-				}
-				if id == "" {
-					id = r.ID
-				}
-			}
-		}
-	}
-	if strings.TrimSpace(id) == "" {
-		return
-	}
-	p := LoadPrefs(m.prefsPath)
-	p.ModelProvider, p.ModelID = provider, id
-	_ = SavePrefs(m.prefsPath, p)
-}
-
-// savedModel returns the persisted model choice ("", "" = never switched).
-func (m *Model) savedModel() (provider, id string) {
-	p := LoadPrefs(m.prefsPath)
-	return p.ModelProvider, p.ModelID
-}
-
-// resolveSavedModel fills a blank provider via GetModels (the SwitchToRecent
-// rule). Nil Pi or lookup failure returns the input unchanged.
-func (m *Model) resolveSavedModel(prov, id string) (string, string) {
-	if prov != "" || m.Pi == nil {
-		return prov, id
-	}
-	if models, err := m.Pi.GetModels(); err == nil {
-		for _, mi := range models {
-			if mi.ID == id || mi.Name == id {
-				prov = mi.Provider
-				if mi.ID != "" {
-					id = mi.ID
-				} else {
-					id = mi.Name
-				}
-				break
-			}
-		}
-	}
-	return prov, id
-}
-
-// ApplySavedModel re-applies the persisted model choice at startup. Call once
-// after Configure and before the program starts; explicit --provider/--model
-// flags win (the caller skips when flags are set). Returns the applied label
-// ("" = nothing saved or restore failed; startup stays silent either way).
-func (m *Model) ApplySavedModel() string {
-	prov, id := m.savedModel()
-	if strings.TrimSpace(id) == "" || m.Pi == nil {
-		return ""
-	}
-	prov, id = m.resolveSavedModel(prov, id)
-	label, err := m.Pi.SetModelByID(prov, id)
-	if err != nil {
-		return ""
-	}
-	if label == "" {
-		label = id
-	}
-	m.ModelLbl = label
-	m.pushRecent(prov, id, label)
-	return label
-}
-
-// restoreModelCmd re-applies the persisted choice after /new. Unresolvable
-// entries stay silent so a removed model never blocks the fresh session.
-func (m *Model) restoreModelCmd(provider, id string) tea.Cmd {
-	return func() tea.Msg {
-		prov, id := m.resolveSavedModel(provider, id)
-		if strings.TrimSpace(id) == "" {
-			return nil
-		}
-		label, err := m.Pi.SetModelByID(prov, id)
-		return ModelCycleMsg{Label: label, Provider: prov, ID: id, Restored: true, Err: err}
-	}
 }

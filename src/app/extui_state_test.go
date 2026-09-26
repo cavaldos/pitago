@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -258,5 +259,199 @@ func TestCtrlCDismissesDialog(t *testing.T) {
 	m = tm.(Model)
 	if len(m.Dialogs) != 0 {
 		t.Fatalf("Ctrl+C must close the dialog, got %+v", m.Dialogs)
+	}
+}
+
+// waitForCmds polls the fake-pi command log: the write is asynchronous
+// (our stdin write, then the stand-in's read loop), so asserting the log
+// immediately after the keystroke is a race.
+func waitForCmds(t *testing.T, cmds func() []string, want int) []string {
+	t.Helper()
+	var lines []string
+	for i := 0; i < 200; i++ {
+		if lines = cmds(); len(lines) >= want {
+			return lines
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return lines
+}
+
+// ui.editor used to be auto-cancelled here: the extension received
+// {cancelled:true} without ever seeing a dialog, resolved undefined and took
+// its default/timeout branch. pi opens a real editor dialog for the same
+// request, so pitago must too. This walks the whole wire path — request ->
+// dialog -> typed value -> extension_ui_response on stdout.
+func TestEditorRequestRendersDialogAndAnswersWithValue(t *testing.T) {
+	pi, cmds := spawnFakePi(t, nil)
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = tm.(Model)
+	m.Pi = pi
+
+	m = m.handleUIRequest([]byte(`{"id":"e1","method":"editor","message":"Rename task","text":"draft"}`))
+	if len(m.Dialogs) != 1 {
+		t.Fatalf("editor must open a dialog, got %d", len(m.Dialogs))
+	}
+	d := m.Dialogs[0]
+	if d.Kind != "input" || d.Method != "editor" || d.ID != "e1" {
+		t.Fatalf("editor dialog = %+v", d)
+	}
+	if d.Title != "Editor" || d.Filter != "draft" {
+		t.Fatalf("untitled editor must default its title and keep the prefilled buffer, got %+v", d)
+	}
+	// Nothing may be written before the user answers.
+	if got := cmds(); len(got) != 0 {
+		t.Fatalf("editor answered before the user typed: %v", got)
+	}
+
+	press := func(msg tea.KeyMsg) {
+		t.Helper()
+		tm, _ := m.Update(msg)
+		m = tm.(Model)
+	}
+	for _, r := range "done" {
+		press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	press(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(m.Dialogs) != 0 {
+		t.Fatalf("Enter must close the editor, got %+v", m.Dialogs)
+	}
+
+	lines := waitForCmds(t, cmds, 1)
+	if len(lines) != 1 {
+		t.Fatalf("commands on the wire = %v, want exactly the response", lines)
+	}
+	var resp struct {
+		Type      string  `json:"type"`
+		ID        string  `json:"id"`
+		Value     *string `json:"value"`
+		Cancelled *bool   `json:"cancelled"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if resp.Type != "extension_ui_response" || resp.ID != "e1" {
+		t.Fatalf("response envelope = %s", lines[0])
+	}
+	if resp.Value == nil || *resp.Value != "draftdone" {
+		t.Fatalf("value must carry the typed text, got %s", lines[0])
+	}
+	if resp.Cancelled != nil {
+		t.Fatalf("Enter must not cancel, got %s", lines[0])
+	}
+}
+
+// pi sends `prefill` for ui.editor and `placeholder` for ui.input; both are
+// the starting point the extension means the user to see. Dropping them made
+// pitago answer with a bare string the extension never offered, so the
+// extension's behaviour diverged from pi's for no visible reason.
+func TestTextDialogSeedsPrefillAndKeepsPlaceholder(t *testing.T) {
+	t.Run("editor prefill seeds the buffer", func(t *testing.T) {
+		pi, _ := spawnFakePi(t, nil)
+		m := New(nil, t.TempDir())
+		tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		m = tm.(Model)
+		m.Pi = pi
+
+		m = m.handleUIRequest([]byte(`{"id":"e2","method":"editor","title":"Subject","prefill":"ship the parity fix"}`))
+		if len(m.Dialogs) != 1 {
+			t.Fatalf("editor must open a dialog, got %d", len(m.Dialogs))
+		}
+		if got := m.Dialogs[0].Filter; got != "ship the parity fix" {
+			t.Fatalf("editor prefill = %q, want the value pi offered", got)
+		}
+		if got := m.Dialogs[0].Title; got != "Subject" {
+			t.Fatalf("editor title = %q, want pi's", got)
+		}
+	})
+
+	t.Run("input placeholder is kept for an empty buffer", func(t *testing.T) {
+		pi, _ := spawnFakePi(t, nil)
+		m := New(nil, t.TempDir())
+		tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		m = tm.(Model)
+		m.Pi = pi
+
+		m = m.handleUIRequest([]byte(`{"id":"e3","method":"input","title":"Task","placeholder":"one line summary"}`))
+		if len(m.Dialogs) != 1 {
+			t.Fatalf("input must open a dialog, got %d", len(m.Dialogs))
+		}
+		d := m.Dialogs[0]
+		if d.Filter != "" {
+			t.Fatalf("input with no prefill must start empty, got %q", d.Filter)
+		}
+		if d.Placeholder != "one line summary" {
+			t.Fatalf("input placeholder = %q, want pi's", d.Placeholder)
+		}
+		// The hint is only decoration: the empty buffer must not render it
+		// as if it were text the user typed.
+		out := m.View()
+		if !strings.Contains(out, "one line summary") {
+			t.Fatalf("placeholder must be visible while the buffer is empty")
+		}
+	})
+
+	t.Run("legacy text field still seeds the buffer", func(t *testing.T) {
+		pi, _ := spawnFakePi(t, nil)
+		m := New(nil, t.TempDir())
+		tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		m = tm.(Model)
+		m.Pi = pi
+
+		m = m.handleUIRequest([]byte(`{"id":"e4","method":"editor","text":"legacy"}`))
+		if got := m.Dialogs[0].Filter; got != "legacy" {
+			t.Fatalf("legacy text field = %q, want it tolerated", got)
+		}
+	})
+}
+
+// Esc on the editor is a real cancel ({cancelled:true}), matching pi — the
+// extension resumes instead of blocking until its own timeout.
+func TestEditorRequestEscCancels(t *testing.T) {
+	pi, cmds := spawnFakePi(t, nil)
+	m := New(nil, t.TempDir())
+	m.Pi = pi
+	m = m.handleUIRequest([]byte(`{"id":"e2","method":"editor"}`))
+	if m.Dialogs[0].Title != "Editor" {
+		t.Fatalf("untitled editor must default its title, got %q", m.Dialogs[0].Title)
+	}
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if len(m.Dialogs) != 0 || len(m.queuedDialogs) != 0 {
+		t.Fatalf("Esc must close the editor, dialogs=%+v", m.Dialogs)
+	}
+	lines := waitForCmds(t, cmds, 1)
+	if len(lines) != 1 || !strings.Contains(lines[0], `"cancelled": true`) {
+		t.Fatalf("Esc wire payload = %v", lines)
+	}
+	if strings.Contains(lines[0], `"value"`) {
+		t.Fatalf("a cancel must not carry a value: %s", lines[0])
+	}
+}
+
+// A second editor raised while a dialog is open is parked FIFO, exactly
+// like ui.input — it opens its own dialog afterwards instead of being
+// swallowed by the event pump.
+func TestEditorRequestQueuesBehindOpenDialog(t *testing.T) {
+	m := New(nil, t.TempDir())
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = tm.(Model)
+	m = m.handleUIRequest([]byte(`{"id":"q1","method":"select","title":"first","options":["A"]}`))
+	um, _ := m.Update(piEventMsg{Event: pirpc.Event{
+		Type: "extension_ui_request",
+		Raw:  json.RawMessage(`{"id":"q2","method":"editor","title":"rename"}`),
+	}})
+	m = um.(Model)
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Title != "first" {
+		t.Fatalf("open dialog must not stack: %+v", m.Dialogs)
+	}
+	if len(m.queuedDialogs) != 1 {
+		t.Fatalf("queued = %d, want the editor parked", len(m.queuedDialogs))
+	}
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Title != "rename" || m.Dialogs[0].Kind != "input" {
+		t.Fatalf("editor must be promoted next, got %+v", m.Dialogs)
 	}
 }

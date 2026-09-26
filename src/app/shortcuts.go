@@ -54,6 +54,8 @@ var shortcutsDb = []ShortcutItem{
 	{"Ctrl+F", "Star/unstar model (in picker)", "UI"},
 
 	// Input / Tray
+	{"Alt+Enter", "Queue message as follow-up (waits for the turn to finish)", "Input"},
+	{"!cmd", "Run a shell command through pi (!!cmd keeps output out of context)", "Input"},
 	{"↓ (last input line)", "Move into image tray", "Input"},
 	{"←→ (tray)", "Select image chip", "Input"},
 	{"⌫ (tray empty)", "Delete last image chip", "Input"},

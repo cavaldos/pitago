@@ -47,6 +47,7 @@ type Dialog struct {
 	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
+	Placeholder       string // free-text dialog: dim hint shown while the buffer is empty
 	FIdx              []int
 	FavSet            map[string]bool // model picker: starred provider\x00id (★ column, sorted first)
 	PIdx              []int           // login: filtered provider indices into Provs
@@ -159,7 +160,6 @@ type Model struct {
 	Side                map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
 	Dialogs             []*Dialog
 	connErr             string
-	AutoRetry           bool                    // no RPC getter; tracked locally (default on)
 	HideThinking        bool                    // /settings: skip thinking blocks in chat (pi parity, pitago-local)
 	ShowImages          bool                    // terminal.showImages
 	ImageWidthCells     int                     // terminal.imageWidthCells
@@ -182,6 +182,8 @@ type Model struct {
 	atPrefix            string
 	atItems             []mention.Item
 	imgAtts             []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
+	bashRunning         bool        // a "!cmd" runs through pi right now (Esc aborts it, pi parity)
+	retrying            bool        // pi is auto-retrying a failed turn (Esc aborts the retry)
 	imgSeq              int         // chip counter, never renumbered
 	trayFocus           bool        // cursor moved into the tray (↓ from last input line)
 	imgCursor           int         // selected chip while trayFocus
@@ -284,7 +286,25 @@ type wsMsg struct {
 	data wsData
 }
 
-type sentAckMsg struct{ err error }
+// sentAckMsg reports a submitted message. err is set only when pi refused
+// the message outright; text is then handed back to the editor so a refused
+// send never silently drops what the user wrote. queued marks the self-heal
+// path: pitago believed pi was idle, pi was still streaming, and the message
+// went into pi's follow-up queue instead of being lost.
+type sentAckMsg struct {
+	err    error
+	text   string
+	queued bool
+	tray   []imgAttach // chips consumed by the send, returned on refusal
+}
+
+// escAbortMsg reports the double-Esc cancel: cleared steer/follow-up text
+// (pi parity — an abort restores the queue into the editor) plus the abort
+// error, since the queue restore and the abort are one RPC round trip.
+type escAbortMsg struct {
+	restored []string
+	err      error
+}
 
 type quitDisarmMsg struct{ gen int } // quit-arm window elapsed
 
@@ -296,7 +316,6 @@ type ModelCycleMsg struct {
 	Label    string
 	Provider string // may be "" (cycle path); resolved label-only entry
 	ID       string // model id when known, else ""
-	Restored bool   // true when re-applied after /new (notice says "restored")
 	Err      error
 }
 
@@ -497,7 +516,6 @@ func New(pi *pirpc.Client, cwd string) Model {
 		Status:        "connecting to pi…",
 		cwd:           cwd,
 		ModelLbl:      "…",
-		AutoRetry:     true,
 		showPlugins:   true, // PLUGINS starts expanded
 	}
 }
@@ -633,6 +651,9 @@ func (m *Model) forwardExtensionCommandNamed(text, name string) tea.Cmd {
 	}
 }
 
+// sendCmd submits a message. steer keeps pi's steering behaviour (never
+// downgraded to a plain prompt); a plain prompt self-heals when pi turns out
+// to be streaming anyway — see the AgentBusyError branch below.
 func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) tea.Cmd {
 	m.thinking = true
 	m.escArm = time.Time{} // fresh turn drops a stale cancel arm
@@ -641,23 +662,85 @@ func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) te
 	return func() tea.Msg {
 		var err error
 		if steer {
+			// Pi parity: steer is never downgraded to a plain prompt.
+			// pi calls session.steer(...) directly; a failure is reported,
+			// not silently re-sent as a fresh turn.
 			_, err = m.Pi.Steer(text, images...)
-			if err != nil { // fallback: follow_up via plain prompt
-				_, err = m.Pi.Prompt(text, images...)
-			}
-		} else {
-			_, err = m.Pi.Prompt(text, images...)
+			return sentAckMsg{err: err, text: text}
 		}
-		return sentAckMsg{err: err}
+		_, err = m.Pi.Prompt(text, images...)
+		if !pirpc.IsAgentBusy(err) {
+			return sentAckMsg{err: err, text: text}
+		}
+		// Self-heal the desync. pitago's streaming flag and pi's isStreaming
+		// can disagree (a turn pitago already considers settled, a steer pi
+		// has not started draining, a slow agent_settled). pi answers
+		// success:false with "Agent is already processing. Specify
+		// streamingBehavior ('steer' or 'followUp') to queue the message."
+		// (dist/core/agent-session.js:1243-1246) — that refusal is the
+		// reliable signal, and it never means the text was taken. Queue it
+		// as a follow-up instead of losing it; the follow-up then runs when
+		// the turn ends, which is also what pi's own Alt+Enter does
+		// (dist/modes/interactive/interactive-mode.js:3546).
+		if _, ferr := m.Pi.FollowUp(text, images...); ferr != nil {
+			return sentAckMsg{err: ferr, text: text}
+		}
+		return sentAckMsg{queued: true, text: text}
 	}
 }
+
+// sendFollowUpCmd queues the input to run after the current turn (pi's
+// Alt+Enter: prompt(text,{streamingBehavior:'followUp'})). The message is
+// not lost: it waits in pi's queue and the sidebar shows it there.
+func (m *Model) sendFollowUpCmd(text string, images []pirpc.ImageContent) tea.Cmd {
+	m.thinking = true
+	m.escArm = time.Time{}
+	m.Status = "queued as follow-up…"
+	m.RefreshFollow()
+	return func() tea.Msg {
+		_, err := m.Pi.FollowUp(text, images...)
+		return sentAckMsg{err: err, text: text, queued: err == nil}
+	}
+}
+
+// Send modes for one submit. pi picks the behaviour from session.isStreaming
+// on every submit (interactive-mode.js:2617-2622): Enter steers a running
+// turn, Alt+Enter queues a follow-up.
+const (
+	sendPrompt   = iota // idle: pi starts a new turn
+	sendSteer           // streaming + Enter: steers the running turn
+	sendFollowUp        // streaming + Alt+Enter: queued for after the turn
+)
 
 // submitInput sends the input (or steers mid-turn). Shared by Enter and
 // tray-Enter. Empty text + tray sends the images alone.
 func (m *Model) submitInput() tea.Cmd {
+	return m.submit(sendPrompt)
+}
+
+// submitFollowUp is Alt+Enter. pi queues a follow-up while streaming and
+// treats Alt+Enter as a plain submit when idle
+// (interactive-mode.js:3536-3558).
+func (m *Model) submitFollowUp() tea.Cmd {
+	return m.submit(sendFollowUp)
+}
+
+func (m *Model) submit(mode int) tea.Cmd {
 	text := strings.TrimSpace(m.ta.Value())
 	if text == "" && len(m.imgAtts) == 0 {
 		return nil
+	}
+	if mode == sendFollowUp && !m.thinking {
+		mode = sendPrompt // pi: Alt+Enter is an ordinary submit while idle
+	}
+	// "!cmd" is pi's shell escape (interactive-mode.js:2587-2601): the
+	// command runs in the session cwd through pi's own bash RPC, so its
+	// output is a session entry the model can see. pitago never spawns a
+	// shell of its own. "!!cmd" keeps the output out of the model's
+	// context (excludeFromContext). Images ride a prompt, not a bash call,
+	// so a tray full of chips sends the text as a normal message.
+	if cmd, exclude, ok := piBashCommand(text); ok && len(m.imgAtts) == 0 {
+		return m.runBashCmd(cmd, exclude, text)
 	}
 	m.pushHist(text)
 	m.histIdx = -1
@@ -672,6 +755,10 @@ func (m *Model) submitInput() tea.Cmd {
 	// stays so history keeps the file ref, images ride the RPC.
 	// Tray chips (drops/pastes/Tab-completed @) join in too.
 	images, notes := m.takeImages(text)
+	// Tray chips are consumed by the send; a refused send must give them
+	// back, or an image the user picked would silently vanish. Snapshot
+	// before takeImages clears the tray.
+	tray := append([]imgAttach(nil), m.imgAtts...)
 	for _, n := range notes {
 		m.AddBlock(Block{Kind: "notice", Text: n, Err: images == nil})
 	}
@@ -681,15 +768,75 @@ func (m *Model) submitInput() tea.Cmd {
 		m.Refresh()
 		return nil
 	}
-	if m.thinking {
+	if mode == sendFollowUp {
 		m.ta.Reset()
 		m.closeAt()
-		return m.sendCmd(true, text, images)
+		m.Refresh()
+		return withTrayRestore(m.sendFollowUpCmd(text, images), tray)
+	}
+	m.imgAtts = tray // a refused send keeps the chips; a sent one drops them
+	if mode == sendSteer || m.thinking {
+		m.ta.Reset()
+		m.closeAt()
+		return withTrayRestore(m.sendCmd(true, text, images), tray)
 	}
 	m.ta.Reset()
 	m.closeAt()
 	m.Refresh()
-	return m.sendCmd(false, text, images)
+	return withTrayRestore(m.sendCmd(false, text, images), tray)
+}
+
+// withTrayRestore hands the consumed tray chips to the ack so a refused
+// send can put them back in the input (a send pi never accepted must not
+// cost the user their attachments).
+func withTrayRestore(cmd tea.Cmd, tray []imgAttach) tea.Cmd {
+	if len(tray) == 0 {
+		return cmd
+	}
+	inner := cmd
+	return func() tea.Msg {
+		msg := inner()
+		if ack, ok := msg.(sentAckMsg); ok {
+			ack.tray = tray
+			return ack
+		}
+		return msg
+	}
+}
+
+// piBashCommand parses pi's shell escape: "!cmd" runs the command,
+// "!!cmd" keeps the output out of the model's context. A bare "!" is not a
+// command (pi needs a non-empty body) and stays chat text.
+func piBashCommand(text string) (string, bool, bool) {
+	if !strings.HasPrefix(text, "!") {
+		return "", false, false
+	}
+	exclude := strings.HasPrefix(text, "!!")
+	body := text[1:]
+	if exclude {
+		body = text[2:]
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", false, false
+	}
+	return body, exclude, true
+}
+
+// restoreQueuedToEditor puts messages cleared off pi's queue back into the
+// input, pi parity: on abort pi prepends the queued text to whatever the
+// user has typed (restoreQueuedMessagesToEditor → setText(queued ⧺⧺ current)).
+// Dropping them would silently discard text the user already sent.
+func (m *Model) restoreQueuedToEditor(queued []string) {
+	parts := make([]string, 0, 2)
+	if joined := strings.Join(queued, "\n\n"); strings.TrimSpace(joined) != "" {
+		parts = append(parts, joined)
+	}
+	if cur := m.ta.Value(); strings.TrimSpace(cur) != "" {
+		parts = append(parts, cur)
+	}
+	m.ta.SetValue(strings.Join(parts, "\n\n"))
+	m.histIdx = -1 // restored text is live input, not a recalled message
 }
 
 func (m *Model) queryStats() tea.Cmd {
@@ -933,28 +1080,22 @@ func (m *Model) ThinkLvl() string { return m.thinkLvl }
 func (m *Model) CycleThinking() tea.Cmd {
 	m.Status = "switching thinking…"
 	m.Refresh()
-	cur := m.ThinkLvl()
 	return func() tea.Msg {
-		levels, err := m.Pi.GetLevels()
+		// Pi parity: pi's cycle command advances its own level order
+		// (session.cycleThinkingLevel → {level}); pitago used to
+		// recompute "next after current" from get_available_thinking_levels,
+		// which drifts from pi the moment the level list or the current
+		// level is not what pitago thinks it is.
+		level, err := m.Pi.CycleThinkingLevel()
 		if err != nil {
 			return SettingsRefreshMsg{Err: err}
 		}
-		if len(levels) == 0 {
+		if level == "" {
 			return SettingsRefreshMsg{Err: fmt.Errorf("no thinking levels")}
-		}
-		next := levels[0]
-		for i, l := range levels {
-			if l == cur {
-				next = levels[(i+1)%len(levels)]
-				break
-			}
-		}
-		if err := m.Pi.SetLevel(next); err != nil {
-			return SettingsRefreshMsg{Err: err}
 		}
 		// Toast, not chat: rapid Ctrl+T replaces one popup instead of
 		// spamming one line per press — same Notice path as /thinking.
-		return SettingsRefreshMsg{Notice: "thinking → " + next, Level: next}
+		return SettingsRefreshMsg{Notice: "thinking → " + level, Level: level}
 	}
 }
 

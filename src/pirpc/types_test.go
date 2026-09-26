@@ -48,6 +48,42 @@ func TestPromptEmptyMessagePresent(t *testing.T) {
 	}
 }
 
+// extension_ui_response is a 3-variant union in pi (verified on 0.87.1):
+// {id,value}, {id,confirmed} and {id,cancelled:true} — `cancelled` is a
+// LITERAL true there. The encoding must keep each variant to itself: no
+// extra key, and nothing emitted for the fields a variant does not use.
+func TestExtensionUIResponseUnionShapes(t *testing.T) {
+	value, yes, cancelled := "typed", true, true
+	cases := []struct {
+		name string
+		cmd  Command
+		want string
+	}{
+		{"value", Command{Type: "extension_ui_response", ID: "r1", Value: &value},
+			`{"id":"r1","type":"extension_ui_response","message":"","value":"typed"}`},
+		{"confirmed", Command{Type: "extension_ui_response", ID: "r2", Confirmed: &yes},
+			`{"id":"r2","type":"extension_ui_response","message":"","confirmed":true}`},
+		{"cancelled", Command{Type: "extension_ui_response", ID: "r3", Cancelled: &cancelled},
+			`{"id":"r3","type":"extension_ui_response","message":"","cancelled":true}`},
+	}
+	for _, tc := range cases {
+		raw, err := json.Marshal(tc.cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != tc.want {
+			t.Errorf("%s: got %s want %s", tc.name, raw, tc.want)
+		}
+	}
+	// A dismissed dialog sets cancelled to true or leaves it nil — pi
+	// declares no `cancelled:false` variant, so a builder must never
+	// produce one.
+	raw, _ := json.Marshal(Command{Type: "extension_ui_response", ID: "r4"})
+	if string(raw) != `{"id":"r4","type":"extension_ui_response","message":""}` {
+		t.Errorf("an unset variant must be omitted, got %s", raw)
+	}
+}
+
 func TestImageCount(t *testing.T) {
 	raw := json.RawMessage(`[{"type":"text","text":"hi"},{"type":"image","data":"aGk=","mimeType":"image/png"}]`)
 	if n := ImageCount(raw); n != 1 {

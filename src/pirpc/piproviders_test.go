@@ -11,11 +11,11 @@ const piBundleFixture = `blah blah getApiKeyEnvVars(provider){if(provider==="git
 func TestParsePiEnvMap(t *testing.T) {
 	got := parsePiEnvMap(piBundleFixture)
 	want := map[string]string{
-		"ant-ling":         "ANT_LING_API_KEY",
+		"ant-ling":           "ANT_LING_API_KEY",
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
-		"openai":           "OPENAI_API_KEY",
-		"nvidia":           "NVIDIA_API_KEY",
-		"meta":             "META_API_KEY",
+		"openai":             "OPENAI_API_KEY",
+		"nvidia":             "NVIDIA_API_KEY",
+		"meta":               "META_API_KEY",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %d entries", got, len(want))

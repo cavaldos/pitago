@@ -6,15 +6,18 @@ import (
 )
 
 func TestNeedsUpdate(t *testing.T) {
-	cases := []struct{ cur, latest string; want bool }{
+	cases := []struct {
+		cur, latest string
+		want        bool
+	}{
 		{"v0.0.1", "v0.0.2", true},
 		{"v0.0.2", "v0.0.2", false},
 		{"v0.1.0", "v0.0.9", false},
 		{"v0.0.10", "v0.0.9", false},
-		{"dev", "v0.0.1", true},       // source build → offer install
-		{"abc1234", "v0.0.1", true},   // commit hash → offer install
-		{"", "v0.0.1", true},          // empty → offer install
-		{"v0.0.2", "garbage", false},  // bad latest → never nag
+		{"dev", "v0.0.1", true},      // source build → offer install
+		{"abc1234", "v0.0.1", true},  // commit hash → offer install
+		{"", "v0.0.1", true},         // empty → offer install
+		{"v0.0.2", "garbage", false}, // bad latest → never nag
 		{"v0.0.2", "", false},
 	}
 	for _, c := range cases {
@@ -59,7 +62,8 @@ func TestTagFromLocation(t *testing.T) {
 	}
 }
 
-func TestFresh(t *testing.T) {	if Fresh(Cache{}, time.Hour) {
+func TestFresh(t *testing.T) {
+	if Fresh(Cache{}, time.Hour) {
 		t.Error("zero cache must be stale")
 	}
 	if !Fresh(Cache{LastCheck: time.Now(), LatestTag: "v0.0.1"}, CheckTTL) {

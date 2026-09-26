@@ -314,10 +314,12 @@ func loadSettingsState(m *app.Model) (app.SettingsState, error) {
 	}
 	cfg := pirpc.ReadPiSettings()
 	sst = app.SettingsState{
-		Steering:        app.OrDefault(st.SteeringMode, pirpc.PiString(cfg, "steeringMode", "one-at-a-time")),
-		FollowUp:        app.OrDefault(st.FollowUpMode, pirpc.PiString(cfg, "followUpMode", "one-at-a-time")),
+		Steering: app.OrDefault(st.SteeringMode, pirpc.PiString(cfg, "steeringMode", "one-at-a-time")),
+		FollowUp: app.OrDefault(st.FollowUpMode, pirpc.PiString(cfg, "followUpMode", "one-at-a-time")),
+		// retry is settings.json-only (get_state does not carry it), so pi's
+		// file is the truth: default enabled, same as pi reads it.
+		AutoRetry:       pirpc.PiBool(cfg, "retry.enabled", true),
 		AutoCompact:     st.AutoCompaction,
-		AutoRetry:       m.AutoRetry,
 		Thinking:        st.ThinkingLevel,
 		Model:           m.ModelLbl,
 		Theme:           app.OrDefault(m.ThemeName, "default"),
@@ -563,7 +565,8 @@ func settingsAction(m *app.Model, ri int) (tea.Model, tea.Cmd) {
 			if err := m.Pi.SetSteering(next); err != nil {
 				return app.SettingsMsg{Err: err}
 			}
-			_ = pirpc.SetPiSetting("steeringMode", next) // next start; live now via RPC
+			// No second writer: pi's set_steering_mode persists steeringMode
+			// through its own SettingsManager, so the RPC is the only channel.
 			return refresh()
 		}
 	case 3:
@@ -577,7 +580,7 @@ func settingsAction(m *app.Model, ri int) (tea.Model, tea.Cmd) {
 			if err := m.Pi.SetFollowUp(next); err != nil {
 				return app.SettingsMsg{Err: err}
 			}
-			_ = pirpc.SetPiSetting("followUpMode", next)
+			// pi's set_follow_up_mode persists followUpMode itself.
 			return refresh()
 		}
 	case 4:
@@ -587,20 +590,22 @@ func settingsAction(m *app.Model, ri int) (tea.Model, tea.Cmd) {
 			if err := m.Pi.SetAutoCompact(!st.AutoCompact); err != nil {
 				return app.SettingsMsg{Err: err}
 			}
-			_ = pirpc.SetPiSetting("compaction.enabled", !st.AutoCompact)
+			// pi's set_auto_compaction persists compaction.enabled itself.
 			return refresh()
 		}
 	case 5:
-		m.AutoRetry = !st.AutoRetry
+		// pi has no retry getter (get_state omits it), so the row reads
+		// settings.json — pi's own default is enabled. The toggle goes
+		// through the RPC, which is also what persists retry.enabled; no local
+		// mirror to keep in sync.
+		auto := !st.AutoRetry
 		m.Status = "switching auto-retry…"
 		m.Refresh()
-		auto := m.AutoRetry
 		return m, func() tea.Msg {
 			if err := m.Pi.SetAutoRetry(auto); err != nil {
-				m.AutoRetry = !auto
 				return app.SettingsMsg{Err: err}
 			}
-			_ = pirpc.SetPiSetting("retry.enabled", auto)
+			// pi's set_auto_retry persists retry.enabled itself.
 			return refresh()
 		}
 	case 6: // theme picker
@@ -671,7 +676,14 @@ func applyLocalSetting(m *app.Model, fr fileSetting, next string) tea.Cmd {
 		m.HideThinking = next == "on"
 		hide := m.HideThinking
 		return func() tea.Msg {
-			_ = pirpc.SetPiSetting(path, val) // cross-compat with stock pi
+			// A refusal (unreadable settings.json, or a non-object on the
+			// path) is silent in pitago's favour: the row would look toggled
+			// while pi never changed. Report it through the shared notice
+			// path — its error branch never touches the dialog, so no
+			// respawn is triggered for these local rows.
+			if err := pirpc.SetPiSetting(path, val); err != nil { // cross-compat with stock pi
+				return app.SettingWrittenMsg{Err: err}
+			}
 			prefs := app.LoadPrefs(prefsPath)
 			prefs.HideThinking = hide
 			_ = app.SavePrefs(prefsPath, prefs)
@@ -688,7 +700,9 @@ func applyLocalSetting(m *app.Model, fr fileSetting, next string) tea.Cmd {
 		}
 	case "Tree filter mode":
 		return func() tea.Msg {
-			_ = pirpc.SetPiSetting(path, val) // /tree reads it live
+			if err := pirpc.SetPiSetting(path, val); err != nil { // /tree reads it live
+				return app.SettingWrittenMsg{Err: err}
+			}
 			return nil
 		}
 	}
@@ -1074,6 +1088,21 @@ func All() []app.Builtin {
 		pi("thinking", "<level> — Set thinking level", "/thinking", func(m *app.Model, arg string) tea.Cmd {
 			return m.OpenThinking()
 		}),
+		pi("compact", "[instructions] — Compact the session context now", "/compact [instructions]", func(m *app.Model, arg string) tea.Cmd {
+			return compactSession(m, arg)
+		}),
+		pi("fork", "Fork the session from a previous user message", "/fork", func(m *app.Model, arg string) tea.Cmd {
+			return forkPick(m)
+		}),
+		pi("clone", "Duplicate this session at the current position", "/clone", func(m *app.Model, arg string) tea.Cmd {
+			return cloneSession(m)
+		}),
+		pi("name", "[name] — Show or set the session name", "/name [name]", func(m *app.Model, arg string) tea.Cmd {
+			return nameSession(m, arg)
+		}),
+		pi("export", "[path] — Export the session as HTML", "/export [path.html]", func(m *app.Model, arg string) tea.Cmd {
+			return exportSession(m, arg)
+		}),
 		{
 			Name: "trajectory", Desc: "Harness-style run trace (numbered steps · Enter views full step)", Usage: "/trajectory [all|tools|messages]",
 			Origin: OriginPitago,
@@ -1237,9 +1266,10 @@ func All() []app.Builtin {
 	}
 	// Pi builtins with no RPC equivalent stay intercepted so they report
 	// instead of leaking into the chat (old runBuiltin default branch).
+	// Everything pi declares in dist/modes/rpc/rpc-types.d.ts is NOT here:
+	// compact, fork, clone, name and export are driven over RPC above.
 	for _, name := range []string{
-		"scoped-models", "export", "import", "share", "name",
-		"changelog", "hotkeys", "fork", "clone", "trust", "compact",
+		"scoped-models", "import", "share", "changelog", "hotkeys", "trust",
 	} {
 		name := name
 		all = append(all, app.Builtin{

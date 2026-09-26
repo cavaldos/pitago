@@ -1,11 +1,81 @@
 package builtin
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"pitago/src/app"
+	"pitago/src/pirpc"
 )
+
+// fakePiState answers get_state (and nothing else) so loadSettingsState can
+// be driven end to end: retry is not part of get_state, it only ever lives in
+// pi's settings.json.
+const fakePiState = `#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    cmd = json.loads(line)
+    resp = {"id": cmd.get("id", ""), "type": "response",
+            "command": cmd.get("type", ""), "success": True}
+    if cmd.get("type") == "get_state":
+        resp["data"] = {"model": {"id": "m", "provider": "p"},
+                        "thinkingLevel": "high", "steeringMode": "all"}
+    print(json.dumps(resp), flush=True)
+`
+
+// settingsStateFor runs loadSettingsState against a fake pi and a settings.json
+// holding `body` ("" = no file at all).
+func settingsStateFor(t *testing.T, body string) app.SettingsState {
+	t.Helper()
+	dir := t.TempDir()
+	agent := filepath.Join(dir, "agent")
+	if err := os.MkdirAll(agent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if body != "" {
+		if err := os.WriteFile(filepath.Join(agent, "settings.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PI_CODING_AGENT_DIR", agent)
+	bin := filepath.Join(dir, "fake-pi")
+	if err := os.WriteFile(bin, []byte(fakePiState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pi, err := pirpc.Spawn(pirpc.Options{Bin: bin, Dir: dir})
+	if err != nil {
+		t.Fatalf("spawn fake pi: %v", err)
+	}
+	t.Cleanup(pi.Close)
+
+	m := app.New(pi, dir)
+	st, err := loadSettingsState(&m)
+	if err != nil {
+		t.Fatalf("loadSettingsState: %v", err)
+	}
+	return st
+}
+
+// Auto-retry is a settings.json value (get_state does not carry it) and pi's
+// default is enabled: the row must read pi's file, never a pitago mirror.
+func TestAutoRetryRowReadsPiSettings(t *testing.T) {
+	if got := settingsStateFor(t, "").AutoRetry; !got {
+		t.Error("missing settings.json must fall back to pi's default (enabled)")
+	}
+	if got := settingsStateFor(t, `{"retry":{"enabled":false}}`).AutoRetry; got {
+		t.Error("retry.enabled=false in pi's settings.json must show as off")
+	}
+	// The rest of the live rows still come from get_state.
+	st := settingsStateFor(t, `{"steeringMode":"all"}`)
+	if st.Thinking != "high" || st.Steering != "all" {
+		t.Errorf("live rows must still come from get_state, got %+v", st)
+	}
+}
 
 // Pi parity: 7 live rows + 15 file/local rows (image block first, like the
 // stock pi screenshot: skill commands, show images, image width, ...),

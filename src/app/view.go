@@ -934,7 +934,7 @@ func (m Model) renderInput() string {
 		if m.escArmed() {
 			left = "press Esc again to cancel"
 		} else {
-			left = "↵ steer · Esc×2 cancel"
+			left = "↵ steer · ⌥↵ follow-up · Esc×2 cancel"
 		}
 	} else if plan {
 		border = cPlan
@@ -1111,7 +1111,13 @@ func (m Model) renderDialog() string {
 		b.WriteString("\n" + toolStyle.Render("Enter rename · empty clears · Esc back to /login"))
 	} else if d.Kind == "input" {
 		b.WriteString("\n")
-		b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+		// pi's ui.input placeholder: a dim hint while the buffer is empty,
+		// so the offered context is visible instead of a bare cursor.
+		if d.Filter == "" && d.Placeholder != "" {
+			b.WriteString(toolStyle.Render(d.Placeholder) + cmdHiStyle.Render("▌") + "\n")
+		} else {
+			b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+		}
 		b.WriteString("\n" + toolStyle.Render("Enter save · Esc cancel"))
 	} else {
 		b.WriteString("\n")
@@ -2489,7 +2495,13 @@ func (m Model) renderInputBox() string {
 		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+	// pi's ui.input placeholder: a dim hint while the buffer is empty, so the
+	// offered context is visible instead of a bare cursor.
+	if d.Filter == "" && d.Placeholder != "" {
+		b.WriteString(toolStyle.Render(d.Placeholder) + cmdHiStyle.Render("▌") + "\n")
+	} else {
+		b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+	}
 	b.WriteString("\n" + toolStyle.Render("type · Enter save · Esc cancel"))
 	boxW := 60
 	if mw := m.mainW() - 4; mw < boxW && mw > 20 {

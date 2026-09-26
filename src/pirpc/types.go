@@ -20,25 +20,32 @@ type ImageContent struct {
 // the prompt ("Cannot read properties of undefined") — tray-only sends
 // (images, empty text) must still transmit "message":"".
 type Command struct {
-	ID                 string         `json:"id,omitempty"`
-	Type               string         `json:"type"`
-	Message            string         `json:"message"`
-	Images             []ImageContent `json:"images,omitempty"`
-	StreamingBehavior  string         `json:"streamingBehavior,omitempty"`
-	ShellCommand       string         `json:"command,omitempty"`
-	SessionPath        string         `json:"sessionPath,omitempty"`
-	ParentSession      string         `json:"parentSession,omitempty"`
-	Provider           string         `json:"provider,omitempty"`
-	ModelID            string         `json:"modelId,omitempty"`
-	Level              string         `json:"level,omitempty"`
-	Mode               string         `json:"mode,omitempty"`
-	Enabled            *bool          `json:"enabled,omitempty"`
-	Name               string         `json:"name,omitempty"`
-	CustomInstructions string         `json:"customInstructions,omitempty"`
-	OutputPath         string         `json:"outputPath,omitempty"`
-	EntryID            string         `json:"entryId,omitempty"`
-	Since              string         `json:"since,omitempty"`
-	// extension_ui_response fields
+	ID                string         `json:"id,omitempty"`
+	Type              string         `json:"type"`
+	Message           string         `json:"message"`
+	Images            []ImageContent `json:"images,omitempty"`
+	StreamingBehavior string         `json:"streamingBehavior,omitempty"`
+	ShellCommand      string         `json:"command,omitempty"`
+	SessionPath       string         `json:"sessionPath,omitempty"`
+	ParentSession     string         `json:"parentSession,omitempty"`
+	// ExcludeFromContext is pi's bash{excludeFromContext?} flag. A pointer,
+	// so "omit the key" and "send false" stay distinguishable on the wire.
+	ExcludeFromContext *bool  `json:"excludeFromContext,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	ModelID            string `json:"modelId,omitempty"`
+	Level              string `json:"level,omitempty"`
+	Mode               string `json:"mode,omitempty"`
+	Enabled            *bool  `json:"enabled,omitempty"`
+	Name               string `json:"name,omitempty"`
+	CustomInstructions string `json:"customInstructions,omitempty"`
+	OutputPath         string `json:"outputPath,omitempty"`
+	EntryID            string `json:"entryId,omitempty"`
+	Since              string `json:"since,omitempty"`
+	// extension_ui_response fields. pi's answer is a 3-variant union
+	// (verified on pi 0.87.1): {id,value} for select/input/editor,
+	// {id,confirmed} for confirm, and {id,cancelled:true} to dismiss —
+	// `cancelled` is a LITERAL true there, so set Cancelled to a pointer to
+	// true or leave it nil; a `cancelled:false` is not a variant pi declares.
 	Value     *string `json:"value,omitempty"`
 	Confirmed *bool   `json:"confirmed,omitempty"`
 	Cancelled *bool   `json:"cancelled,omitempty"`
@@ -189,11 +196,14 @@ type ModelInfo struct {
 }
 
 // TreeEntry is one session entry; TreeNode forms the get_tree hierarchy.
-// Field names mirror pi's SessionEntry/SessionTreeNode JSON: message entries
-// carry Message, model_change carries Provider/ModelID, thinking_level_change
-// carries ThinkingLevel, compaction carries Summary/TokensBefore,
-// branch_summary carries Summary, custom/custom_message carry CustomType
-// (+Content), label entries carry Label, session_info carries Name.
+// Field names mirror pi's SessionEntry/SessionTreeNode JSON: a message entry
+// is {type,id,parentId,timestamp,message} and carries NO top-level
+// provider/model (those live on the message itself); a model change is a
+// single modelId — it has NO provider field; thinking_level_change carries
+// ThinkingLevel, compaction carries Summary/TokensBefore, branch_summary
+// carries Summary, custom/custom_message carry CustomType (+Content), label
+// entries carry Label, session_info carries Name. A `usage` entry is the one
+// with top-level Provider/Model (see SessionEntry).
 type TreeEntry struct {
 	Type          string          `json:"type"`
 	ID            string          `json:"id"`
@@ -311,6 +321,12 @@ type EntryMessage struct {
 
 // SessionEntry is one row of get_entries (only the fields the
 // usage/cost breakdown needs; the rest is ignored).
+//
+// Provider/Model are the TOP-LEVEL fields, and pi only sets them on a
+// `usage` entry ({type:'usage',kind,provider,model,usage}); a `message` entry
+// has none — its provider/model live inside Message. UsageBreakdown therefore
+// reads assistant rows from Message and usage rows from these two fields, and
+// a message entry must not be trusted to carry them.
 type SessionEntry struct {
 	Type     string        `json:"type"`
 	Provider string        `json:"provider"`

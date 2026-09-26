@@ -127,13 +127,13 @@ func TestRenderResumeFixedSize(t *testing.T) {
 	nasty := strings.Repeat("z", 200)
 	d := &Dialog{Kind: "sessions", Title: "Resume session (all)", Scope: "all",
 		Options: []string{nasty}, Descs: []string{"x"},
-		Paths:   []string{"p"}, Payload: []string{nasty + "\n" + nasty},
-		Filter:  strings.Repeat("f", 120)}
+		Paths: []string{"p"}, Payload: []string{nasty + "\n" + nasty},
+		Filter: strings.Repeat("f", 120)}
 	d.Reindex()
 	wNasty := trajBoxWidth(t, m.renderResumeDialog(d))
 	p := &Dialog{Kind: "sessions", Title: "Resume session (all)", Scope: "all",
 		Options: []string{"hi"}, Descs: []string{"1 msgs · now"},
-		Paths:   []string{"p"}, Payload: []string{"hi"}}
+		Paths: []string{"p"}, Payload: []string{"hi"}}
 	p.Reindex()
 	if wPlain := trajBoxWidth(t, m.renderResumeDialog(p)); wNasty != wPlain {
 		t.Errorf("box resizes with content: nasty=%d plain=%d", wNasty, wPlain)

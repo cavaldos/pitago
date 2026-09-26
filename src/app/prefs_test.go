@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -292,36 +293,69 @@ func TestSettingsTwoPaneRenders(t *testing.T) {
 	}
 }
 
-func TestRememberModelRoundTrip(t *testing.T) {
+// pi owns the model (settings.json defaultProvider/defaultModel) and the
+// thinking level (defaultThinkingLevel); pitago must keep no copy of either.
+// A model switch — session scope, like pi's RPC set_model — writes nothing.
+func TestPrefsHoldNoModelShadow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prefs.json")
-	m := &Model{prefsPath: path}
-	m.recentModels = []RecentModel{{Provider: "anthropic", ID: "claude-sonnet", Label: "Sonnet"}}
-	m.rememberModel("anthropic", "claude-sonnet", "Sonnet")
-	if prov, id := m.savedModel(); prov != "anthropic" || id != "claude-sonnet" {
-		t.Errorf("savedModel = (%q,%q), want (anthropic,claude-sonnet)", prov, id)
+	if err := SavePrefs(path, Prefs{HideThinking: true}); err != nil {
+		t.Fatal(err)
 	}
-	// Label-only (cycle path) resolves provider/id via recents.
-	m2 := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
-	m2.recentModels = m.recentModels
-	m2.rememberModel("", "", "Sonnet")
-	if prov, id := m2.savedModel(); prov != "anthropic" || id != "claude-sonnet" {
-		t.Errorf("label-only savedModel = (%q,%q), want resolved pair", prov, id)
+	m := New(nil, t.TempDir())
+	m.prefsPath = path
+	m.recentPath = filepath.Join(t.TempDir(), "recent.json")
+	um, _ := m.Update(ModelCycleMsg{Label: "space-bunny-free", Provider: "opencode", ID: "space-bunny-free"})
+	m = um.(Model)
+	if m.ModelLbl != "space-bunny-free" {
+		t.Fatalf("ModelLbl = %q, want the switched label", m.ModelLbl)
 	}
-	// Empty id never persists.
-	m3 := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
-	m3.rememberModel("", "", "")
-	if prov, id := m3.savedModel(); prov != "" || id != "" {
-		t.Errorf("empty remember must not persist, got (%q,%q)", prov, id)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("prefs not written at all: %v", err)
+	}
+	for _, key := range []string{"modelProvider", "modelID", "thinkingLevel"} {
+		if strings.Contains(string(raw), key) {
+			t.Errorf("prefs.json must not shadow %s: %s", key, raw)
+		}
 	}
 }
 
-func TestApplySavedModelEmpty(t *testing.T) {
-	// Nothing persisted and no Pi: silent no-op, never panics.
-	m := &Model{prefsPath: filepath.Join(t.TempDir(), "prefs.json")}
-	if got := m.ApplySavedModel(); got != "" {
-		t.Errorf("empty ApplySavedModel = %q, want \"\"", got)
+// A legacy prefs.json (written before the model copy was removed) loads with
+// the model keys ignored, and the next save prunes them.
+func TestPrefsIgnoreLegacyModelKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	legacy := `{"modelProvider":"opencode","modelID":"space-bunny-free","hideThinking":true}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if prov, id := m.resolveSavedModel("", "x"); prov != "" || id != "x" {
-		t.Errorf("nil-Pi resolve = (%q,%q), want input unchanged", prov, id)
+	p := LoadPrefs(path)
+	if !p.HideThinking {
+		t.Error("unrelated prefs must still load")
+	}
+	if err := SavePrefs(path, p); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "model") {
+		t.Errorf("legacy model keys must be pruned on the next save: %s", raw)
+	}
+}
+
+// /new must not re-apply a remembered model: pi's NewSession resets to its
+// own default and the label comes back from get_state.
+func TestNewSessionDoesNotRestoreModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	if err := os.WriteFile(path, []byte(`{"modelProvider":"opencode","modelID":"space-bunny-free"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, t.TempDir())
+	m.prefsPath = path
+	m.ModelLbl = "ollama/deepseek-coder:1.3b" // what pi's get_state reported
+	um, _ := m.Update(SessionResetMsg{})
+	if got := um.(Model).ModelLbl; got != "ollama/deepseek-coder:1.3b" {
+		t.Errorf("after /new ModelLbl = %q, want pi's own default unchanged", got)
+	}
+	if um.(Model).Status == "ready — restoring model…" {
+		t.Error("/new must not announce a pitago-side model restore")
 	}
 }

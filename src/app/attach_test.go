@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"pitago/src/components/image"
 	"pitago/src/components/mention"
 )
 
@@ -28,16 +30,17 @@ func attachModel(t *testing.T) (Model, string) {
 	return m, dir
 }
 
-// Dropped absolute path collapses into a chip, text stays clean.
+// Dropping a lone file path collapses it into a chip and cleans the box
+// (the long escaped path would otherwise flood the prompt).
 func TestCollectDrops(t *testing.T) {
 	m, dir := attachModel(t)
 	dropped := strings.ReplaceAll(filepath.Join(dir, "shot.png"), " ", `\ `)
-	m.ta.SetValue("look " + dropped + " ok")
+	m.ta.SetValue(dropped)
 	m.collectDrops()
 	if len(m.imgAtts) != 1 || m.imgAtts[0].label != 1 {
 		t.Fatalf("tray = %+v", m.imgAtts)
 	}
-	if got := m.ta.Value(); strings.Contains(got, "shot.png") {
+	if got := strings.TrimSpace(m.ta.Value()); got != "" {
 		t.Fatalf("path left in input: %q", got)
 	}
 	if m.chipH() != 1 {
@@ -49,11 +52,51 @@ func TestCollectDrops(t *testing.T) {
 	}
 }
 
+// A path inside a pasted sentence must survive verbatim: pitago never
+// deletes words the user typed (pi parity — pi's TUI keeps them too).
+// The image is still attached, so the drop keeps its vision.
+func TestCollectDropsKeepsProse(t *testing.T) {
+	m, dir := attachModel(t)
+	dropped := strings.ReplaceAll(filepath.Join(dir, "shot.png"), " ", `\ `)
+	sentence := "so this is what " + dropped + " shows"
+	m.ta.SetValue(sentence)
+	m.collectDrops()
+	if got := m.ta.Value(); got != sentence {
+		t.Fatalf("pasted prose was edited:\n got %q\nwant %q", got, sentence)
+	}
+	if len(m.imgAtts) != 1 || m.imgAtts[0].path != filepath.Join(dir, "shot.png") {
+		t.Fatalf("tray = %+v", m.imgAtts)
+	}
+	if len(m.toasts) == 0 {
+		t.Fatal("attaching from prose must say so, not do it silently")
+	}
+}
+
+// Several pasted paths with prose around them: every character stays, and
+// each distinct image is chipped once, in scan order.
+func TestCollectDropsProseMulti(t *testing.T) {
+	m, dir := attachModel(t)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	for _, n := range []string{"b.png", "c.png"} {
+		_ = os.WriteFile(filepath.Join(dir, n), png, 0o644)
+	}
+	text := "compare " + filepath.Join(dir, "b.png") + " with " + filepath.Join(dir, "c.png") + " please"
+	m.ta.SetValue(text)
+	m.collectDrops()
+	if got := m.ta.Value(); got != text {
+		t.Fatalf("prose edited: %q", got)
+	}
+	if len(m.imgAtts) != 2 || m.imgAtts[0].name != "b.png" || m.imgAtts[1].name != "c.png" {
+		t.Fatalf("tray = %+v", m.imgAtts)
+	}
+}
+
 // takeImages loads vision, clears the tray, keeps leftover @text working.
 func TestTakeImages(t *testing.T) {
-	m, _ := attachModel(t)
+	m, dir := attachModel(t)
+	_ = os.WriteFile(filepath.Join(dir, "b.png"), []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 'x'}, 0o644)
 	m.attachPaths([]string{"shot.png"})
-	imgs, notes := m.takeImages("plus @shot.png")
+	imgs, notes := m.takeImages("plus @b.png")
 	if len(notes) != 0 {
 		t.Fatalf("notes = %q", notes)
 	}
@@ -62,6 +105,108 @@ func TestTakeImages(t *testing.T) {
 	}
 	if len(m.imgAtts) != 0 || m.chipH() != 0 {
 		t.Fatal("tray must clear on send")
+	}
+}
+
+// The same file named twice (a dropped chip plus `@shot.png`, or
+// `@./shot.png`) is sent once — a duplicate payload buys the model
+// nothing and doubles the request cost.
+func TestTakeImagesDedupesAcrossSources(t *testing.T) {
+	m, _ := attachModel(t)
+	m.attachPaths([]string{"shot.png"})
+	for _, text := range []string{"@shot.png", "@./shot.png", "@" + filepath.Join(m.cwd, "shot.png")} {
+		imgs, notes := m.takeImages(text)
+		if len(notes) != 0 {
+			t.Fatalf("%s notes = %q", text, notes)
+		}
+		if len(imgs) != 1 {
+			t.Fatalf("%s → %d images, want 1 (sent twice)", text, len(imgs))
+		}
+		m.attachPaths([]string{"shot.png"})
+	}
+}
+
+// Order is deterministic: tray chips in chip order, then @refs in the
+// order they appear in the text. Files differ in payload so the order is
+// observable in the base64 the RPC call carries.
+func TestTakeImagesOrder(t *testing.T) {
+	m, dir := attachModel(t)
+	mk := func(n string) {
+		body := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte(n)...)
+		_ = os.WriteFile(filepath.Join(dir, n), body, 0o644)
+	}
+	mk("shot.png")
+	mk("b.png")
+	mk("c.png")
+	mk("d.png")
+	m.attachPaths([]string{"c.png", "shot.png"})
+	imgs, notes := m.takeImages("see @b.png then @d.png")
+	if len(notes) != 0 {
+		t.Fatalf("notes = %q", notes)
+	}
+	want := []string{"c.png", "shot.png", "b.png", "d.png"}
+	if len(imgs) != len(want) {
+		t.Fatalf("images = %d, want %d", len(imgs), len(want))
+	}
+	for i, w := range want {
+		if got := imgs[i].Data; got != base64.StdEncoding.EncodeToString(append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte(w)...)) {
+			t.Fatalf("image %d = %s..., want %s", i, got[:12], w)
+		}
+	}
+}
+
+// More tray chips than the cap: send what fits and say plainly that the
+// rest was not sent (old code aborted the whole message).
+func TestTakeImagesTrayOverflowNotFatal(t *testing.T) {
+	m, dir := attachModel(t)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 'x'}
+	names := []string{"shot.png", "a.png", "b.png", "c.png", "d.png", "e.png", "f.png"}
+	for _, n := range names {
+		_ = os.WriteFile(filepath.Join(dir, n), png, 0o644)
+	}
+	for _, a := range names { // bypass the tray cap to exercise send-side
+		m.imgAtts = append(m.imgAtts, imgAttach{label: len(m.imgAtts) + 1, name: a, path: a})
+	}
+	imgs, notes := m.takeImages("hi")
+	if imgs == nil {
+		t.Fatalf("overflow must not abort the send: %q", notes)
+	}
+	if len(imgs) != image.MaxCount {
+		t.Fatalf("images = %d, want %d", len(imgs), image.MaxCount)
+	}
+	if len(notes) != 2 || !strings.Contains(notes[0], "e.png") || !strings.Contains(notes[0], "@text") {
+		t.Fatalf("notes = %q", notes)
+	}
+}
+
+// An @ref over the cap keeps its text — the notice is informational only,
+// and a failing @ref next to it is reported once, not twice.
+func TestTakeImagesTextOverflowKeepsRef(t *testing.T) {
+	m, dir := attachModel(t)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 'x'}
+	var refs []string
+	for _, n := range []string{"a.png", "b.png", "c.png", "d.png", "e.png", "f.png"} {
+		_ = os.WriteFile(filepath.Join(dir, n), png, 0o644)
+		refs = append(refs, "@"+n)
+	}
+	refs = append(refs, "@gone.png")
+	imgs, notes := m.takeImages(strings.Join(refs, " "))
+	if len(imgs) != image.MaxCount {
+		t.Fatalf("images = %d, want %d", len(imgs), image.MaxCount)
+	}
+	if len(notes) != 2 || !strings.Contains(notes[0], "f.png") || !strings.Contains(notes[1], "gone.png") {
+		t.Fatalf("notes = %q", notes)
+	}
+}
+
+// A tray image that cannot be loaded still aborts the send (the chip's
+// path is no longer in the input, so nothing is half-delivered).
+func TestTakeImagesTrayFailureAborts(t *testing.T) {
+	m, _ := attachModel(t)
+	m.imgAtts = append(m.imgAtts, imgAttach{label: 1, name: "gone.png", path: "gone.png"})
+	imgs, notes := m.takeImages("hi")
+	if imgs != nil || len(notes) == 0 {
+		t.Fatalf("want abort, got %d images %q", len(imgs), notes)
 	}
 }
 

@@ -285,7 +285,9 @@ func saveStore(path string, store map[string]*KeyEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o600)
+	// Atomic: the keystore holds the user's API keys, and /login reads it
+	// right back after a write. A truncated file would drop saved keys.
+	return writeFileAtomic(path, raw, filePerm(path, 0o600))
 }
 
 // LoadKeys returns the ACTIVE key per env (what pi inherits). Missing → empty.

@@ -112,6 +112,11 @@ func Spawn(opt Options) (*Client, error) {
 	if opt.Dir != "" {
 		cmd.Dir = opt.Dir // pi takes its session cwd from the process dir
 	}
+	// The key overlay (pienv.go) is applied here, not through os.Setenv, so
+	// pitago's own environment stays as the user's shell exported it. nil
+	// means no overlay: the child then inherits the environment verbatim,
+	// exactly like launching pi from this shell.
+	cmd.Env = piChildEnviron()
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
@@ -520,7 +525,9 @@ func (c *Client) Send(cmd Command, timeout time.Duration) (Response, error) {
 	select {
 	case resp := <-ch:
 		if !resp.Success {
-			return resp, fmt.Errorf("pi: %s failed: %s", resp.Command, resp.Error)
+			// Typed where pi's text identifies the cause (IsAgentBusy),
+			// plain text otherwise.
+			return resp, commandError(resp)
 		}
 		return resp, nil
 	case <-timer.C:
@@ -585,10 +592,8 @@ func (c *Client) ClearQueue() (clearedSteer, clearedFollow []string, err error) 
 	return data.Steering, data.FollowUp, nil
 }
 
-func (c *Client) NewSession() error {
-	_, err := c.Send(Command{Type: "new_session"}, 30*time.Second)
-	return err
-}
+// NewSession lives in commands.go next to the other session-switching
+// wrappers, where the {cancelled:boolean} veto handling is documented.
 
 func (c *Client) GetState() (State, error) {
 	var s State
@@ -689,10 +694,29 @@ func (c *Client) GetModels() ([]ModelInfo, error) {
 }
 
 // SetModelByID switches model, returns its display label.
+//
+// pi answers with the FLAT pi-ai Model object — verified on pi 0.87.1,
+// success(id, "set_model", model), so data is
+// {id,name,api,provider,baseUrl,reasoning,input,cost,contextWindow,
+// maxTokens} — which is why the flat decode comes first. The nested
+// {model:{…}} branch below is tolerance for a build that wraps it, not the
+// shape pi sends; keeping it costs nothing and cannot mislabel a flat answer
+// (a flat answer has no "model" key).
 func (c *Client) SetModelByID(provider, id string) (string, error) {
 	resp, err := c.Send(Command{Type: "set_model", Provider: provider, ModelID: id}, 20*time.Second)
 	if err != nil {
 		return "", err
+	}
+	var flat struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(resp.Data, &flat)
+	if flat.ID != "" {
+		return flat.ID, nil
+	}
+	if flat.Name != "" {
+		return flat.Name, nil
 	}
 	var nested struct {
 		Model *struct {
@@ -707,15 +731,7 @@ func (c *Client) SetModelByID(provider, id string) (string, error) {
 		}
 		return nested.Model.Name, nil
 	}
-	var flat struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	_ = json.Unmarshal(resp.Data, &flat)
-	if flat.ID != "" {
-		return flat.ID, nil
-	}
-	return flat.Name, nil
+	return "", nil
 }
 
 // GetLevels lists the current model's thinking levels.

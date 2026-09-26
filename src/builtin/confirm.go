@@ -30,6 +30,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"update":      confirmUpdate,
 		"trajectory":  confirmTrajectory,
 		"tree":        confirmTree,
+		"fork":        confirmFork,
 		"subagents":   confirmSubagents,
 	}
 }
@@ -71,6 +72,26 @@ func confirmModel(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		label, err := m.Pi.SetModelByID(prov, id)
 		return app.ModelCycleMsg{Label: label, Provider: prov, ID: id, Err: err}
+	}
+}
+
+// confirmFork branches the session at the picked user message (pi:
+// runtimeHost.fork(entryId) → {text, cancelled}). pi hands the branch's
+// text back to the editor, and an extension veto through
+// session_before_switch is reported rather than read as "done".
+func confirmFork(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	if ri < 0 || ri >= len(d.Paths) {
+		return m, nil
+	}
+	entryID := d.Paths[ri]
+	m.Dialogs = m.Dialogs[1:]
+	m.Status = "forking session…"
+	m.Refresh()
+	return m, func() tea.Msg {
+		res, err := m.Pi.Fork(entryID)
+		verr := res.VetoErr("fork", err)
+		return app.PiOpMsg{Op: "fork", Notice: "forked to a new session", Text: res.Text,
+			Err: verr, Reload: verr == nil}
 	}
 }
 

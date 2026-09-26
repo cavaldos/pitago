@@ -20,7 +20,6 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -304,55 +303,91 @@ func skipRef(r []rune, i int) int {
 	return j
 }
 
-// LoadPaths loads explicit image paths (tray + leftover @refs share it).
-func LoadPaths(cwd string, refs []string) ([]Attach, []string) {
-	var atts []Attach
-	var notes []string
-	seen := map[string]bool{}
-	for _, ref := range refs {
-		if seen[ref] {
-			continue
-		}
-		seen[ref] = true
-		if len(atts) >= MaxCount {
-			notes = append(notes, "only "+strconv.Itoa(MaxCount)+" images sent — "+ref+" left as text")
-			continue
-		}
-		p := Resolve(cwd, ref)
-		st, err := os.Stat(p)
-		if err != nil || st.IsDir() {
-			notes = append(notes, "image not found: "+ref)
-			continue
-		}
-		if st.Size() == 0 || st.Size() > MaxBytes {
-			notes = append(notes, "image skipped (empty/too large, max 8MB): "+ref)
-			continue
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			notes = append(notes, "cannot read image "+ref+": "+err.Error())
-			continue
-		}
-		mime := MimeOf(b)
-		if mime == "" {
-			notes = append(notes, ref+": unsupported image data (need png/jpg/gif/webp)")
-			continue
-		}
-		atts = append(atts, Attach{Name: ref, Data: base64.StdEncoding.EncodeToString(b), Mime: mime})
-	}
-	return atts, notes
+// Loader turns image refs into attachments for ONE outgoing message.
+//
+// It owns the dedupe set and the per-message budget, so a caller can feed
+// refs from several sources (tray chips, then the @refs sitting in the
+// text) and still get a single deterministic order, one dedupe and one
+// MaxCount cap across all of them. Order is exactly the call order —
+// the model sees images in the order we hand them to pi.
+type Loader struct {
+	cwd  string
+	seen map[string]bool // resolved path -> already offered
+	n    int             // attachments handed out so far
 }
 
-// Extract loads @-mentioned images under cwd for the send path.
-// Returns attachments + user-facing notices (missing/oversize/unsupported
-// fall back to plain "@path" text so the model still reads via tools).
-func Extract(text, cwd string) ([]Attach, []string) {
+// NewLoader returns a Loader resolving refs under cwd.
+func NewLoader(cwd string) *Loader {
+	return &Loader{cwd: cwd, seen: map[string]bool{}}
+}
+
+// Load loads refs in order and returns the attachments, one notice per ref
+// that could not be loaded (missing/oversize/unsupported/unreadable), and
+// the refs skipped because the cap was already reached.
+//
+// Two refs naming the same file (`@shot.png` plus a dropped chip of the
+// same picture, or `shot.png` and `./shot.png`) load once: the second is
+// dropped silently, because a duplicate payload buys the model nothing.
+// Cap skips are reported separately from failures: a caller whose cap is
+// soft (an @ref that stays in the text) words them differently than one
+// whose refs were consumed.
+func (l *Loader) Load(refs []string) (atts []Attach, notes []string, overflow []string) {
+	for _, ref := range refs {
+		abs := Resolve(l.cwd, ref)
+		if l.seen[abs] {
+			continue
+		}
+		l.seen[abs] = true
+		if l.n >= MaxCount {
+			overflow = append(overflow, ref)
+			continue
+		}
+		a, note := l.loadOne(ref, abs)
+		if note != "" {
+			notes = append(notes, note)
+			continue
+		}
+		atts = append(atts, a)
+		l.n++
+	}
+	return atts, notes, overflow
+}
+
+// loadOne reads one file; the second result is "" on success.
+func (l *Loader) loadOne(ref, abs string) (Attach, string) {
+	st, err := os.Stat(abs)
+	if err != nil || st.IsDir() {
+		return Attach{}, "image not found: " + ref
+	}
+	if st.Size() == 0 || st.Size() > MaxBytes {
+		return Attach{}, "image skipped (empty/too large, max 8MB): " + ref
+	}
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		return Attach{}, "cannot read image " + ref + ": " + err.Error()
+	}
+	mime := MimeOf(b)
+	if mime == "" {
+		return Attach{}, ref + ": unsupported image data (need png/jpg/gif/webp)"
+	}
+	return Attach{Name: ref, Data: base64.StdEncoding.EncodeToString(b), Mime: mime}, ""
+}
+
+// ImageRefs lists the @refs in text that name images, in text order.
+func ImageRefs(text string) []string {
 	var refs []string
 	for _, ref := range Refs(text) {
 		if IsImageName(ref) {
 			refs = append(refs, ref)
 		}
 	}
-	atts, notes := LoadPaths(cwd, refs)
-	return atts, notes
+	return refs
+}
+
+// Extract loads the @-mentioned images of text through l (see Loader),
+// in the order they appear in the text. Missing/oversize/unsupported refs
+// only produce notices, never an error: the "@path" text stays in the
+// message so the model still reads it with its tools.
+func Extract(l *Loader, text string) ([]Attach, []string, []string) {
+	return l.Load(ImageRefs(text))
 }

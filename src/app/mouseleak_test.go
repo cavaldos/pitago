@@ -154,6 +154,7 @@ func TestMouseLeakBracketlessTyping(t *testing.T) {
 		}
 	}
 }
+
 // Cb bit 64 = wheel, low bits = up/down/left/right (bubbletea parity).
 func TestCleanMouseLeakDecode(t *testing.T) {
 	evs, _, ok := cleanMouseLeak([]rune("[<64;50;31M[<65;50;31M[<66;50;31M[<67;50;31M"))

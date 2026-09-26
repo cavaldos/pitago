@@ -1,6 +1,7 @@
 package pirpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,6 +23,8 @@ func writePiAuth(t *testing.T, dir string, v map[string]any) {
 // pitago -> pi: PushActiveToPi must write auth.json (env alone is not
 // enough — pi's auth.json wins over env).
 func TestPushActiveToPiWritesAuth(t *testing.T) {
+	clearPiChildEnv()
+	t.Cleanup(clearPiChildEnv)
 	agent := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", agent)
 	keys := filepath.Join(t.TempDir(), "keys.json")
@@ -43,9 +46,91 @@ func TestPushActiveToPiWritesAuth(t *testing.T) {
 	if m["groq"].Key != "gsk-pitago-12345678" {
 		t.Fatalf("pi key = %q", m["groq"].Key)
 	}
-	if os.Getenv("GROQ_API_KEY") != "gsk-pitago-12345678" {
-		t.Fatalf("env = %q", os.Getenv("GROQ_API_KEY"))
+	// The env half goes to the pi CHILD only: pitago's own environment must
+	// stay exactly what the user's shell exported.
+	if os.Getenv("GROQ_API_KEY") != "" {
+		t.Fatalf("PushActiveToPi leaked into pitago's own env: %q", os.Getenv("GROQ_API_KEY"))
 	}
+	if v, ok := PiChildEnv("GROQ_API_KEY"); !ok || v != "gsk-pitago-12345678" {
+		t.Fatalf("child env = %q (ok=%v)", v, ok)
+	}
+	// ...and the child actually receives it.
+	if !containsEnv(piChildEnviron(), "GROQ_API_KEY=gsk-pitago-12345678") {
+		t.Fatalf("pi child env missing the key: %v", piChildEnviron())
+	}
+	// last key deleted → the child var is dropped, not left behind
+	if err := DeleteKeyAt(keys, "GROQ_API_KEY", 0); err != nil {
+		t.Fatal(err)
+	}
+	PushActiveToPi(keys, "GROQ_API_KEY")
+	if v, ok := PiChildEnv("GROQ_API_KEY"); !ok || v != "" {
+		t.Fatalf("deleted key still in child env: %q (ok=%v)", v, ok)
+	}
+	if containsEnv(piChildEnviron(), "GROQ_API_KEY=") {
+		t.Fatalf("dropped var still handed to the child: %v", piChildEnviron())
+	}
+}
+
+// pitago must not mutate its own environment at launch: the key travels in
+// the child overlay and is applied by Spawn. No overlay → the child
+// inherits verbatim, exactly like launching pi from the same shell.
+func TestChildEnvOverlayLeavesProcessEnvAlone(t *testing.T) {
+	clearPiChildEnv()
+	t.Cleanup(clearPiChildEnv)
+	if env := piChildEnviron(); env != nil {
+		t.Fatalf("empty overlay should inherit verbatim, got %v", env)
+	}
+	t.Setenv("PITAGO_ENV_PROBE", "ambient")
+	SetPiChildEnv("PITAGO_ENV_PROBE", "pushed")
+	SetPiChildEnv("PITAGO_ENV_EXTRA", "new")
+	env := piChildEnviron()
+	if !containsEnv(env, "PITAGO_ENV_PROBE=pushed") {
+		t.Errorf("overlay must win for the child: %v", env)
+	}
+	if !containsEnv(env, "PITAGO_ENV_EXTRA=new") {
+		t.Errorf("added var missing: %v", env)
+	}
+	if os.Getenv("PITAGO_ENV_PROBE") != "ambient" {
+		t.Errorf("pitago's own env changed: %q", os.Getenv("PITAGO_ENV_PROBE"))
+	}
+	if os.Getenv("PITAGO_ENV_EXTRA") != "" {
+		t.Errorf("pitago's own env gained a var: %q", os.Getenv("PITAGO_ENV_EXTRA"))
+	}
+	// dropping removes it from the child env
+	SetPiChildEnv("PITAGO_ENV_PROBE", "")
+	if containsEnv(piChildEnviron(), "PITAGO_ENV_PROBE=") {
+		t.Errorf("dropped var still in child env: %v", piChildEnviron())
+	}
+}
+
+// auth.json "$ENV" indirection resolves through the child overlay, so a
+// key pushed by /login reads back exactly as it does inside pi.
+func TestResolvePiKeyUsesChildOverlay(t *testing.T) {
+	clearPiChildEnv()
+	t.Cleanup(clearPiChildEnv)
+	c := piCred{Type: "api_key", Key: "${PITAGO_ENV_PROBE}"}
+	t.Setenv("PITAGO_ENV_PROBE", "")
+	if got := resolvePiKey(c); got != "" {
+		t.Fatalf("empty ambient should resolve empty, got %q", got)
+	}
+	SetPiChildEnv("PITAGO_ENV_PROBE", "sk-from-overlay-1234")
+	if got := resolvePiKey(c); got != "sk-from-overlay-1234" {
+		t.Fatalf("overlay lookup = %q", got)
+	}
+	// cred-level env still wins over the overlay, like pi
+	c.Env = map[string]string{"PITAGO_ENV_PROBE": "sk-from-cred"}
+	if got := resolvePiKey(c); got != "sk-from-cred" {
+		t.Fatalf("cred env = %q", got)
+	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, kv := range env {
+		if kv == want {
+			return true
+		}
+	}
+	return false
 }
 
 // pi -> pitago: SyncFromPi unions without overwriting (123 kept, 456 added,
@@ -166,6 +251,47 @@ func TestApiKeyWritePreservesOAuth(t *testing.T) {
 	}
 }
 
+// pi parses auth.json as JSON.parse(stripBom(content)) as well, so a
+// BOM-prefixed auth.json is a valid pi file. If pitago's reader rejected the
+// mark it would see an EMPTY auth.json and the next /login write would
+// rewrite the file with one entry — silently deleting the user's OAuth
+// tokens. The BOM itself is kept on the rewrite.
+func TestPiAuthWithBOMIsReadAndKept(t *testing.T) {
+	agent := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", agent)
+	seed := piBOM + `{"openai-codex":{"type":"oauth","access":"AAA","refresh":"RRR",` +
+		`"expires":1790857264866,"accountId":"acct-1"}}`
+	if err := os.WriteFile(filepath.Join(agent, "auth.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if exp, acct, ok := PiOAuth("openai-codex"); !ok || exp != 1790857264866 || acct != "acct-1" {
+		t.Fatalf("BOM auth.json not read: %d %q %v", exp, acct, ok)
+	}
+	if entries := ListPiAuth(); len(entries) != 1 || entries[0].Provider != "openai-codex" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if err := WritePiKey("groq", "gsk-bom-12345678"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(agent, "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(raw, []byte(piBOM)) {
+		t.Errorf("BOM must survive the rewrite: %q", raw)
+	}
+	var m map[string]map[string]any
+	if err := json.Unmarshal(stripPiBOM(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["openai-codex"]["access"] != "AAA" || m["openai-codex"]["refresh"] != "RRR" {
+		t.Fatalf("oauth damaged: %v", m["openai-codex"])
+	}
+	if m["groq"]["key"] != "gsk-bom-12345678" {
+		t.Fatalf("groq = %v", m["groq"])
+	}
+}
+
 func TestListPiAuthAndCatalog(t *testing.T) {
 	agent := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", agent)
@@ -246,5 +372,45 @@ func TestAuthStateMirror(t *testing.T) {
 	ForgetAuthState(state, "groq")
 	if _, ok := LoadAuthState(state)["groq"]; ok {
 		t.Fatal("forget should drop groq")
+	}
+}
+
+// pi's auth.json holds OAuth tokens and login state, and pi reads it on
+// every start: the write must swap the file atomically, never truncate it
+// in place, and never leave a temp file behind.
+func TestWritePiKeyIsAtomic(t *testing.T) {
+	clearPiChildEnv()
+	t.Cleanup(clearPiChildEnv)
+	agent := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", agent)
+	writePiAuth(t, agent, map[string]any{
+		"openai-codex": map[string]any{"type": "oauth", "access": "AAA", "refresh": "RRR", "expires": 1790857264866},
+	})
+	for i := 0; i < 20; i++ {
+		if err := WritePiKey("groq", "gsk-iter-12345678"); err != nil {
+			t.Fatal(err)
+		}
+		// every intermediate state is a complete, valid document
+		raw, err := os.ReadFile(filepath.Join(agent, "auth.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("iteration %d: auth.json unreadable: %v", i, err)
+		}
+		if m["openai-codex"]["access"] != "AAA" || m["groq"]["key"] != "gsk-iter-12345678" {
+			t.Fatalf("iteration %d: %v", i, m)
+		}
+	}
+	entries, err := os.ReadDir(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "auth.json" {
+		t.Fatalf("stray temp files in the agent dir: %d entries", len(entries))
+	}
+	if fi, _ := os.Stat(filepath.Join(agent, "auth.json")); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("auth.json perm = %o, want 600", fi.Mode().Perm())
 	}
 }

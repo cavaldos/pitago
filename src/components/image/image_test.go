@@ -118,19 +118,74 @@ func TestExtract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	atts, notes := Extract("look @shot.png and @note.txt", dir)
-	if len(notes) != 0 {
-		t.Fatalf("unexpected notices: %q", notes)
+	atts, notes, over := Extract(NewLoader(dir), "look @shot.png and @note.txt")
+	if len(notes) != 0 || len(over) != 0 {
+		t.Fatalf("unexpected notices: %q %q", notes, over)
 	}
 	if len(atts) != 1 || atts[0].Mime != "image/png" || atts[0].Name != "shot.png" {
 		t.Fatalf("atts = %+v", atts)
 	}
 	// missing + oversize/unsupported fall back to notices, never fatal
-	atts, notes = Extract("@missing.png @note.txt", dir)
+	atts, notes, _ = Extract(NewLoader(dir), "@missing.png @note.txt")
 	if len(atts) != 0 || len(notes) == 0 {
 		t.Fatalf("want fallback notice, got %v %q", atts, notes)
 	}
 	if !strings.Contains(notes[0], "missing") {
 		t.Fatalf("notice = %q", notes)
+	}
+}
+
+func TestImageRefs(t *testing.T) {
+	got := ImageRefs("a @x.png b @note.txt c @y.jpg")
+	if len(got) != 2 || got[0] != "x.png" || got[1] != "y.jpg" {
+		t.Fatalf("image refs = %q", got)
+	}
+}
+
+// One Loader per message: refs fed from several sources share the dedupe
+// set and the cap, and come back in call order.
+func TestLoaderSharedDedupeAndCap(t *testing.T) {
+	dir := t.TempDir()
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte("fake")...)
+	names := []string{"shot.png", "a.png", "b.png", "c.png", "d.png", "e.png", "f.png"}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), png, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := NewLoader(dir)
+	// same file, three spellings → one attachment
+	atts, notes, _ := l.Load([]string{"shot.png", "./shot.png", filepath.Join(dir, "shot.png")})
+	if len(notes) != 0 || len(atts) != 1 {
+		t.Fatalf("dedupe failed: %d atts %q", len(atts), notes)
+	}
+	more, notes, over := l.Load(names[1:])
+	if len(notes) != 0 {
+		t.Fatalf("notes = %q", notes)
+	}
+	if len(more) != MaxCount-1 {
+		t.Fatalf("got %d, want %d", len(more), MaxCount-1)
+	}
+	if len(over) != 2 || over[0] != "e.png" || over[1] != "f.png" {
+		t.Fatalf("overflow = %q", over)
+	}
+	// the cap is spent: a later source adds nothing
+	after, _, over2 := l.Load([]string{"a.png"})
+	if len(after) != 0 || len(over2) != 0 {
+		t.Fatalf("after cap: %d atts %q", len(after), over2)
+	}
+}
+
+// A fresh Loader per message: the cap is per message, not per session.
+func TestLoaderCapIsPerMessage(t *testing.T) {
+	dir := t.TempDir()
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, []byte("fake")...)
+	_ = os.WriteFile(filepath.Join(dir, "a.png"), png, 0o644)
+	if _, _, over := NewLoader(dir).Load([]string{"a.png"}); len(over) != 0 {
+		t.Fatalf("over = %q", over)
+	}
+	atts, _, over := NewLoader(dir).Load([]string{"a.png"})
+	if len(atts) != 1 || len(over) != 0 {
+		t.Fatalf("second message blocked by the first: %+v %q", atts, over)
 	}
 }

@@ -41,7 +41,12 @@ func loadPiRaw(path string) map[string]json.RawMessage {
 		return out
 	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
+	// pi parses auth.json as JSON.parse(stripBom(content)) too, so a
+	// BOM-prefixed file is valid there. Without the strip, json.Unmarshal
+	// fails, we would read the file as EMPTY and the next save would
+	// rewrite it without a single entry — deleting the user's OAuth
+	// tokens and logins.
+	if err := json.Unmarshal(stripPiBOM(raw), &m); err != nil {
 		return out
 	}
 	for k, v := range m {
@@ -56,6 +61,10 @@ func loadPiRaw(path string) map[string]json.RawMessage {
 	return out
 }
 
+// savePiRaw rewrites pi's auth.json atomically: it holds the user's OAuth
+// tokens and login state, and pi reads it on every start, so a crash must
+// never leave a truncated file (that reads as "logged out"). Entries are
+// kept as raw bytes, so untouched providers are re-emitted verbatim.
 func savePiRaw(path string, m map[string]json.RawMessage) error {
 	if path == "" {
 		return nil
@@ -67,8 +76,14 @@ func savePiRaw(path string, m map[string]json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	// 0600 like pi (user read/write only).
-	return os.WriteFile(path, raw, 0o600)
+	// A file pi/the user's editor wrote with a BOM keeps it: the mark is
+	// valid for pi and removing it would be a change pitago was not asked
+	// to make.
+	if hasPiBOM(path) {
+		raw = append([]byte(piBOM), raw...)
+	}
+	// 0600 like pi (user read/write only); an existing file keeps its mode.
+	return writeFileAtomic(path, raw, filePerm(path, 0o600))
 }
 
 func decodePiCred(raw json.RawMessage) piCred {
@@ -168,7 +183,8 @@ func PiApiKey(provider string) string {
 	return strings.TrimSpace(resolvePiKey(c))
 }
 
-// resolvePiKey unwraps "$ENV" indirection via cred env then process env.
+// resolvePiKey unwraps "$ENV" indirection via cred env, then the pi child
+// env overlay (what pi will actually see), then our own process env.
 func resolvePiKey(c piCred) string {
 	k := strings.TrimSpace(c.Key)
 	if k == "" {
@@ -186,7 +202,7 @@ func resolvePiKey(c piCred) string {
 				return strings.TrimSpace(v)
 			}
 		}
-		return strings.TrimSpace(os.Getenv(name))
+		return strings.TrimSpace(piEnvLookup(name))
 	}
 	return k
 }
@@ -223,9 +239,14 @@ func WritePiKey(provider, key string) error {
 }
 
 // PushActiveToPi writes pitago's ACTIVE key for one env to pi's auth.json
-// + process env so the respawned pi inherits it. Last-key-deleted (no keys)
-// removes the pi api_key entry + unsets env. Inactive deletes only ensure
-// pi still matches the active key.
+// + the pi child's env so the respawned pi inherits it. Last-key-deleted
+// (no keys) removes the pi api_key entry + the child env var. Inactive
+// deletes only ensure pi still matches the active key.
+//
+// The env half goes to the child overlay (pienv.go), never os.Setenv:
+// pitago's own environment is left alone, so nothing but pi sees the key.
+// This is the ONLY place pitago pushes a credential into pi — an explicit
+// /login or /logout action, never a launch side effect.
 func PushActiveToPi(keyPath, env string) {
 	if env == "" {
 		return
@@ -237,11 +258,11 @@ func PushActiveToPi(keyPath, env string) {
 	keys, active := ListKeys(keyPath, env)
 	if active < 0 || len(keys) == 0 {
 		_ = WritePiKey(provider, "")
-		_ = os.Unsetenv(env)
+		SetPiChildEnv(env, "")
 		return
 	}
 	_ = WritePiKey(provider, keys[active])
-	_ = os.Setenv(env, keys[active])
+	SetPiChildEnv(env, keys[active])
 }
 
 // SyncFromPi merges pi's auth.json api_keys into pitago's keystore WITHOUT
@@ -306,8 +327,14 @@ func SyncFromPi(keyPath string) int {
 }
 
 // EnsurePiHasActive pushes pitago's active keys to pi where pi has no
-// entry at all (first-run pitago → pi). Existing pi entries (incl. OAuth)
-// are never overwritten here — user selection pushes explicitly.
+// entry at all. Existing pi entries (incl. OAuth) are never overwritten
+// here — user selection pushes explicitly.
+//
+// Deliberately NOT called at launch: writing pi's credentials is a side
+// effect of launching the TUI, and the OWNER rule is that launching pitago
+// must be as side-effect-free as launching pi. The explicit /login path
+// (PushActiveToPi) covers the keys a user actually selected; this stays as
+// the deliberate back-fill for a fresh/edited keystore.
 func EnsurePiHasActive(keyPath string) {
 	if keyPath == "" {
 		return
@@ -393,7 +420,8 @@ func saveAuthState(path string, m map[string]AuthStateEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o600)
+	// Atomic: this is the mirror the TUI reads on every /login open.
+	return writeFileAtomic(path, raw, filePerm(path, 0o600))
 }
 
 // SyncAuthStateFromPi mirrors pi's current logins into pitago's state file:

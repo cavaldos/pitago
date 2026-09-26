@@ -44,6 +44,9 @@ var errNoImage = errors.New("no image in clipboard")
 
 // pasteCmd reads the clipboard off the UI thread. Empty text falls
 // through to image data (copied screenshots), like pi's Ctrl+V.
+// Whitespace-only text is still text: it only falls through to the image
+// probe, and is returned verbatim when no image is available, so a pasted
+// trailing newline (or a pasted blank line) is never swallowed.
 func (m Model) pasteCmd(secret bool) tea.Cmd {
 	return func() tea.Msg {
 		s, err := clipRead()
@@ -54,20 +57,27 @@ func (m Model) pasteCmd(secret bool) tea.Cmd {
 			if p, err := clipImage(); err == nil {
 				return pasteDoneMsg{imgPath: p, imgTried: true, secret: secret}
 			}
-			return pasteDoneMsg{imgTried: true, secret: secret}
+			return pasteDoneMsg{text: s, imgTried: true, secret: secret}
 		}
 		return pasteDoneMsg{text: s, secret: secret}
 	}
 }
 
-// readClipboard tries platform paste commands (pi parity), then atotto.
-func readClipboard() (string, error) {
+// clipCandidates lists the platform paste commands in priority order
+// (pi parity — see pi's utils/clipboard.js readClipboardText).
+//
+// Wayland is spelled out exactly like pi: --no-newline stops wl-paste
+// from appending a synthetic newline to the payload (a copied terminal
+// block keeps its own trailing newline, and is not given a second one),
+// and --type text pins the plain-text flavour instead of letting wl-paste
+// guess — a text/html or URI-list winner would rewrite the bytes.
+func clipCandidates() [][]string {
 	var cands [][]string
 	if os.Getenv("TERMUX_VERSION") != "" {
 		cands = append(cands, []string{"termux-clipboard-get"})
 	}
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		cands = append(cands, []string{"wl-paste", "-n"})
+		cands = append(cands, []string{"wl-paste", "--no-newline", "--type", "text"})
 	}
 	if os.Getenv("DISPLAY") != "" {
 		cands = append(cands,
@@ -78,7 +88,12 @@ func readClipboard() (string, error) {
 	if runtime.GOOS == "darwin" {
 		cands = append(cands, []string{"pbpaste"})
 	}
-	for _, c := range cands {
+	return cands
+}
+
+// readClipboard tries platform paste commands (pi parity), then atotto.
+func readClipboard() (string, error) {
+	for _, c := range clipCandidates() {
 		if _, err := exec.LookPath(c[0]); err != nil {
 			continue
 		}
@@ -207,6 +222,7 @@ func hasPngpaste() bool {
 	_, err := exec.LookPath("pngpaste")
 	return err == nil
 }
+
 // insertAtCursor splices s into the textarea at the cursor (paste must not
 // go through ta.Update: the key is already consumed, and only the input
 // path owns cursor math — see cursorPos in mention.go).
@@ -239,7 +255,7 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 		m.attachPaths([]string{msg.imgPath})
 		return
 	}
-	if strings.TrimSpace(msg.text) == "" {
+	if msg.text == "" {
 		n := "clipboard is empty"
 		if msg.imgTried && runtime.GOOS == "darwin" && !hasPngpaste() {
 			n += " — cài pngpaste (brew install pngpaste) để dán ảnh chụp màn hình"
@@ -249,6 +265,9 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 		return
 	}
 	if msg.secret {
+		// An API key is whitespace-insensitive: trimming keeps a stray
+		// trailing newline out of the keystore (deliberate, unlike the
+		// prompt path, which keeps every pasted byte).
 		for _, d := range m.Dialogs {
 			if d.Kind == "secret" || d.Kind == "input" {
 				d.Filter += strings.TrimSpace(msg.text)
@@ -259,9 +278,9 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 		}
 		return
 	}
-	m.insertAtCursor(msg.text)
-	m.histIdx = -1 // pasted edit leaves history browse
-	m.collectDrops() // pasted file paths collapse into [Image N] chips
+	m.insertAtCursor(msg.text) // verbatim: no trimming, no token removal
+	m.histIdx = -1             // pasted edit leaves history browse
+	m.collectDrops()           // a drop that is just a file path → [Image N] chip
 	m.refreshCmds()
 	m.refreshAt()
 	m.Refresh()

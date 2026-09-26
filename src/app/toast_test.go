@@ -130,4 +130,5 @@ func TestToastOverlayKeepsFrame(t *testing.T) {
 	}
 	if !strings.Contains(got[boxTop+1], "10s") {
 		t.Fatalf("toast row must show the dismiss countdown, got %q", got[boxTop+1])
-	}}
+	}
+}

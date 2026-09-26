@@ -130,3 +130,30 @@ func containsStr(s, sub string) bool {
 		return false
 	})()
 }
+
+// The keystore holds the user's API keys and is read right back after
+// every write, so it is swapped atomically too (same reason as auth.json).
+func TestSaveKeyIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys.json")
+	for i := 0; i < 20; i++ {
+		if err := SaveKey(path, "GROQ_API_KEY", "gsk-iter-12345678"); err != nil {
+			t.Fatal(err)
+		}
+		store := LoadStore(path)
+		e := store["GROQ_API_KEY"]
+		if e == nil || len(e.Keys) != 1 || e.Keys[0].Key != "gsk-iter-12345678" {
+			t.Fatalf("iteration %d: keystore = %+v", i, store)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "keys.json" {
+		t.Fatalf("stray temp files in the config dir: %d entries", len(entries))
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("keys.json perm = %o, want 600", fi.Mode().Perm())
+	}
+}

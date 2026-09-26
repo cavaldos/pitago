@@ -52,45 +52,73 @@ func (m *Model) attachPaths(refs []string) {
 	m.Refresh()
 }
 
-// collectDrops moves bare image paths already sitting in the input text
-// (terminal drops/pastes) into the tray.
+// collectDrops offers bare image paths already sitting in the input text
+// (terminal drops/pastes) to the tray.
+//
+// The tray is a pitago convenience and must never eat what the user
+// wrote. pi's TUI does not delete a token out of pasted prose, so a path
+// inside a sentence stays in the sentence: the images are still attached
+// (a drop on top of a draft keeps its vision) but not one character of
+// the text is removed. A path is only cut out when the input consists of
+// nothing but dropped paths — the actual file-drop gesture, where the
+// long escaped path would otherwise flood the box.
 func (m *Model) collectDrops() {
 	v := m.ta.Value()
 	refs := image.ScanPaths(v, m.cwd)
 	if len(refs) == 0 {
 		return
 	}
-	abs := m.absCursor()
 	stripped := image.StripRefs(v, refs)
-	if n := len([]rune(stripped)); abs > n {
-		abs = n
+	if strings.TrimSpace(stripped) == "" {
+		abs := m.absCursor()
+		if n := len([]rune(stripped)); abs > n {
+			abs = n
+		}
+		m.setValueAt(stripped, abs)
+		m.attachPaths(refs)
+		return
 	}
-	m.setValueAt(stripped, abs)
 	m.attachPaths(refs)
+	m.AddBlock(Block{Kind: "notice", Text: "đã đính kèm " + strconv.Itoa(len(refs)) + " ảnh — đường dẫn trong câu bạn nhập vẫn được giữ nguyên"})
 }
 
-// takeImages gathers tray images + leftover @refs for the send path,
-// then clears the tray (mirrors ta.Reset on send). A tray load failure
-// aborts (nil images): the tray is kept so nothing half-broken is sent.
-func (m *Model) takeImages(text string) ([]pirpc.ImageContent, []string) {	var refs []string
+// takeImages gathers tray images + the @refs left in the text for the
+// send path, then clears the tray (mirrors ta.Reset on send).
+//
+// The order is deterministic and matches what the user sees: tray chips
+// in chip order first, then @refs in the order they appear in the text.
+// Dedupe and the MaxCount budget are shared across both sources
+// (image.Loader), so the same picture named twice — `@shot.png` plus a
+// dropped chip of that very file — is sent once instead of twice.
+//
+// A tray image that fails to load aborts (nil images): the tray is kept
+// so nothing half-broken is sent, and the chip's path is no longer in
+// the input to recover from. An @ref that fails to load is only a notice
+// — the "@path" text stays, so the model still reads it with its tools.
+func (m *Model) takeImages(text string) ([]pirpc.ImageContent, []string) {
+	var tray []string
 	for _, a := range m.imgAtts {
-		refs = append(refs, a.path)
+		tray = append(tray, a.path)
 	}
-	atts, notes := image.LoadPaths(m.cwd, refs)
-	if len(refs) > 0 && len(notes) > 0 {
-		return nil, notes
+	l := image.NewLoader(m.cwd)
+	atts, notes, over := l.Load(tray)
+	// Cap skips are not load failures, so they never make a send fatal —
+	// but the wording has to be honest: a chip's path was stripped from
+	// the input, so that picture is neither sent nor readable as text.
+	var overNotes []string
+	for _, ref := range over {
+		overNotes = append(overNotes, "chỉ gửi được "+strconv.Itoa(image.MaxCount)+" ảnh/lần — "+ref+" không được gửi và đường dẫn đã bị xoá khỏi ô nhập, dán lại dạng @text nếu muốn gửi")
 	}
-	if len(atts) < image.MaxCount {
-		rest := image.MaxCount - len(atts)
-		ex, n2 := image.Extract(text, m.cwd)
-		for i, a := range ex {
-			if i >= rest {
-				notes = append(notes, "chỉ gửi được "+strconv.Itoa(image.MaxCount)+" ảnh/lần — phần dư để lại dạng @text")
-				break
-			}
-			atts = append(atts, a)
-		}
-		notes = append(notes, n2...)
+	if len(tray) > 0 && len(notes) > 0 {
+		return nil, append(notes, overNotes...)
+	}
+	notes = append(notes, overNotes...)
+	ex, exNotes, exOver := image.Extract(l, text)
+	atts = append(atts, ex...)
+	notes = append(notes, exNotes...)
+	for _, ref := range exOver {
+		// @refs stay in the text, so "left as text" is literally true.
+		notes = append(notes, "chỉ gửi được "+strconv.Itoa(image.MaxCount)+" ảnh/lần — "+ref+" để lại dạng @text")
 	}
 	out := make([]pirpc.ImageContent, 0, len(atts))
 	for _, a := range atts {

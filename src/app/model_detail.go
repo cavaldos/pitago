@@ -115,7 +115,7 @@ func (d *Dialog) detailLines(w int) []string {
 		w = 30
 	}
 	if !ok {
-		return []string{"  " + toolStyle.Width(w - 2).Render("— no specs —")}
+		return []string{"  " + toolStyle.Width(w-2).Render("— no specs —")}
 	}
 	var lines []string
 	title := mi.ID
