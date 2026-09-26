@@ -62,12 +62,16 @@ func (m *Model) setTeamWidget(lines []string, placement string) {
 		// widget and should show unless the user hides it again.
 		m.TeamWidgetSeen = false
 		m.TeamWidgetVisible = true
+		m.applyTeamPanelH()
 		return
 	}
 	if !m.TeamWidgetSeen {
 		m.TeamWidgetVisible = true
 		m.TeamWidgetSeen = true
 	}
+	// The panel's real height feeds the chat viewport height, and View() is
+	// a value receiver, so the sync has to happen here on *Model.
+	m.applyTeamPanelH()
 }
 
 func (m *Model) clearTeamWidgetState() {
@@ -76,6 +80,9 @@ func (m *Model) clearTeamWidgetState() {
 	m.TeamWidgetPlacement = ""
 	m.TeamWidgetSeen = false
 	m.TeamWidgetVisible = true
+	// Hand the panel's rows back to the chat on the same sync path that took
+	// them, so clearing the dashboard restores the full transcript at once.
+	m.applyTeamPanelH()
 }
 
 // setTeamStatus captures pi-agents-team status by statusKey. Status keys are
@@ -96,6 +103,7 @@ func (m *Model) ToggleTeamWidget() bool {
 	}
 	m.TeamWidgetVisible = !m.TeamWidgetVisible
 	m.Refresh()
+	m.applyTeamPanelH()
 	return true
 }
 

@@ -203,8 +203,17 @@ func TestTeamWidgetRawSnapshotUpdateAndFullFrame(t *testing.T) {
 	m.vp = viewport.New(98, 30)
 	lines := teamWidgetFixture(8)
 	m.setTeamWidget(lines, "aboveEditor")
-	if got := m.renderTeamWidget(); lipgloss.Height(got) != len(lines) {
-		t.Fatalf("full frame height = %d, want %d", lipgloss.Height(got), len(lines))
+	// The live panel is popup-sized now: a full snapshot is trimmed to the
+	// cap and says so, instead of claiming every spare row of the frame.
+	panel := m.renderTeamWidget()
+	if h := lipgloss.Height(panel); h > teamPanelMaxRows {
+		t.Fatalf("panel height = %d, want at most the popup-sized cap %d", h, teamPanelMaxRows)
+	}
+	if !strings.Contains(stripANSI(panel), "rows hidden") {
+		t.Fatalf("trimmed panel must report what it dropped: %q", stripANSI(panel))
+	}
+	if !strings.Contains(stripANSI(panel), "Pi Agents Team") {
+		t.Fatalf("trimmed panel must keep the panel title: %q", stripANSI(panel))
 	}
 	m.setTeamWidget([]string{"\x1b[1mPi Agents Team\x1b[0m · A", "A"}, "aboveEditor")
 	viewA := m.View()
@@ -464,5 +473,122 @@ func TestOpenSubagentsOff(t *testing.T) {
 	}
 	if !strings.HasPrefix(d.Descs[0], "● current") {
 		t.Fatalf("none row must show ● when cleared, got %q", d.Descs[0])
+	}
+}
+
+// teamPanelModel builds a live model whose frame math matches the real one:
+// baseVpH = winH-7 and a viewport holding that budget.
+func teamPanelModel(t *testing.T, winW, winH int) *Model {
+	t.Helper()
+	m := New(nil, t.TempDir())
+	m.ready = true
+	m.winW, m.winH = winW, winH
+	m.baseVpH = winH - 7
+	m.vp = viewport.New(winW-2, m.baseVpH)
+	m.vp.SetContent(strings.Repeat("chat line\n", 200))
+	return &m
+}
+
+// The live team panel must behave like the /command popup: popup-sized, and
+// pushing the chat up by exactly the rows it paints — never covering it and
+// never leaving the frame short of winH.
+func TestTeamPanelIsPopupSizedAndPushesChat(t *testing.T) {
+	for _, winH := range []int{24, 30, 40, 50} {
+		m := teamPanelModel(t, 120, winH)
+		quiet := m.vp.Height
+		m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+		panelH := m.teamPanelH()
+		if panelH < 1 || panelH > teamPanelMaxRows {
+			t.Fatalf("winH=%d panel height = %d, want 1..%d", winH, panelH, teamPanelMaxRows)
+		}
+		if m.vp.Height != quiet-panelH {
+			t.Fatalf("winH=%d vp.Height = %d, want %d (quiet %d - panel %d)",
+				winH, m.vp.Height, quiet-panelH, quiet, panelH)
+		}
+		if got := lipgloss.Height(m.View()); got != winH {
+			t.Fatalf("winH=%d frame = %d rows, want exactly %d", winH, got, winH)
+		}
+		if m.vp.Height < 3 {
+			t.Fatalf("winH=%d left the chat %d rows", winH, m.vp.Height)
+		}
+	}
+}
+
+// Clearing the widget must hand the panel's rows straight back to the chat.
+func TestClearTeamWidgetRestoresChatRows(t *testing.T) {
+	m := teamPanelModel(t, 120, 40)
+	quiet := m.vp.Height
+	m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+	if m.vp.Height >= quiet {
+		t.Fatalf("panel did not shrink the chat: %d -> %d", quiet, m.vp.Height)
+	}
+	m.clearTeamWidgetState()
+	if m.vp.Height != quiet {
+		t.Fatalf("after clear vp.Height = %d, want %d", m.vp.Height, quiet)
+	}
+	view := stripANSI(m.View())
+	if got := lipgloss.Height(view); got != m.winH {
+		t.Fatalf("frame after clear = %d rows, want %d", got, m.winH)
+	}
+	if strings.Contains(view, "Pi Agents Team") {
+		t.Fatal("cleared widget left its panel on screen")
+	}
+}
+
+// A followed-session roster (live.go) has no "● Agents" heading. Trimming it
+// to the cap must not blank it: the panel stays visible and reports the drop.
+func TestTeamPanelCapTrimsFlatRosterInsteadOfBlanking(t *testing.T) {
+	m := teamPanelModel(t, 120, 40)
+	lines := []string{"Pi Agents Team · 12 workers"}
+	for i := 1; i <= 12; i++ {
+		lines = append(lines, fmt.Sprintf("reviewer (w%d) · exited", i))
+	}
+	m.setTeamWidget(lines, "aboveEditor")
+	panel := stripANSI(m.renderTeamWidget())
+	if h := lipgloss.Height(panel); h > teamPanelMaxRows {
+		t.Fatalf("flat roster panel = %d rows, want at most %d", h, teamPanelMaxRows)
+	}
+	if !strings.Contains(panel, "Pi Agents Team") || !strings.Contains(panel, "reviewer (w1)") {
+		t.Fatalf("flat roster lost its title/first worker: %q", panel)
+	}
+	if !strings.Contains(panel, "hidden") {
+		t.Fatalf("flat roster trim must be reported: %q", panel)
+	}
+	if got := lipgloss.Height(m.View()); got != m.winH {
+		t.Fatalf("frame = %d rows, want %d", got, m.winH)
+	}
+}
+
+// The panel and an open popup share one row pool: together they must still fit
+// the frame and leave the chat its floor rows.
+func TestTeamPanelSharesRowPoolWithOpenPopup(t *testing.T) {
+	m := teamPanelModel(t, 100, 24)
+	m.cmdOpen = true
+	m.cmdItems = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	for i := range m.cmdItems {
+		m.Cmds = append(m.Cmds, pirpc.RepoCommand{Name: fmt.Sprintf("cmd%d", i)})
+	}
+	m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+	m.applyPopupH()
+	view := stripANSI(m.View())
+	if got := lipgloss.Height(view); got > m.winH {
+		t.Fatalf("panel + popup overflowed the frame: %d > %d\n%s", got, m.winH, view)
+	}
+	if m.vp.Height < 3 {
+		t.Fatalf("panel + popup squeezed the chat to %d rows", m.vp.Height)
+	}
+	if h := m.teamPanelH(); h > teamPanelMaxRows {
+		t.Fatalf("panel grew past the popup-sized cap with a popup open: %d", h)
+	}
+}
+
+// Raw field writes bypass applyTeamPanelH (that is why View keeps a
+// backstop). Even then the frame must never exceed winH.
+func TestTeamPanelBackstopKeepsFrameWithinTerminal(t *testing.T) {
+	m := teamPanelModel(t, 100, 30)
+	m.vp.Height = m.baseVpH // a state change that skipped the sync
+	m.TeamWidgetLines, m.TeamWidgetVisible, m.TeamWidgetSeen = teamWidgetFixture(8), true, true
+	if got := lipgloss.Height(m.View()); got > m.winH {
+		t.Fatalf("unsynced panel state overflowed the frame: %d > %d", got, m.winH)
 	}
 }

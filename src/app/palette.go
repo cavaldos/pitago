@@ -92,19 +92,37 @@ func (m *Model) popupH() int {
 	return n + extra + 3 // rows + hints + footer + border
 }
 
-func (m *Model) applyPopupH() {
-	if !m.ready {
-		return
-	}
-	h := m.baseVpH - m.popupH() - m.atPopupH() - m.uiPopupH() - m.inputPopupH() - m.chipH()
+// chatVpHeight is the one height formula for the chat viewport:
+// base budget (winH-7) minus the tray, every popup, and the live team
+// panel. Folding the team panel in here is what makes the compact panel
+// behave like a /command popup — it pushes the chat up by exactly its real
+// row count instead of being subtracted again at paint time (which is how
+// the dashboard used to eat the whole frame). The three-row floor keeps the
+// transcript readable no matter how many panels are open.
+func (m *Model) chatVpHeight() int {
+	h := m.baseVpH - m.popupH() - m.atPopupH() - m.uiPopupH() - m.inputPopupH() - m.chipH() - m.teamPanelH()
 	if h < 3 {
 		h = 3
 	}
-	if h != m.vp.Height {
+	return h
+}
+
+func (m *Model) applyPopupH() {
+	if !m.ready || m.vp.Width == 0 {
+		return
+	}
+	if h := m.chatVpHeight(); h != m.vp.Height {
 		m.vp.Height = h
 		m.vp.GotoBottom()
 	}
 }
+
+// applyTeamPanelH re-syncs the chat viewport after a team widget update.
+// View() has a value receiver and cannot persist m.vp, so the rows the
+// panel occupies must be reserved from an *Model method — the same place
+// applyPopupH reserves the popups. Both go through chatVpHeight, so a panel
+// and a popup can never each claim the same rows.
+func (m *Model) applyTeamPanelH() { m.applyPopupH() }
 
 func (m *Model) exactCmdMatch() bool {
 	p, ok := m.cmdPrefix()

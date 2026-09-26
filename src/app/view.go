@@ -2424,6 +2424,49 @@ func (m Model) teamWidgetHeightLimit() int {
 	return max(0, m.winH-fixed-popup-3)
 }
 
+// teamPanelMaxRows is the hard ceiling on the compact live panel. The /command
+// popup shows at most palette.Win rows, so the team dashboard gets the same
+// popup-sized class: bounded, predictable, and never able to claim the rows
+// the transcript needs. /team is unchanged and still renders the full
+// dashboard, so nothing is lost by capping the live surface.
+const teamPanelMaxRows = 8
+
+// teamPanelHeightLimit is the pool the compact panel may draw from: the
+// frame's own reserve (header, input, task widget, every popup, and at least
+// three chat rows) intersected with the popup-sized cap. Both bounds matter —
+// the cap keeps the panel small on tall terminals, the reserve keeps it from
+// eating the chat on short ones.
+func (m Model) teamPanelHeightLimit() int {
+	return max(0, min(m.teamWidgetHeightLimit(), teamPanelMaxRows))
+}
+
+// teamPanelH is how many rows the compact panel actually paints. Zero means
+// "no panel", which is what keeps the frame arithmetic in View exact.
+func (m Model) teamPanelH() int { return panelHeight(m.renderTeamWidget()) }
+
+// teamPanelActive reports whether the live panel is eligible to paint, so a
+// window resize syncs the viewport for it exactly like an open popup does.
+func (m Model) teamPanelActive() bool {
+	return len(m.TeamWidgetLines) > 0 && m.TeamWidgetSeen && m.TeamWidgetVisible
+}
+
+// chatFrameRows is the chat's share of the frame. Everything the frame paints
+// outside the chat — header, input, live panels, popups — is measured here so
+// the parts sum to exactly winH. alloc is what m.vp already holds after
+// applyTeamPanelH/applyPopupH; the min() is the backstop for state that
+// changed without a sync (a raw field write, a resize that skipped it), where
+// the chat gives rows back instead of letting the frame overflow.
+func (m Model) chatFrameRows(alloc, panels int, inlineUI bool) int {
+	if m.winH <= 0 {
+		return alloc
+	}
+	overhead := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + panels
+	if inlineUI || m.cmdOpen || m.atOpen || m.inputOpen() {
+		overhead += m.popupH() + m.atPopupH() + m.uiPopupH() + m.inputPopupH()
+	}
+	return max(0, min(alloc, m.winH-overhead))
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -2526,7 +2569,7 @@ func teamWorkerSummary(line string) bool {
 // package prefix and roster heading are structural anchors; only complete
 // worker/activity blocks are selected when rows are scarce.
 func (m Model) renderTeamWidget() string {
-	budget := m.teamWidgetHeightLimit()
+	budget := m.teamPanelHeightLimit()
 	if budget <= 0 {
 		return ""
 	}
@@ -2564,6 +2607,13 @@ func (m Model) renderTeamWidget() string {
 	prefixEnd := len(m.TeamWidgetLines)
 	if agents >= 0 {
 		prefixEnd = agents
+	} else if len(m.TeamWidgetLines) > 0 {
+		// Snapshots without a roster heading (the followed-session roster
+		// builds one line per worker) need the same hierarchy, otherwise the
+		// popup-sized cap would blank the whole panel instead of trimming
+		// it. The first line is the panel title, so it becomes the heading
+		// and every remaining row is content that may be dropped.
+		agents, prefixEnd = 0, 0
 	}
 	base := append([]string{}, m.TeamWidgetLines[:prefixEnd]...)
 	if status != "" {
@@ -2573,35 +2623,31 @@ func (m Model) renderTeamWidget() string {
 		return statusOnly()
 	}
 
-	// Legacy/test snapshots may not contain a roster heading. Keep them
-	// lossless while still reserving one row for an honest overflow marker.
-	if agents < 0 {
-		all := append(append([]string{}, base...), m.TeamWidgetLines[prefixEnd:]...)
-		if len(all) <= budget {
-			return strings.Join(mapLines(all, fit), "\n")
-		}
-		available := budget - len(base)
-		if available <= 0 {
-			return statusOnly()
-		}
-		keep := available - 1
-		lines := append([]string{}, base...)
-		lines = append(lines, m.TeamWidgetLines[prefixEnd:prefixEnd+keep]...)
-		lines = append(lines, fmt.Sprintf("  … %d rows hidden", len(m.TeamWidgetLines[prefixEnd:])-keep))
-		return strings.Join(mapLines(lines, fit), "\n")
-	}
-
+	// Legacy/test snapshots may not contain a roster heading; the title row
+	// was promoted to one above, so every remaining row is a block and the
+	// shared selection below trims it with an honest overflow marker.
 	heading := m.TeamWidgetLines[agents]
 	blocks := make([][]string, 0)
 	summary := ""
+	// openWorker records whether the box-drawing hierarchy owns the current
+	// block; a flat snapshot has no such hierarchy, so its rows are
+	// independent and must not be glued to the row above them.
+	openWorker := false
 	for _, line := range m.TeamWidgetLines[agents+1:] {
 		switch {
 		case teamWorkerSummary(line):
 			summary = line
+			openWorker = false
 		case teamWorkerStart(line):
 			blocks = append(blocks, []string{line})
-		case len(blocks) > 0:
+			openWorker = true
+		case openWorker:
 			blocks[len(blocks)-1] = append(blocks[len(blocks)-1], line)
+		default:
+			// A flat snapshot (no box-drawing hierarchy) has independent
+			// rows, so each one becomes its own block and the cap can still
+			// drop it whole instead of silently discarding it.
+			blocks = append(blocks, []string{line})
 		}
 	}
 
@@ -2709,18 +2755,13 @@ func (m Model) View() string {
 	extAbove := m.renderExtWidgets("aboveEditor", extBudget)
 	extBelow := m.renderExtWidgets("belowEditor", max(0, extBudget-panelHeight(extAbove)))
 	chatVp := m.vp
-	// Persistent panels consume chat rows from a local viewport copy; keeping
-	// m.vp unchanged avoids mutating layout state during render. lipgloss
-	// reports an empty string as one row, so only measure panels that exist.
-	reserved := 0
-	if teamPanel != "" {
-		reserved += lipgloss.Height(teamPanel)
-	}
-	if taskPanel != "" {
-		reserved += lipgloss.Height(taskPanel)
-	}
-	reserved += panelHeight(extAbove) + panelHeight(extBelow)
-	chatVp.Height = max(0, chatVp.Height-reserved)
+	// The team panel's rows are already reserved from m.vp by
+	// applyTeamPanelH (same path as the popups), so the local copy only gives
+	// up rows for the task widget and the generic plugin panels — the two
+	// surfaces that are derived at paint time. lipgloss reports an empty
+	// string as one row, so measure them with panelHeight.
+	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
+	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
 	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
 	bodyParts := []string{chatView()}
 	if teamAbove {
