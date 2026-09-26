@@ -45,6 +45,7 @@ var shortcutsDb = []ShortcutItem{
 	{"Ctrl+N", "New session", "UI"},
 	{"Ctrl+P", "Cycle model", "UI"},
 	{"Ctrl+Y", "Yank last assistant answer to clipboard", "UI"},
+	{"Ctrl+Y", "Copy selected step / notification (in trajectory, /notification)", "UI"},
 	{"Ctrl+V", "Paste (multi-backend)", "UI"},
 	{"Ctrl+O", "Open yank picker", "UI"},
 

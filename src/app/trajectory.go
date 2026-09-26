@@ -334,7 +334,7 @@ func (m Model) renderTraceDialog(d *Dialog, mode string) string {
 		b.WriteString(Fit("", cw) + "\n")
 	}
 	b.WriteString("\n")
-	foot := "type to filter · ↑↓ steps · wheel detail · Enter view in chat · Esc close"
+	foot := "type to filter · ↑↓ steps · wheel detail · Enter view in chat · Ctrl+Y copy · Esc close"
 	if n := len(d.FIdx); n > 0 {
 		cur := d.Cursor + 1
 		if cur > n {
@@ -342,7 +342,7 @@ func (m Model) renderTraceDialog(d *Dialog, mode string) string {
 		}
 		foot += fmt.Sprintf(" (%d/%d · %s)", cur, n, d.Scope)
 	}
-	b.WriteString(toolStyle.Render(Fit(foot, cw)))
+	b.WriteString(toolStyle.Render(Fit(m.dialogFoot(foot), cw)))
 	box := dlgStyle.Width(boxW).Render(b.String())
 	hint := ""
 	if len(m.Dialogs) > 1 {

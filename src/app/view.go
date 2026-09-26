@@ -222,23 +222,13 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		default:
 			icon = statusBarStyle.Render("○")
 		}
-		head := bl.ToolName
-		switch strings.ToLower(bl.ToolName) {
-		case "bash":
-			head = "$"
-			if bl.ToolArgs != "" {
-				head += " " + bl.ToolArgs
-			}
-		case "powershell":
-			head = "PS>"
-			if bl.ToolArgs != "" {
-				head += " " + bl.ToolArgs
-			}
-		default:
-			if bl.ToolArgs != "" {
-				head += " " + bl.ToolArgs
-			}
+		// A shell call is one framed unit — command, divider, output — set
+		// flush left with no status bullet, like oh-my-pi. The bullet is
+		// what the border color replaces here (see toolBorder).
+		if isShell(bl.ToolName) {
+			return m.renderShellBlock(bl, cw) + "\n\n", false
 		}
+		head := bl.ToolArgs
 		// pi suffixes the write header with the added line count
 		// ("write game.js +211").
 		if strings.ToLower(bl.ToolName) == "write" {
@@ -251,15 +241,23 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		if strings.TrimSpace(head) == "" {
 			head = "tool"
 		}
-		body = lipgloss.NewStyle().Foreground(cText).Render(Short(head, 140)) + "\n"
-		if r := m.renderToolBody(bl); r != "" {
-			body += r
+		// oh-my-pi look: bold tool name on the header row, everything
+		// else dim. No full-bleed background fill — the block has to
+		// stay readable on terminals without truecolor, where a
+		// Background() is dropped and used to leave flat raw rows.
+		body = toolNameStyle.Render(bl.ToolName)
+		if head != "" {
+			body += " " + toolStyle.Render(Short(head, cw-10))
 		}
-		// pi wraps every tool execution in a status-colored Box
-		// (pending → green → red). Width(cw) pads short lines so the
-		// background spans the chat column full-bleed like pi.
-		body = lipgloss.NewStyle().Background(toolBg(bl.ToolStatus)).Width(cw).
-			Render(strings.TrimRight(body, "\n")) + "\n\n"
+		if d := toolDetail(bl); d != "" {
+			body += "\n" + toolStyle.Render(d)
+		}
+		if r := m.renderToolBody(bl); r != "" {
+			body += "\n" + r
+		}
+		body += "\n\n"
+		// Continuation rows keep a blank 2-cell gutter so the result tree
+		// lines up under the header text.
 		boxed = true
 	case "bash":
 		icon = statusBarStyle.Render("●")
@@ -323,8 +321,197 @@ func codeLang(s string) (lang string, ok bool) {
 	return "", false
 }
 
+// isShell reports whether a tool's output is command output, which gets
+// the bordered "── Output ──" box instead of a result tree.
+func isShell(tool string) bool {
+	switch strings.ToLower(tool) {
+	case "bash", "powershell":
+		return true
+	}
+	return false
+}
+
+// toolDetail is the dim line under a tool header: a live marker while the
+// call is still running, and an explicit "no output" when a finished call
+// has nothing to show (read hides its payload on success by design).
+func toolDetail(bl Block) string {
+	if bl.ToolStatus == "done" || bl.ToolStatus == "error" {
+		if strings.TrimSpace(bl.ToolResult) == "" && strings.TrimSpace(bl.ToolDiff) == "" {
+			return "no output"
+		}
+		return ""
+	}
+	return "running…"
+}
+
+// renderShellBlock frames one whole shell call — command, then a divider,
+// then output — in a single rounded box, oh-my-pi style. The box is flush
+// left with no status bullet, so the border color is what tells pending
+// from done from error (see toolBorder). The box is still rendered while
+// the call runs, holding just the command, so a long command does not
+// pop into existence with its output.
+func (m Model) renderShellBlock(bl Block, w int) string {
+	if w < 20 {
+		w = 20 // framedBox's floor; clamp here so inner matches the real box
+	}
+	rows := []string{shellCommandRow(bl)}
+	inner := w - 4 // border 2 + padding 2
+	if out := m.shellOutput(bl); out != "" {
+		label := "Output"
+		if bl.ToolStatus == "error" {
+			label = "Error"
+		}
+		rows = append(rows, dividerRow(inner, label), out)
+	}
+	return framedBox(rows, w, toolBorder(bl.ToolStatus))
+}
+
+// shellCommandRow is the box's first row: the bare prompt plus the
+// chroma-highlighted command, so it reads like a shell line rather than
+// a header. Falls back to dim text when chroma does not know the lexer.
+func shellCommandRow(bl Block) string {
+	row := codeStyle.Render(shellPrompt(bl.ToolName))
+	args := strings.TrimSpace(bl.ToolArgs)
+	if args == "" {
+		return row
+	}
+	hl := markdown.Highlight(shellLang(bl.ToolName), args)
+	if hl == args {
+		hl = toolStyle.Render(args)
+	}
+	return row + " " + hl
+}
+
+// shellOutput is the framed output section, empty while the call is still
+// running. The skip hint leads the section (so it is read before the
+// windowed lines) and the collapse offer closes it, both inside the box.
+func (m Model) shellOutput(bl Block) string {
+	if bl.ToolStatus != "done" && bl.ToolStatus != "error" {
+		return ""
+	}
+	p := format.ToolResultPreviewExpanded(strings.ToLower(bl.ToolName), bl.ToolStatus, bl.ToolResult, m.expandTools)
+	if p.Hidden || (len(p.Lines) == 0 && p.Skipped == 0) {
+		return ""
+	}
+	var rows []string
+	if p.Skipped > 0 && !m.expandTools {
+		rows = append(rows, toolStyle.Render("… ("+skipHint(p)+", "+expandHint+")"))
+	}
+	body := strings.Join(p.Lines, "\n")
+	if lang, ok := codeLang(body); ok && len(p.Lines) > 1 {
+		if out := markdown.Highlight(lang, body); out != body {
+			body = out
+		}
+	}
+	rows = append(rows, body)
+	if m.expandTools && p.Total > 0 {
+		rows = append(rows, toolStyle.Render("("+collapseHint+")"))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// shellPrompt is the leading sigil for a shell tool's command line.
+func shellPrompt(tool string) string {
+	if strings.ToLower(tool) == "powershell" {
+		return "PS>"
+	}
+	return "$"
+}
+
+// shellLang is the chroma lexer for a shell command. The highlighter has no
+// powerShell lexer to match, so those fall through and render dim.
+func shellLang(tool string) string {
+	if strings.ToLower(tool) == "powershell" {
+		return ""
+	}
+	return "bash"
+}
+
+// toolBorder colors a shell block's frame by execution status. It takes
+// over the ●/×/○ bullet a framed block has no room for, so the state is
+// still readable without truecolor.
+func toolBorder(status string) lipgloss.Color {
+	switch status {
+	case "error":
+		return cRed
+	case "done":
+		return cBorder
+	default:
+		return cMuted
+	}
+}
+
+// dividerRow is a full-width section rule with an inline label, the
+// "─── Output ──────" rule from oh-my-pi. lipgloss v1's border renderer
+// only repeats a single rune, so a labelled rule has to be a content row.
+func dividerRow(inner int, label string) string {
+	head := "─── " + label + " "
+	if n := inner - lipgloss.Width(head); n > 0 {
+		head += strings.Repeat("─", n)
+	}
+	return sepStyle.Render(head)
+}
+
+// framedBox wraps rows in a rounded border exactly w cells wide. Padding
+// insets the content one cell per side so it never touches the border;
+// lipgloss counts padding inside Width, hence the -2 (the border itself
+// adds the other 2 back).
+func framedBox(rows []string, w int, border lipgloss.Color) string {
+	if w < 20 {
+		w = 20
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Padding(0, 1).
+		Width(w - 2).
+		Render(strings.Join(rows, "\n"))
+}
+
+// renderResultRows renders result rows with or without tree glyphs: every
+// row but the last is prefixed "├── " and the last "└── " when tree is set,
+// so a file-list-shaped result reads as one block instead of a ragged list.
+// st styles each row (pass an empty style for already-colored ANSI rows).
+// Blank rows stay blank so a gap never grows a phantom branch.
+//
+// Rows carry no leading indent of their own: every tool block is already
+// wrapped in gutterBox, whose 2-cell continuation gutter is the single
+// source of indentation. Indenting here too would push the tree two cells
+// past the shell box and the header text it belongs under.
+func renderResultRows(rows []string, st lipgloss.Style, tree bool) string {
+	out := make([]string, 0, len(rows))
+	for i, r := range rows {
+		if strings.TrimSpace(r) == "" {
+			out = append(out, "")
+			continue
+		}
+		if tree {
+			pre := "├── "
+			if i == len(rows)-1 {
+				pre = "└── "
+			}
+			r = pre + r
+		}
+		out = append(out, st.Render(r))
+	}
+	return strings.Join(out, "\n")
+}
+
+// skipHint is the shared "N earlier/more lines" clause for a truncated
+// tool result. The caller owns the surrounding parens and the ctrl+g key
+// hint, so this returns only the clause.
+func skipHint(p format.ToolPreview) string {
+	if p.Tail {
+		return fmt.Sprintf("%d earlier lines", p.Skipped)
+	}
+	return fmt.Sprintf("%d more lines", p.Skipped)
+}
+
 // toolBg is pi's tool Box background by execution status: pending while
-// running, green on success, red on error.
+// running, green on success, red on error. The tool block no longer paints
+// it (the 'tool' case of renderOneBlock is unfilled now, so it survives
+// truecolor-less terminals); the colors stay because ApplyTheme still
+// resolves them from the theme and /theme round-trips the palette.
 func toolBg(status string) lipgloss.Color {
 	switch status {
 	case "done":
@@ -350,7 +537,7 @@ func (m Model) renderToolBody(bl Block) string {
 	case "write":
 		if content, ok := format.WriteContent(bl.ToolArgsRaw); ok && strings.TrimSpace(content) != "" {
 			p := format.CallPreview(content, true)
-			return renderPreview(p, format.LangFromPath(toolPath(bl)), false)
+			return renderPreview(p, format.LangFromPath(toolPath(bl)), false, false)
 		}
 		return renderToolResultFull(tool, bl.ToolResult)
 	case "edit":
@@ -363,12 +550,12 @@ func (m Model) renderToolBody(bl Block) string {
 			return renderEditDiff(bl.ToolDiff)
 		}
 		if resultDiff := strings.TrimSpace(bl.ToolResult); codeLangIsDiff(resultDiff) {
-			return renderPreview(format.CallPreview(resultDiff, true), "diff", false)
+			return renderPreview(format.CallPreview(resultDiff, true), "diff", false, false)
 		}
 		if fb := format.EditDiffFallback(bl.ToolArgsRaw); fb != "" {
 			// The reconstructed diff is a bare -/+ pair, so the chroma `diff`
 			// lexer still applies here (no gutter, no "..." markers).
-			return renderPreview(format.CallPreview(fb, true), "diff", false)
+			return renderPreview(format.CallPreview(fb, true), "diff", false, false)
 		}
 		text := strings.TrimSpace(bl.ToolResult)
 		if text == "" {
@@ -381,7 +568,7 @@ func (m Model) renderToolBody(bl Block) string {
 		}
 		// The preview is already complete, so pass expanded=false only to
 		// suppress the generic ctrl+g-to-collapse affordance.
-		return renderPreview(p, lang, false)
+		return renderPreview(p, lang, false, false)
 	default:
 		return renderToolResultCompact(tool, bl.ToolStatus, bl.ToolResult, m.expandTools)
 	}
@@ -413,8 +600,10 @@ func renderEditDiff(text string) string {
 	p.Lines = rows
 	// lang "" keeps renderPreview off the highlighter; expanded=false only
 	// suppresses the ctrl+g-to-collapse hint (CallPreview already returned
-	// every line, so there is nothing to collapse).
-	return renderPreview(p, "", false)
+	// every line, so there is nothing to collapse). tree=false: a diff
+	// already has its own +/- and line-number gutter, so branch glyphs on
+	// top of it would just be noise.
+	return renderPreview(p, "", false, false)
 }
 
 // colorEditDiffLine tints one diff row by its leading marker: removed lines
@@ -448,16 +637,17 @@ func renderToolResultCompact(tool, status, result string, expanded bool) string 
 		return renderToolResultExpanded(tool, status, result, true)
 	}
 	if n == 1 {
-		return toolStyle.Render("  └ " + strings.TrimSpace(result))
+		return renderResultRows([]string{strings.TrimSpace(result)}, toolStyle, status != "error")
 	}
-	return toolStyle.Render(fmt.Sprintf("  … (%d lines, %s)", n, expandHint))
+	return toolStyle.Render(fmt.Sprintf("… (%d lines, %s)", n, expandHint))
 }
 
 // renderToolResultFull keeps errors and edit/write receipts visible without
 // advertising a collapse action that would not change their rendering.
+// tree=false: an error is one logical unit, not a list of siblings.
 func renderToolResultFull(tool, result string) string {
 	p := format.ToolResultPreviewExpanded(tool, "error", result, true)
-	return renderPreview(p, "", false)
+	return renderPreview(p, "", false, false)
 }
 
 // toolPath is the file path for highlight-language detection: raw args
@@ -494,49 +684,43 @@ func countLines(s string) int {
 
 // renderPreview renders one collapsed/expanded preview: code blocks go
 // through pi's highlighter (falling back to dim rows), other lines keep
-// the dim └-tree style, and the matching pi-style hint closes the block.
-func renderPreview(p format.ToolPreview, lang string, expanded bool) string {
+// the dim result style, and the matching pi-style hint closes the block.
+// tree selects box-drawing branch glyphs, which belong to file-list-shaped
+// results only — a diff already carries its own +/−/line-number gutter and
+// an error is one logical unit, so both render as flat indented rows.
+func renderPreview(p format.ToolPreview, lang string, expanded, tree bool) string {
 	if p.Hidden || len(p.Lines) == 0 {
 		return ""
 	}
+	plain := lipgloss.NewStyle()
 	if lang != "" && len(p.Lines) > 1 {
 		if out := markdown.Highlight(lang, strings.Join(p.Lines, "\n")); out != strings.Join(p.Lines, "\n") {
-			rows := strings.Split(out, "\n")
-			for i := range rows {
-				rows[i] = "  " + rows[i]
-			}
+			body := renderResultRows(strings.Split(out, "\n"), plain, tree)
 			if hint := previewHint(p, expanded); hint != "" {
-				rows = append(rows, toolStyle.Render(hint))
+				body += "\n" + toolStyle.Render(hint)
 			}
-			return strings.Join(rows, "\n")
+			return body
 		}
 	}
-	rows := make([]string, 0, len(p.Lines)+1)
-	for i, ln := range p.Lines {
-		pre := "    "
-		if i == 0 {
-			pre = "  └ "
-		}
-		rows = append(rows, toolStyle.Render(pre+ln))
-	}
+	body := renderResultRows(p.Lines, toolStyle, tree)
 	if hint := previewHint(p, expanded); hint != "" {
-		rows = append(rows, toolStyle.Render(hint))
+		body += "\n" + toolStyle.Render(hint)
 	}
-	return strings.Join(rows, "\n")
+	return body
 }
 
 // previewHint is pi's trailing hint: collapsed shows what is hidden,
 // expanded offers to collapse back (only when lines were hidden).
 func previewHint(p format.ToolPreview, expanded bool) string {
 	if p.Skipped > 0 && !expanded {
-		hint := fmt.Sprintf("  ... (%d more lines", p.Skipped)
+		hint := "... (" + skipHint(p)
 		if p.Total > 0 {
 			hint += fmt.Sprintf(", %d total", p.Total)
 		}
 		return hint + ", " + expandHint + ")"
 	}
 	if expanded && p.Total > 0 {
-		return "  (" + collapseHint + ")"
+		return "(" + collapseHint + ")"
 	}
 	return ""
 }
@@ -558,29 +742,24 @@ func renderToolResultExpanded(tool, status, s string, expanded bool) string {
 	if p.Hidden || len(p.Lines) == 0 {
 		return ""
 	}
+	// Branch glyphs mean "these are sibling results". An error is one
+	// logical unit, so it stays a flat block.
+	tree := status != "error"
 	if len(p.Lines) == 1 && p.Skipped == 0 {
 		line := p.Lines[0]
 		if lang, ok := codeLang(line); ok {
 			if out := markdown.Highlight(lang, line); out != line {
-				return "  └ " + out
+				return renderResultRows([]string{out}, lipgloss.NewStyle(), tree)
 			}
 		}
-		return toolStyle.Render("  └ " + line)
+		return renderResultRows([]string{line}, toolStyle, tree)
 	}
-	rows := make([]string, 0, len(p.Lines)+1)
+	var rows []string
 	if p.Skipped > 0 && !expanded {
-		hint := fmt.Sprintf("... (%d more lines)", p.Skipped)
-		if p.Tail {
-			hint = fmt.Sprintf("... (%d earlier lines)", p.Skipped)
-		}
-		rows = append(rows, toolStyle.Render("  "+hint+", "+expandHint+")"))
+		rows = append(rows, toolStyle.Render("... ("+skipHint(p)+", "+expandHint+")"))
 	}
-	for i, ln := range p.Lines {
-		pre := "    "
-		if i == 0 {
-			pre = "  └ "
-		}
-		rows = append(rows, toolStyle.Render(pre+ln))
+	if body := renderResultRows(p.Lines, toolStyle, tree); body != "" {
+		rows = append(rows, body)
 	}
 	if hint := previewHint(p, expanded); hint != "" {
 		// previewHint duplicates the collapsed top hint at the bottom —

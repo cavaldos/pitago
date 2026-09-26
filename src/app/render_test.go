@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/pirpc"
 )
@@ -191,7 +192,7 @@ func TestRenderToolBodyGenericCompact(t *testing.T) {
 
 			bl.ToolResult = "No files found matching pattern"
 			oneLine := (Model{}).renderToolBody(bl)
-			if !strings.Contains(oneLine, "└ No files found matching pattern") {
+			if !strings.Contains(oneLine, "└── No files found matching pattern") {
 				t.Fatalf("one-line %s result should stay visible: %q", tool, oneLine)
 			}
 			if strings.Contains(oneLine, "ctrl+g") {
@@ -471,5 +472,135 @@ func TestRenderToolBodyEditReceiptOnly(t *testing.T) {
 	got := stripANSI((Model{}).renderToolBody(bl))
 	if !strings.Contains(got, "Successfully replaced") {
 		t.Fatalf("receipt-only edit should fall back to the receipt: %q", got)
+	}
+}
+
+// oh-my-pi look: a tool block is never a full-bleed Background fill
+// (terminals without truecolor drop Background and used to leave flat raw
+// rows). A shell call is one flush-left framed box — command, divider,
+// output, no bullet; every other tool is a status bullet + bold name over
+// a tree body.
+func TestToolBlockRestyle(t *testing.T) {
+	bash := Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
+		ToolArgs: "go test ./src/app/", ToolResult: "ok  \tpitago/src/app\t3.4s\nFAIL"}
+	read := Block{Kind: "tool", ToolName: "read", ToolStatus: "done",
+		ToolArgs: "game.js", ToolArgsRaw: `{"path":"game.js"}`,
+		ToolResult: "const a = 1;\nconst b = 2;\nconst c = 3;"}
+	for _, bl := range []Block{bash, read} {
+		m := Model{blocks: []Block{bl}}
+		m.vp = viewport.New(62, 20) // cw = 60
+		if out := m.renderBlocks(); strings.Contains(out, "\x1b[48;2;") {
+			t.Fatalf("%s block painted a background: %q", bl.ToolName, out)
+		}
+	}
+
+	// A shell call frames command + output in one box, flush left, with no
+	// status bullet: the border color carries the status instead.
+	bm := Model{blocks: []Block{bash}, vp: viewport.New(62, 20)}
+	plain := stripANSI(bm.renderBlocks())
+	if strings.HasPrefix(plain, "●") {
+		t.Fatalf("shell box must be flush left with no bullet: %q", plain)
+	}
+	if !strings.HasPrefix(plain, "╭─") {
+		t.Fatalf("shell block must open the frame immediately: %q", plain)
+	}
+	if !strings.Contains(plain, "│ $ go test ./src/app/ ") {
+		t.Fatalf("command must sit inside the box: %q", plain)
+	}
+	if !strings.Contains(plain, "│ ─── Output ") {
+		t.Fatalf("missing inline Output divider: %q", plain)
+	}
+	if !strings.HasSuffix(strings.TrimRight(plain, "\n"), strings.Repeat("╰", 1)+strings.Repeat("─", 58)+"╯") {
+		t.Fatalf("shell box missing bottom border: %q", plain)
+	}
+	for _, row := range strings.Split(plain, "\n") {
+		if strings.HasPrefix(row, "╭") || strings.HasPrefix(row, "│") || strings.HasPrefix(row, "╰") {
+			if lipgloss.Width(row) != 60 {
+				t.Fatalf("box row is %d cells, want 60: %q", lipgloss.Width(row), row)
+			}
+		}
+	}
+	if toolBorder("error") != cRed || toolBorder("done") != cBorder {
+		t.Fatalf("border must carry the status the bullet gave up")
+	}
+
+	// Every other tool keeps the bullet + bold name header over a tree.
+	rm0 := Model{blocks: []Block{read}, vp: viewport.New(62, 20)}
+	plain = stripANSI(rm0.renderBlocks())
+	if head := strings.Split(plain, "\n")[0]; !strings.HasPrefix(head, "● read ") {
+		t.Fatalf("read block header = %q, want \"● read …\"", head)
+	}
+	// Styling is dropped when no color profile is set (the case this
+	// restyle targets), so assert the style itself, not its escape.
+	if !toolNameStyle.GetBold() {
+		t.Fatalf("toolNameStyle must render the tool name bold")
+	}
+
+	// a multi-line generic result renders as a box-drawing tree
+	rm := Model{expandTools: true, blocks: []Block{read}, vp: viewport.New(62, 20)}
+	plain = stripANSI(rm.renderBlocks())
+	if !strings.Contains(plain, "├── const a = 1;") {
+		t.Fatalf("multi-line result missing ├─ tree row: %q", plain)
+	}
+	if !strings.Contains(plain, "└── const c = 3;") {
+		t.Fatalf("last result row missing └─ prefix: %q", plain)
+	}
+}
+
+func TestRenderResultRows(t *testing.T) {
+	// Tree rows carry no indent of their own: gutterBox is the single
+	// source of the 2-cell block indent, so indenting here too would push
+	// the tree two cells past the shell box and the header text.
+	got := renderResultRows([]string{"a", "b", "c"}, lipgloss.NewStyle(), true)
+	want := "├── a\n├── b\n└── c"
+	if got != want {
+		t.Fatalf("tree rows = %q, want %q", got, want)
+	}
+	if one := renderResultRows([]string{"solo"}, lipgloss.NewStyle(), true); one != "└── solo" {
+		t.Fatalf("single-row tree = %q", one)
+	}
+	if blank := renderResultRows([]string{"a", "", "c"}, lipgloss.NewStyle(), true); blank != "├── a\n\n└── c" {
+		t.Fatalf("blank row must stay blank: %q", blank)
+	}
+	// tree=false is the diff/error path: flat rows, no branch glyphs.
+	if flat := renderResultRows([]string{"- old", "+ new"}, toolStyle, false); flat != "- old\n+ new" {
+		t.Fatalf("flat rows = %q, want no glyphs", flat)
+	}
+}
+
+// The labelled divider has to fill the framed content exactly, or the
+// right border of the shell box comes out ragged. Narrow widths are the
+// case that breaks, since the label alone can outgrow the inner column.
+func TestShellBoxDividerFillsInnerWidth(t *testing.T) {
+	for _, w := range []int{8, 20, 24, 60, 94, 200} {
+		bl := Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
+			ToolArgs: "ls src", ToolResult: "a\nb"}
+		for _, row := range strings.Split((Model{}).renderShellBlock(bl, w), "\n") {
+			// lipgloss.Width is ANSI-aware; StripANSI is not, and it eats
+			// the padding that this measurement is about.
+			if got := lipgloss.Width(row); got != max(w, 20) {
+				t.Fatalf("w=%d: shell box row is %d cells: %q", w, got, row)
+			}
+		}
+	}
+	// A label wider than the inner column must not push the right border out.
+	if d := dividerRow(4, "Output"); lipgloss.Width(d) != 11 {
+		t.Fatalf("over-wide label must stay un-wrapped, got %d cells: %q",
+			lipgloss.Width(d), stripANSI(d))
+	}
+}
+
+func TestToolDetail(t *testing.T) {
+	if got := toolDetail(Block{ToolStatus: "running"}); got != "running…" {
+		t.Errorf("running detail = %q", got)
+	}
+	if got := toolDetail(Block{ToolStatus: "done", ToolResult: "ok"}); got != "" {
+		t.Errorf("done-with-output detail = %q", got)
+	}
+	if got := toolDetail(Block{ToolStatus: "done"}); got != "no output" {
+		t.Errorf("silent done detail = %q", got)
+	}
+	if got := toolDetail(Block{ToolStatus: "error", ToolResult: "  "}); got != "no output" {
+		t.Errorf("blank result detail = %q", got)
 	}
 }

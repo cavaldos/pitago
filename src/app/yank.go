@@ -26,15 +26,21 @@ func (m *Model) YankLast() tea.Cmd {
 }
 
 // YankText copies arbitrary text to the clipboard with a toast popup.
-
 func (m *Model) YankText(text string) {
-	if err := clipboard.WriteAll(text); err != nil {
+	if err := clipWrite(text); err != nil {
 		m.AddBlock(Block{Kind: "notice", Text: "yank failed: " + err.Error(), Err: true})
 	} else {
 		m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("yanked (%d chars) to clipboard", len([]rune(text)))})
 	}
 	m.Refresh()
 }
+
+// writeClipboard is the single clipboard write, overridable in tests. It
+// is separated from YankText because a modal dialog already covers the
+// toast overlay (View returns the dialog before overlayToasts runs), so a
+// notice raised from inside one would surface as a stale popup long after
+// the copy. Dialog copies report through the dialog footer instead.
+var clipWrite = func(text string) error { return clipboard.WriteAll(text) }
 
 // OpenYank shows the message picker: ↑↓ pick any chat message, Enter
 // copies its full text. The sidebar stays visible — copied text is

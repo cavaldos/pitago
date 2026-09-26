@@ -190,7 +190,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (Ctrl+V into the /login key field must land), the quit/esc
 		// disarms (an arm must always expire, even behind a dialog), the
 		// pet clock (elapsed/face animation is UI-only and must not
-		// freeze), and the /login stay-open pipeline (save/rename → respawn →
+		// freeze), the copyHint retirement (a copy confirmation raised by
+		// a dialog's own keypress must be able to expire behind that same
+		// dialog, or it sticks until the dialog closes), and the /login
+		// stay-open pipeline (save/rename → respawn →
 		// reconnect must complete without closing the picker). The
 		// deferred file-I/O messages belong to that same pipeline: they are
 		// the second half of an action taken inside a dialog, so swallowing
@@ -209,6 +212,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.(type) {
 		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg, escDisarmMsg,
+			clearCopyHintMsg,
 			petTickMsg, petFlashMsg, streamFlushMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
 			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg,
@@ -491,6 +495,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		if len(m.toasts) > 0 {
 			scheduleToastTick() // countdown keeps ticking; expiry prunes
+		}
+		return m, nil
+
+	case clearCopyHintMsg:
+		// A newer copy bumped the generation, so this timer is stale and
+		// the newer hint still owns the footer.
+		if msg.gen == m.copyGen {
+			m.copyHint = ""
+			m.applyPopupH()
+			m.Refresh()
 		}
 		return m, nil
 
@@ -2222,6 +2236,14 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlV:
 		if d.Kind == "secret" || d.Kind == "input" {
 			return m, m.pasteCmd(true) // paste into the dialog buffer
+		}
+		return m, nil
+	case tea.KeyCtrlY:
+		// Copies the selected row and leaves the dialog open. Must sit
+		// above the rune tail: every unmodified rune is filter text, so
+		// Ctrl+Y is the only shape this can take.
+		if dialogCopyable(d) {
+			return m, m.copyDialogSelection(d)
 		}
 		return m, nil
 	case tea.KeyEsc:

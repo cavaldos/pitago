@@ -33,11 +33,28 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 
 - `message_update` text_delta → appended to the assistant block (true streaming)
 - thinking_delta → gray block; toolcall_start/end + tool_execution_* → tool block (running → done + trimmed result)
+- Tool blocks are chrome-first, not fill-first, and never use `Background()` — a terminal without
+  truecolor used to drop the fill and leave flat raw rows, which is what this layout replaces.
+  - bash/powershell: one rounded box, flush left with no status bullet, holding the highlighted
+    command, then a `─── Output ──` content rule, then the output (the box appears on toolcall_start
+    with just the command, so a long command never pops in with its output). Border color carries
+    pending/done/error, which is what the bullet gives up: muted → border → red.
+  - every other tool: status bullet + bold name + dim args, then a `├──`/`└──` result tree
+    (glob/read/grep). Diffs and errors stay flat rows — a diff has its own +/−/line-number gutter
+    and an error is one logical unit, not a list of siblings.
 - message_end → finalizes the block (falls back to message text when no deltas arrived)
 - `extension_ui_request` select/confirm → centered modal dialog (↑↓, Enter, Esc);
   input/editor → free-text dialog (Enter submits, Esc cancels); notify/setStatus/set_editor_text → shown/applied accordingly
 - `agent_settled` → refresh get_session_stats (tokens, cost, context %) into the sidebar
 - Enter: prompt (idle) / steer (streaming); Esc: dialog? close : clear_queue+abort+restore queued text into the input; Ctrl+N: new_session; Ctrl+C: quit + kill pi
+- Copy: Ctrl+Y is context-sensitive. In chat it yanks the last assistant answer; in the
+  `trajectory` and `notification` dialogs it copies the selected row's full text and leaves
+  the dialog open. Those two are the only copyable kinds — every unmodified rune is consumed
+  by their type-to-filter path, so the action cannot be a bare letter, and `yank` already
+  copies on Enter. Confirmation shows in the dialog footer, not as a toast: `View` returns
+  the dialog before `overlayToasts` runs, so a notice raised inside a modal would surface as
+  a stale popup after it closed. `notification` rows keep the full text in `Payload` because
+  `Options` is truncated to 180 cells for display.
 - Model: pitago remembers the last model the user *explicitly* picked (`/model`, `/recent`,
   `Ctrl+P`) in `~/.config/pitago/prefs.json` (`currentModel`, single writer, user action only)
   and passes it to the pi child as `--provider/--model` at process start; explicit

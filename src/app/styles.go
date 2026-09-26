@@ -51,9 +51,10 @@ var (
 			BorderForeground(cBorder).
 			Padding(0, 1).
 			Foreground(cText)
-	toolStyle = lipgloss.NewStyle().Foreground(cMuted)
-	codeStyle = lipgloss.NewStyle().Foreground(cCode)
-	sideStyle = lipgloss.NewStyle().
+	toolStyle     = lipgloss.NewStyle().Foreground(cMuted)
+	toolNameStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
+	codeStyle     = lipgloss.NewStyle().Foreground(cCode)
+	sideStyle     = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(cBorder).
 			Padding(0, 1)
@@ -117,6 +118,7 @@ func ApplyTheme(t theme.Theme) {
 		Padding(0, 1).
 		Foreground(cText)
 	toolStyle = lipgloss.NewStyle().Foreground(cMuted)
+	toolNameStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	codeStyle = lipgloss.NewStyle().Foreground(cCode)
 	sideStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

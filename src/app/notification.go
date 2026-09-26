@@ -24,6 +24,10 @@ func (m *Model) OpenNotifications(arg string) {
 		}
 		d.Options = append(d.Options, Short(strings.TrimSpace(t.Text), 180))
 		d.Descs = append(d.Descs, t.At.Format("01-02 15:04:05")+" · "+kind)
+		// Payload is what Ctrl+Y copies. Options truncates to 180 cells for
+		// the row, so it cannot double as the copy source: an error toast
+		// routinely runs longer than that.
+		d.Payload = append(d.Payload, t.Text)
 	}
 	d.Filter = strings.TrimSpace(arg)
 	d.Reindex()
@@ -214,14 +218,14 @@ func (m Model) renderNotificationDialog(d *Dialog) string {
 		b.WriteString(ln + "\n")
 	}
 
-	foot := "type to filter · ↑↓ select · PgUp/PgDn page · Esc close"
+	foot := "type to filter · ↑↓ select · PgUp/PgDn page · Ctrl+Y copy · Esc close"
 	if len(m.Dialogs) > 1 {
 		foot += fmt.Sprintf(" · (%d pending)", len(m.Dialogs)-1)
 	}
 	if blanks > 1 {
 		b.WriteString("\n")
 	}
-	b.WriteString(toolStyle.Render(Fit(foot, cw)))
+	b.WriteString(toolStyle.Render(Fit(m.dialogFoot(foot), cw)))
 	box := dlgStyle.Width(boxW).Render(b.String())
 	return lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box)
 }
