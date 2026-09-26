@@ -249,7 +249,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.vp, c = m.vp.Update(msg)
 		}
-		m.Refresh()
+		// No Refresh here: a wheel report only moves an offset, so the
+		// transcript and sidebar are still current. Re-rendering them per
+		// event is what made long chats scroll in jerks (see wheelTo).
 		return m, c
 	}
 
@@ -273,6 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.vp = viewport.New(mainW, vpH)
 			m.sideVp = viewport.New(sideInnerW, m.sideContentH())
+			m.chatContent = "" // fresh viewport holds no content yet
 			m.ready = true
 		} else {
 			m.vp.Width = mainW

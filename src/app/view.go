@@ -2763,25 +2763,13 @@ func (m Model) View() string {
 	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
 	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
 	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
-	bodyParts := []string{chatView()}
-	if teamAbove {
-		bodyParts = append(bodyParts, teamPanel)
-	}
-	if taskPanel != "" {
-		bodyParts = append(bodyParts, taskPanel)
-	}
-	if extAbove != "" {
-		bodyParts = append(bodyParts, extAbove)
-	}
-	bodyParts = append(bodyParts, m.renderInput())
-	if extBelow != "" {
-		bodyParts = append(bodyParts, extBelow)
-	}
-	if teamBelow {
-		bodyParts = append(bodyParts, teamPanel)
-	}
-	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
-	if m.cmdOpen || m.atOpen || inlineUI || m.inputOpen() {
+	input := m.renderInput()
+	popupOpen := m.cmdOpen || m.atOpen || inlineUI || m.inputOpen()
+	// A popup replaces the body wholesale, so build exactly one of the two
+	// stacks. Rendering both meant the chat viewport and the input were laid
+	// out twice per frame (~260µs) and the first result was thrown away.
+	var body string
+	if popupOpen {
 		parts := []string{chatView()}
 		if teamAbove {
 			parts = append(parts, teamPanel)
@@ -2809,7 +2797,7 @@ func (m Model) View() string {
 			// chat + sidebar stay visible behind it.
 			parts = append(parts, m.renderInputBox())
 		}
-		parts = append(parts, m.renderInput())
+		parts = append(parts, input)
 		if extBelow != "" {
 			parts = append(parts, extBelow)
 		}
@@ -2817,6 +2805,25 @@ func (m Model) View() string {
 			parts = append(parts, teamPanel)
 		}
 		body = lipgloss.JoinVertical(lipgloss.Left, parts...)
+	} else {
+		bodyParts := []string{chatView()}
+		if teamAbove {
+			bodyParts = append(bodyParts, teamPanel)
+		}
+		if taskPanel != "" {
+			bodyParts = append(bodyParts, taskPanel)
+		}
+		if extAbove != "" {
+			bodyParts = append(bodyParts, extAbove)
+		}
+		bodyParts = append(bodyParts, input)
+		if extBelow != "" {
+			bodyParts = append(bodyParts, extBelow)
+		}
+		if teamBelow {
+			bodyParts = append(bodyParts, teamPanel)
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
 	}
 	left := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body)
 	left = m.overlayToasts(left) // float above chat: never shifts the frame

@@ -223,6 +223,7 @@ type Model struct {
 	plugAt              time.Time // first press timestamp for the pending plugin op
 	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
+	chatContent         string    // transcript string currently loaded into vp (setChatContent skips an unchanged re-measure)
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
 	sideCacheAt         time.Time // last sidebar rebuild
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
@@ -943,6 +944,45 @@ func (m *Model) SwitchSession(path string) tea.Cmd {
 // forwarded live event is painted once instead of twice.
 var paintHook func()
 
+// setChatContent loads a rendered transcript into the chat viewport,
+// skipping the re-measure when the string is unchanged.
+//
+// viewport.SetContent splits the string and then walks every line through
+// ansi.StringWidth to find the longest one, so it costs O(transcript) —
+// the single largest per-paint cost once a chat gets long, and measured at
+// ~79% of a repaint. Skipping an identical string is safe: SetContent never
+// resets YOffset (it only re-pins to the bottom when the offset overruns
+// the line count), so a redundant call re-measures without moving the view.
+func (m *Model) setChatContent(s string) {
+	// "" doubles as "nothing loaded yet": an empty transcript still has to
+	// go through, or a freshly built viewport would sit blank.
+	if s != "" && s == m.chatContent {
+		return
+	}
+	m.chatContent = s
+	m.vp.SetContent(s)
+}
+
+// wheelTo routes one wheel report at column x to the sidebar when hovered
+// and to the chat otherwise, returning the viewport's command.
+//
+// Scrolling only moves an offset — the transcript and the sidebar text are
+// unchanged — so this deliberately does not repaint them. Re-rendering on
+// every wheel event cost O(transcript) per event, so a single trackpad
+// burst (tens of reports) overran the frame budget, the input queue backed
+// up behind Update, and the view caught up long after the wheel stopped.
+// Every path that actually changes content (Refresh, RefreshFollow, the
+// streaming painters) owns its own SetContent.
+func (m *Model) wheelTo(x int, msg tea.MouseMsg) tea.Cmd {
+	var c tea.Cmd
+	if m.overSide(x) {
+		m.sideVp, c = m.sideVp.Update(msg)
+	} else {
+		m.vp, c = m.vp.Update(msg)
+	}
+	return c
+}
+
 func (m *Model) Refresh() {
 	if !m.ready {
 		return
@@ -952,7 +992,7 @@ func (m *Model) Refresh() {
 	}
 	// only stick to bottom when already there — no jump while reading history
 	follow := m.vp.AtBottom()
-	m.vp.SetContent(m.renderBlocks())
+	m.setChatContent(m.renderBlocks())
 	if follow {
 		m.vp.GotoBottom()
 	}
@@ -1038,7 +1078,7 @@ func (m *Model) RefreshFollow() {
 	if !m.ready {
 		return
 	}
-	m.vp.SetContent(m.renderBlocks())
+	m.setChatContent(m.renderBlocks())
 	m.vp.GotoBottom()
 	now := time.Now()
 	s := m.buildSidebarContent()
@@ -1070,7 +1110,7 @@ func (m *Model) refreshStreaming() tea.Cmd {
 		return nil
 	}
 	follow := m.vp.AtBottom()
-	m.vp.SetContent(m.renderBlocks())
+	m.setChatContent(m.renderBlocks())
 	if follow {
 		m.vp.GotoBottom()
 	}
@@ -1092,7 +1132,7 @@ func (m *Model) flushStreaming() {
 	}
 	m.pendingPaint = false
 	follow := m.vp.AtBottom()
-	m.vp.SetContent(m.renderBlocks())
+	m.setChatContent(m.renderBlocks())
 	if follow {
 		m.vp.GotoBottom()
 	}

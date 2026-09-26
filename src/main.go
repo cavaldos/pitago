@@ -116,7 +116,7 @@ func main() {
 	m.UseBuiltins(builtin.All(), builtin.Confirmers())
 	// Mouse capture on by default so the sidebar is clickable + scrollable.
 	// Opt out with --mouse=false for plain highlight-to-copy.
-	progOpts := []tea.ProgramOption{tea.WithAltScreen()}
+	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithFilter(app.ScrollEventFilter)}
 	if *mouse {
 		progOpts = append(progOpts, tea.WithMouseCellMotion())
 	}

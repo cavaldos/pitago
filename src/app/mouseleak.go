@@ -192,25 +192,17 @@ func (m Model) applyWheelLeak(events []tea.MouseMsg) tea.Model {
 }
 
 // scrollLeak replays scrubbed wheel reports into the viewports, mirroring
-// the normal MouseMsg routing (wheel over the sidebar scrolls it).
+// the normal MouseMsg routing (wheel over the sidebar scrolls it). Like that
+// path it moves offsets only and never repaints the transcript.
 func (m *Model) scrollLeak(events []tea.MouseMsg) tea.Cmd {
 	if !m.ready || len(events) == 0 {
 		return nil
 	}
 	var cmds []tea.Cmd
 	for _, ev := range events {
-		var c tea.Cmd
-		if ev.Action == tea.MouseActionPress &&
-			(ev.Button == tea.MouseButtonWheelUp || ev.Button == tea.MouseButtonWheelDown) &&
-			m.overSide(ev.X) {
-			m.sideVp, c = m.sideVp.Update(ev)
-		} else {
-			m.vp, c = m.vp.Update(ev)
-		}
-		if c != nil {
+		if c := m.wheelTo(ev.X, ev); c != nil {
 			cmds = append(cmds, c)
 		}
 	}
-	m.Refresh()
 	return tea.Batch(cmds...)
 }
