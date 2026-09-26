@@ -31,7 +31,12 @@ type Block struct {
 	ToolArgsRaw string // raw JSON tool-call arguments (write content etc.)
 	ToolStatus  string // running, done, error
 	ToolResult  string
-	ToolCallID  string
-	Err         bool
-	Images      []Image
+	// ToolDiff is the toolResult's details.diff — pi's display-oriented diff
+	// (line-number gutter, -/+ rows, "..." elision), carried separately from
+	// ToolResult so an edit can show the change instead of the one-line
+	// "Successfully replaced ..." receipt. Plain text, no ANSI.
+	ToolDiff   string
+	ToolCallID string
+	Err        bool
+	Images     []Image
 }

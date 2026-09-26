@@ -232,13 +232,15 @@ func TestRenderToolBodyEditDiff(t *testing.T) {
 		}
 	}
 
-	// details.diff from pi stays complete in either global expand state.
+	// pi's diff arrives in details.diff while ToolResult carries the receipt
+	// (an args reconstruction would otherwise outrank a real 15-line diff).
 	var diff strings.Builder
 	diff.WriteString("--- a/a.go\n+++ b/a.go\n")
 	for i := 1; i <= 15; i++ {
 		diff.WriteString(fmt.Sprintf("+line%d\n", i))
 	}
-	bl.ToolResult = diff.String()
+	bl.ToolDiff = diff.String()
+	bl.ToolResult = "Successfully replaced 1 block(s) in a.go."
 	for _, expanded := range []bool{false, true} {
 		got := stripANSI((Model{expandTools: expanded}).renderToolBody(bl))
 		if !strings.Contains(got, "line1") || !strings.Contains(got, "line15") {
@@ -247,6 +249,28 @@ func TestRenderToolBodyEditDiff(t *testing.T) {
 		if strings.Contains(got, "ctrl+g") {
 			t.Fatalf("edit expanded=%v should not offer collapse: %q", expanded, got)
 		}
+	}
+
+	// A result that IS a real diff outranks the args reconstruction: the
+	// 2-line guess must never mask authoritative diff text.
+	guess := Block{Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolArgs:    "b.go",
+		ToolArgsRaw: `{"path":"b.go","edits":[{"oldText":"xxx","newText":"yyy"}]}`,
+		ToolResult:  "--- a/b.go\n+++ b/b.go\n@@ -1,2 +1,2 @@\n-oldline\n+newline\n"}
+	got := stripANSI((Model{}).renderToolBody(guess))
+	if !strings.Contains(got, "@@ -1,2 +1,2 @@") || !strings.Contains(got, "newline") {
+		t.Fatalf("real diff in ToolResult must outrank the args guess: %q", got)
+	}
+	if strings.Contains(got, "xxx") || strings.Contains(got, "yyy") {
+		t.Fatalf("args reconstruction must not mask the real diff: %q", got)
+	}
+
+	// A JSON result is not diff text, so it still falls through to the guess.
+	jsonRes := Block{Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolArgsRaw: `{"path":"c.go","edits":[{"oldText":"foo","newText":"bar"}]}`,
+		ToolResult:  `{"replaced":1}`}
+	if got := stripANSI((Model{}).renderToolBody(jsonRes)); !strings.Contains(got, "foo") {
+		t.Fatalf("non-diff result must fall through to the args guess: %q", got)
 	}
 }
 
@@ -347,5 +371,105 @@ func TestRenderInputShowsAgent(t *testing.T) {
 	top = strings.Split(stripANSI(m.renderInput()), "\n")[0]
 	if !strings.Contains(top, "pi is running") || !strings.Contains(top, "@reviewer") {
 		t.Fatalf("running input must show status + agent: %q", top)
+	}
+}
+
+// pi's edit tool always returns a one-line "Successfully replaced ..."
+// receipt, so the change only lives in details.diff. That payload is
+// display-oriented (gutter + -/+ rows + "..." elision) and must be rendered
+// as-is, not through the chroma `diff` lexer.
+const sampleEditDiff = "edit ~/Code/Workspace/pitago/src/app/view.go\n" +
+	"...\n" +
+	"     800      // refresh the picker\n" +
+	"    - 801      // first, then re-count models (same order as before).\n" +
+	"    - 802      m.RefreshLoginKeys(msg.D)\n" +
+	"    + 801      // first, then re-count models. D is nil when\n" +
+	"    + 802      // the OAuth guide was closed over no dialog.\n" +
+	"    + 803      if msg.D != nil {\n" +
+	"     803      m.Status = \"reloading models…\"\n" +
+	"..."
+
+func TestRenderToolBodyEditPrefersToolDiff(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{"path": "src/app/view.go"})
+	bl := Block{
+		Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolArgs:    "src/app/view.go",
+		ToolArgsRaw: string(raw),
+		ToolResult:  "Successfully replaced 1 block(s) in src/app/view.go.",
+		ToolDiff:    sampleEditDiff,
+	}
+
+	got := stripANSI((Model{}).renderToolBody(bl))
+	if strings.Contains(got, "Successfully replaced") {
+		t.Fatalf("edit must not render the receipt line: %q", got)
+	}
+	// Both markers present, so the change is visible rather than collapsed.
+	if !strings.Contains(got, "- 802      m.RefreshLoginKeys(msg.D)") {
+		t.Fatalf("removed line missing: %q", got)
+	}
+	if !strings.Contains(got, "+ 803      if msg.D != nil {") {
+		t.Fatalf("added line missing: %q", got)
+	}
+	// Gutter and elision markers are pi's deliberate signals; keep both.
+	if !strings.Contains(got, "800      // refresh the picker") {
+		t.Fatalf("context row with line number missing: %q", got)
+	}
+	if strings.Count(got, "...") < 2 {
+		t.Fatalf("leading/trailing elision markers dropped: %q", got)
+	}
+	// Full diff, never collapsed, and no collapse affordance.
+	if strings.Contains(got, expandHint) {
+		t.Fatalf("edit diff must not offer collapse: %q", got)
+	}
+}
+
+// A diff long enough to be truncated when collapsed must still render whole.
+func TestRenderToolBodyEditNeverCollapses(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("edit src/app/view.go\n")
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&sb, "    + %d      added line\n", i)
+	}
+	bl := Block{
+		Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolResult: "Successfully replaced 1 block(s) in src/app/view.go.",
+		ToolDiff:   sb.String(),
+	}
+	got := stripANSI((Model{}).renderToolBody(bl))
+	if !strings.Contains(got, "+ 40      added line") {
+		t.Fatalf("long diff must not be truncated: %q", got)
+	}
+	if strings.Contains(got, "more lines") {
+		t.Fatalf("long diff must not report skipped lines: %q", got)
+	}
+}
+
+// With no details.diff the old args-based reconstruction still works, and it
+// keeps the chroma `diff` lexer (bare -/+ pair, no gutter).
+func TestRenderToolBodyEditFallsBackToArgs(t *testing.T) {
+	bl := Block{
+		Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolArgsRaw: `{"path":"src/app/view.go","edits":[{"oldText":"old line\n","newText":"new line\n"}]}`,
+		ToolResult:  "Successfully replaced 1 block(s) in src/app/view.go.",
+	}
+	got := stripANSI((Model{}).renderToolBody(bl))
+	if strings.Contains(got, "Successfully replaced") {
+		t.Fatalf("edit must not render the receipt line: %q", got)
+	}
+	if !strings.Contains(got, "- old line") || !strings.Contains(got, "+ new line") {
+		t.Fatalf("args fallback must show -/+ pair: %q", got)
+	}
+}
+
+// With no details.diff and no args the receipt is the last rung of the chain:
+// better than an empty body, since it still reports what the tool did.
+func TestRenderToolBodyEditReceiptOnly(t *testing.T) {
+	bl := Block{
+		Kind: "tool", ToolName: "edit", ToolStatus: "done",
+		ToolResult: "Successfully replaced 1 block(s) in src/app/view.go.",
+	}
+	got := stripANSI((Model{}).renderToolBody(bl))
+	if !strings.Contains(got, "Successfully replaced") {
+		t.Fatalf("receipt-only edit should fall back to the receipt: %q", got)
 	}
 }

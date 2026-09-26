@@ -128,7 +128,15 @@ func TestLoginDeleteInactiveStays(t *testing.T) {
 
 	um, cmd := m.updateDialog(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = um.(Model)
-	if cmd != nil {
+	if cmd == nil {
+		t.Fatal("inactive delete must defer the keystore write off the event loop")
+	}
+
+	// The delete is blocking file I/O; LoginDeleteMsg reports back and, for
+	// an inactive key, deliberately returns no respawn command.
+	um, respawn := m.Update(cmd())
+	m = um.(Model)
+	if respawn != nil {
 		t.Fatal("inactive delete must stay (no respawn cmd)")
 	}
 	if len(m.Dialogs) != 1 {

@@ -31,6 +31,14 @@ func TestLoginSelectStaysAndPushesPi(t *testing.T) {
 		t.Fatalf("must stay on /login, dialogs=%v", m.Dialogs)
 	}
 	if cmd == nil {
+		t.Fatal("select must defer the keystore write off the event loop")
+	}
+
+	// Activation + the push to pi are blocking file I/O: they run in the
+	// Cmd and come back as LoginSwitchMsg, which then respawns pi.
+	um, respawn := m.Update(cmd())
+	m = um.(Model)
+	if respawn == nil {
 		t.Fatal("select must respawn pi")
 	}
 	keys, active := pirpc.ListKeys(m.KeyPath, "GROQ_API_KEY")
@@ -63,6 +71,14 @@ func TestLoginDeleteActiveStays(t *testing.T) {
 		t.Fatalf("active delete must stay on /login")
 	}
 	if cmd == nil {
+		t.Fatal("active delete must defer the keystore write off the event loop")
+	}
+
+	// Delete + push + re-read share one Cmd (the notice's re-read must never
+	// race the write); LoginDeleteMsg then respawns pi.
+	um, respawn := m.Update(cmd())
+	m = um.(Model)
+	if respawn == nil {
 		t.Fatal("active delete must respawn pi")
 	}
 	keys, _ := pirpc.ListKeys(m.KeyPath, "GROQ_API_KEY")
@@ -96,7 +112,14 @@ func TestLoginShowRenameShortcuts(t *testing.T) {
 		t.Fatal("second s must hide again")
 	}
 
-	um, _ = m.updateDialog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	um, cmd := m.updateDialog(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = um.(Model)
+	if cmd == nil {
+		t.Fatal("r must defer the keystore read off the event loop")
+	}
+
+	// The keystore read runs in the Cmd; the prompt is pushed on arrival.
+	um, _ = m.Update(cmd())
 	m = um.(Model)
 	if len(m.Dialogs) != 2 || m.Dialogs[0].Kind != "rename" {
 		t.Fatalf("r must open rename on top, got %v", m.Dialogs)
@@ -193,6 +216,14 @@ func TestLoginDisconnectOAuthStays(t *testing.T) {
 		t.Fatalf("must stay on /login")
 	}
 	if cmd == nil {
+		t.Fatal("disconnect must defer the auth teardown off the event loop")
+	}
+
+	// The teardown is blocking file I/O: it runs in the Cmd and comes back
+	// as OAuthGoneMsg, which refreshes the picker and then respawns pi.
+	um, respawn := m.Update(cmd())
+	m = um.(Model)
+	if respawn == nil {
 		t.Fatal("disconnect must respawn pi")
 	}
 	if _, _, ok := pirpc.PiOAuth("openai-codex"); ok {

@@ -112,13 +112,19 @@ type Model struct {
 	thinkDelta          bool // thinking deltas streamed into curThink (same)
 	thinking            bool
 	Status              string
-	extStat             string
-	TeamWidgetLines     []string // live pi-agents-team dashboard lines
-	TeamWidgetPlacement string   // aboveEditor (default) or belowEditor
-	TeamStatus          string   // pi-agent-team status text
-	TeamWidgetVisible   bool     // explicit /team visibility preference
-	TeamWidgetSeen      bool     // widget state exists in the current cycle
-	planOn              bool     // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
+	extStat             string                     // derived one-line footer summary; source of truth is extStatus
+	extStatus           map[string]string          // statusKey -> live text (9 plugins share this surface)
+	extStatusSeq        []string                   // LRU order, most recent last
+	extWidget           map[string]*extWidgetPanel // widgetKey -> persistent panel (setWidget)
+	extWidgetSeq        []string
+	queuedDialogs       [][]byte        // extension_ui_request payloads awaiting a free dialog slot
+	extCmdWait          map[string]bool // in-flight synchronous extension commands ("/team")
+	TeamWidgetLines     []string        // live pi-agents-team dashboard lines
+	TeamWidgetPlacement string          // aboveEditor (default) or belowEditor
+	TeamStatus          string          // pi-agent-team status text
+	TeamWidgetVisible   bool            // explicit /team visibility preference
+	TeamWidgetSeen      bool            // widget state exists in the current cycle
+	planOn              bool            // plan-mode latch, live only: set on Start choice, cleared on /new (heuristic, extension has no plan flag in get_state)
 	ready               bool
 	winW                int
 	winH                int
@@ -347,14 +353,21 @@ type SettingsRefreshMsg struct {
 	Err    error
 }
 
+// LoginKeyMsg carries a saved provider key. The keystore write and the
+// push to pi's auth.json are blocking file I/O, so the producer runs them
+// in its Cmd and reports the outcome here (Err set => nothing was written).
 type LoginKeyMsg struct {
 	Provider, Env, Key string
+	Err                error
 }
 
+// RenameKeyMsg carries a key rename, written off the event loop by the
+// producer (Err set => the keystore is unchanged).
 type RenameKeyMsg struct {
 	Provider, Env string
 	Idx           int
 	Name          string
+	Err           error
 }
 
 type respawnMsg struct {
@@ -366,6 +379,88 @@ type CmdsRefreshMsg struct {
 	Cmds     []pirpc.RepoCommand
 	Err      error
 	Announce bool // manual /reload: reports the result
+}
+
+// The messages below carry work that MUST NOT run on the event loop: RPC
+// round-trips and settings/auth file I/O. Each is produced by a tea.Cmd and
+// finished by a handler in update.go, so the render loop and pi's readLoop
+// stay unblocked (msgs is unbuffered — one blocking call freezes both).
+
+// LoginRenameOpenMsg carries the keystore rows read off the event loop so
+// the rename prompt can be prefilled and pushed from the handler.
+type LoginRenameOpenMsg struct {
+	Provider, Env string
+	Items         []pirpc.KeyItem
+	Idx           int
+}
+
+// LoginSwitchMsg reports that "use this key" finished off the event loop:
+// the key became active and was pushed to pi's auth.json. Masked is the key
+// as the notice spells it, read before the write.
+type LoginSwitchMsg struct {
+	Prov, Masked string
+	D            *Dialog
+}
+
+// LoginDeleteMsg reports that a key delete finished off the event loop. The
+// keystore delete, the push to pi and the re-read all happen in one Cmd, so
+// Left always describes a keystore that has already been written. Active
+// marks the deleted key as the active one: only then does pi respawn, and
+// only then does the notice report a switch.
+type LoginDeleteMsg struct {
+	Prov, Masked string
+	Left         []string
+	Active       bool
+	D            *Dialog
+}
+
+// LogoutListMsg carries the logout picker rows read off the event loop, so
+// the dialog (and the "nothing to remove" notice) is built on it. An empty
+// Opts means there is nothing to remove.
+type LogoutListMsg struct {
+	Arg         string
+	Opts, Descs []string
+}
+
+// LogoutDoneMsg reports a /logout teardown that ran off the event loop.
+// Which branch the provider took is decided there and carried in Kind, so
+// the notice and the respawn still come from one handler.
+type LogoutDoneMsg struct {
+	Provider string
+	Kind     string // "no-keys" | "failed" | "deleted"
+	Masked   string
+	Left     []string
+	Err      error
+}
+
+// LoginSyncedMsg reports that /login's off-loop pi re-import finished
+// (SyncFromPi union-import + the authState mirror). src/builtin owns the
+// picker build, so Update re-enters the hidden BuiltinLoginDialog builtin.
+type LoginSyncedMsg struct{ Arg string }
+
+// LoginReloadMsg reports the same re-import for the in-place "reload models"
+// action on an open /login dialog: refresh that dialog, then re-count models.
+type LoginReloadMsg struct{ D *Dialog }
+
+// OAuthGoneMsg reports an off-loop OAuth teardown (pi's auth.json entry plus
+// pitago's mirror). Both disconnect paths share it; D is the /login dialog to
+// refresh in place (nil when the caller already popped it).
+type OAuthGoneMsg struct {
+	Prov string
+	D    *Dialog
+	Err  error
+}
+
+// SettingWrittenMsg reports a settings.json write done off the event loop.
+// The rebuilt rows ship with it because settingsOptions lives in src/builtin;
+// the handler applies the row and only then respawns pi, so the respawn still
+// reads the new value.
+type SettingWrittenMsg struct {
+	D                 *Dialog
+	Path              string
+	St                SettingsState
+	Opts, Descs, Cats []string
+	Err               error
 }
 
 func New(pi *pirpc.Client, cwd string) Model {
@@ -508,18 +603,33 @@ func (m *Model) setToolArgs(i int, name, raw string) {
 
 // extensionCmdAckMsg reports extension-command RPC errors without changing
 // model-turn state. Successful synchronous commands emit no agent_start.
-type extensionCmdAckMsg struct{ err error }
+//
+// name is the command that owns a visible lifecycle ("" when none does).
+// Update consults it so a command that already opened a lifecycle window
+// does not also print a bare inline error: the watchdog that owns that
+// window reports the failure once, with the real cause.
+type extensionCmdAckMsg struct {
+	err  error
+	name string
+}
 
 // ForwardExtensionCommand sends an extension slash command without entering
 // the model-turn "Working..." state. It always uses prompt (not steer), since
 // the command handler—not a new agent turn—consumes the request.
 func (m *Model) ForwardExtensionCommand(text string) tea.Cmd {
+	return m.forwardExtensionCommandNamed(text, "")
+}
+
+// forwardExtensionCommandNamed is ForwardExtensionCommand with the lifecycle
+// owner attached. A caller that armed beginExtCmd passes its own name so the
+// ack defers error reporting to endExtCmd/the watchdog.
+func (m *Model) forwardExtensionCommandNamed(text, name string) tea.Cmd {
 	return func() tea.Msg {
 		if m.Pi == nil {
-			return extensionCmdAckMsg{err: fmt.Errorf("pi is not connected")}
+			return extensionCmdAckMsg{name: name, err: fmt.Errorf("pi is not connected")}
 		}
 		_, err := m.Pi.Prompt(text)
-		return extensionCmdAckMsg{err: err}
+		return extensionCmdAckMsg{name: name, err: err}
 	}
 }
 
@@ -877,7 +987,19 @@ func (m *Model) NoSession() bool { return m.spawnOpts.NoSession }
 type Builtin struct {
 	Name, Desc, Usage, Origin string
 	Run                       func(m *Model, arg string) tea.Cmd
+	// Hidden keeps a continuation entry out of the palette and out of
+	// slash-command interception. It exists so a builtin that must do
+	// blocking I/O off the event loop can split into "defer the I/O" and
+	// "build the UI" halves, with Update re-entering the second half once
+	// the first reports back. See BuiltinLoginDialog.
+	Hidden bool
 }
+
+// BuiltinLoginDialog is the hidden continuation of the /login builtin: the
+// picker build that runs on the event loop once the off-loop pi re-import
+// (LoginSyncedMsg) has landed. app re-enters it via RunBuiltin, so the
+// picker logic stays in src/builtin.
+const BuiltinLoginDialog = "login-dialog"
 
 // ConfirmFunc runs the Enter action of a picker dialog kind.
 // Implementations live in src/builtin (see Confirmers).
@@ -944,7 +1066,7 @@ func (m *Model) FindBuiltin(text string) (Builtin, string, bool) {
 		return Builtin{}, "", false
 	}
 	for _, b := range m.builtins {
-		if b.Name == name {
+		if b.Name == name && !b.Hidden {
 			return b, arg, true
 		}
 	}
@@ -967,6 +1089,9 @@ func (m *Model) RunBuiltin(name, arg string) tea.Cmd {
 func BuiltinRepo(builtins []Builtin) []pirpc.RepoCommand {
 	out := make([]pirpc.RepoCommand, 0, len(builtins))
 	for _, b := range builtins {
+		if b.Hidden {
+			continue // continuation entry, not a user command
+		}
 		src := "builtin"
 		if b.Origin == "pitago" {
 			src = "pitago"
@@ -1000,9 +1125,9 @@ var ProgRef *tea.Program
 
 // WireClient routes a pi client's events into the UI program.
 func WireClient(c *pirpc.Client) {
-	c.OnEvent = func(e pirpc.Event) {
+	c.SetOnEvent(func(e pirpc.Event) {
 		if ProgRef != nil {
 			ProgRef.Send(piEventMsg{e})
 		}
-	}
+	})
 }

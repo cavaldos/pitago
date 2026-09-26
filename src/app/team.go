@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -87,7 +89,177 @@ func isTeamDetailText(text string) bool {
 	return strings.TrimSpace(line) == "Pi Agents Team Detail"
 }
 
+// ------------------------------------------------ /team command lifecycle
+//
+// /team is pitago's own builtin, not a get_commands row: it Prompt-forwards
+// "/team <arg>" and pi's extension answers out-of-band with a custom
+// message. A bare forward is therefore invisible — the RPC ack carries no
+// body, and when the command is issued mid-turn pi buffers the custom
+// message into _pendingCustomMessages and emits nothing until the turn
+// ends. ForwardTeamCommand wraps the forward in an observable window:
+// a status while in flight, a delivered flag set from the two places the
+// custom message actually enters the app, and a bounded watchdog so a
+// missing reply is reported instead of swallowed.
+
+const (
+	teamCmdName = "/team"
+
+	// Idle deadline. The extension answers synchronously and does not open
+	// a model turn, so a round-trip that outlasts this never reached us.
+	teamCmdDeadline = 2 * time.Second
+
+	// Mid-turn deadline. A streaming turn makes pi hold the custom message
+	// until the turn finishes, so the same command legitimately takes far
+	// longer and must not be declared lost early.
+	teamCmdDeadlineBusy = 45 * time.Second
+)
+
+// Request tokens. The Model struct cannot grow a field from this file, and
+// pitago runs exactly one Model, so a package-level token gives the same
+// guarantee a field would: teamCmdLive holds the token of the request still
+// awaiting delivery (0 = none), and any tick carrying an older token is a
+// no-op. Mirrors the existing package-level state in this package
+// (marketInflight, marketCacheData in update.go).
+var (
+	teamCmdSeq  atomic.Uint64
+	teamCmdLive atomic.Uint64
+)
+
+func nextTeamCmdToken() uint64 { return teamCmdSeq.Add(1) }
+
+// teamWatchdogMsg is the deadline for one dispatched /team. Update routes
+// it to handleTeamWatchdog; a tick carrying a stale token is a no-op rather
+// than a false notice.
+type teamWatchdogMsg struct {
+	name  string
+	epoch uint64
+}
+
+// ForwardTeamCommand dispatches an extension team command with a visible
+// lifecycle. text is the full forwarded prompt, e.g. "/team w1".
+func (m *Model) ForwardTeamCommand(text string) tea.Cmd {
+	tok := nextTeamCmdToken()
+	teamCmdLive.Store(tok)
+	deadline := teamCmdDeadline
+	if m.thinking {
+		// DEFECT A: mid-turn, pi defers the custom message until the turn
+		// ends, so a short deadline would report a false failure. Say the
+		// command is queued and wait long enough for a real turn to land.
+		deadline = teamCmdDeadlineBusy
+		m.beginExtCmd(teamCmdName, "team queued…")
+		m.pushToast("/team queued — the agent is mid-turn, so pi holds the dashboard until the turn finishes", false)
+	} else {
+		m.beginExtCmd(teamCmdName, "loading team…")
+	}
+	m.Refresh()
+	return tea.Batch(m.forwardExtensionCommandNamed(text, teamCmdName), m.teamWatchdog(tok, deadline))
+}
+
+// teamWatchdog is the bounded deadline. It carries the request token so a
+// tick that outlives delivery — or one belonging to a superseded request —
+// is dropped instead of reporting a phantom failure.
+func (m *Model) teamWatchdog(epoch uint64, d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg {
+		return teamWatchdogMsg{name: teamCmdName, epoch: epoch}
+	})
+}
+
+// handleTeamWatchdog closes a request that delivered nothing. Only the
+// current token may close a window, so a stale tick is a no-op.
+func (m *Model) handleTeamWatchdog(msg teamWatchdogMsg) {
+	if msg.name != teamCmdName {
+		return
+	}
+	if teamCmdLive.Load() != msg.epoch {
+		return // delivered, superseded, or never armed
+	}
+	teamCmdLive.CompareAndSwap(msg.epoch, 0)
+	if !m.extCmdPending(msg.name) {
+		return
+	}
+	m.endExtCmd(msg.name, nil, false)
+	m.Status = "ready"
+	m.teamNoReplyHint()
+	m.Refresh()
+}
+
+// noteTeamDelivered closes a request whose custom message actually landed.
+// Called from the two openers below, which are the only entry points for
+// the extension's dashboard and detail messages. Delivery is a silent
+// success: endExtCmd(delivered=true) prints nothing.
+func (m *Model) noteTeamDelivered() {
+	if !m.extCmdPending(teamCmdName) {
+		return
+	}
+	if tok := teamCmdLive.Load(); tok != 0 {
+		teamCmdLive.CompareAndSwap(tok, 0)
+	}
+	m.endExtCmd(teamCmdName, nil, true)
+	// endExtCmd leaves the in-flight status in place (it only clears an
+	// already-empty one), and no agent turn follows a synchronous command
+	// to reset it, so the status is restored here.
+	m.Status = "ready"
+}
+
+// teamNoReplyHint is DEFECT C: the palette lists /team unconditionally
+// because mergeCommands puts builtins first, so a silent failure looks
+// identical to "the plugin is not installed". m.Cmds carries what pi
+// actually loaded, which is the only honest signal available here.
+func (m *Model) teamNoReplyHint() {
+	if m.teamPluginLoaded() {
+		m.pushToast("pi-agents-team is loaded but did not answer in time — retry when the current turn ends", false)
+		return
+	}
+	m.pushToast("pi-agents-team is not loaded, so /team cannot work — check the packages list in ~/.pi/agent/settings.json, then /reload", true)
+}
+
+// teamPluginLoaded reports whether the pi-agents-team extension registered
+// any command in this process.
+//
+// It cannot simply look for an extension-sourced "team": mergeCommands
+// (src/app/model.go) puts pitago's own builtin first, and pitago's /team is
+// OriginPitago, so the merged list always carries the "pitago" row and the
+// extension's "team" row is deduped away. Probing the exact name therefore
+// reports "not loaded" even when the plugin is live — the wrong diagnosis
+// for the most common failure. The extension also owns the team-* family
+// (/team-copy, /team-init, /team-steer, …) which pitago does not shadow, so
+// those are the reliable probe. The exact-name check is kept only for a
+// future where the shadowing goes away.
+func (m *Model) teamPluginLoaded() bool {
+	has := func(name string, extOnly bool) bool {
+		for _, c := range m.Cmds {
+			if !strings.EqualFold(strings.TrimSpace(c.Name), name) {
+				continue
+			}
+			if !extOnly {
+				return true
+			}
+			switch strings.ToLower(strings.TrimSpace(c.Source)) {
+			case "extension", "prompt", "skill":
+				return true
+			}
+		}
+		return false
+	}
+	if has("team-copy", true) || has("team-init", true) || has("team-steer", true) {
+		return true
+	}
+	// Whole-family probe: any other team-* row the extension contributed.
+	for _, c := range m.Cmds {
+		name := strings.ToLower(strings.TrimSpace(c.Name))
+		if !strings.HasPrefix(name, "team-") {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(c.Source)) {
+		case "extension", "prompt", "skill":
+			return true
+		}
+	}
+	return has("team", true)
+}
+
 func (m *Model) openTeamDashboard(text string) {
+	m.noteTeamDelivered()
 	text = strings.TrimSpace(text)
 	data := parseTeamDashboard(text)
 	if reconcileTeamDashboardFromSession(&data, m.sessionFile) {
@@ -104,6 +276,7 @@ func (m *Model) openTeamDashboard(text string) {
 }
 
 func (m *Model) openTeamDetail(text string) {
+	m.noteTeamDelivered()
 	d := &Dialog{Kind: "team", Title: "Pi Agents Team · /team", Message: strings.TrimSpace(text), TeamTab: "inspect", TeamDetail: true}
 	if len(m.Dialogs) > 0 && m.Dialogs[0].Kind == "team" {
 		d.TeamReturnMessage = m.Dialogs[0].Message
@@ -923,8 +1096,9 @@ func (m Model) updateTeamDashboardDialog(km tea.KeyMsg, d *Dialog) (tea.Model, t
 	case "r":
 		m.Dialogs = m.Dialogs[1:]
 		m.applyPopupH()
-		m.Refresh()
-		return m, m.ForwardExtensionCommand("/team")
+		// Re-fetch the dashboard through the same lifecycle as the command
+		// itself, so a refresh that stalls is reported instead of blank.
+		return m, m.ForwardTeamCommand("/team")
 	}
 	d.TrajOff = max(0, d.TrajOff)
 	return m, nil

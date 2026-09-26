@@ -15,18 +15,42 @@ import (
 
 // Client spawns `pi --mode rpc` and speaks JSONL with it.
 // Responses (type=response) are matched to sends by id; everything else
-// is forwarded to OnEvent. OnEvent runs on the reader goroutine — the
-// caller must bounce it to the UI thread (e.g. tea.Program.Send).
+// is queued and delivered to the event callback by one pump goroutine.
+//
+// The reader never invokes the callback itself. That callback bounces into
+// the UI thread (tea.Program.Send) and blocks whenever the UI is busy;
+// calling it inline would back-pressure pi's stdout, fill the pipe and stall
+// the agent itself. Reader → queue → pump keeps that coupling gone, and a
+// single pump keeps delivery in pi's order.
 type Client struct {
 	cmd     *exec.Cmd
 	stdin   *os.File
 	mu      sync.Mutex
 	pending map[string]chan Response
 	seq     int
-	OnEvent func(Event)
-	done    chan struct{}
-	once    sync.Once
-	closed  atomic.Bool // intentional Close: waiter skips pi_exited
+	// onEvent is written by the UI thread right after Spawn and read by the
+	// pump and the process waiter, so it needs its own lock. A plain exported
+	// field raced here: the waiter could observe a half-published callback
+	// and drop pi_exited. Use SetOnEvent, never assign directly.
+	cbMu   sync.RWMutex
+	onEv   func(Event)
+	done   chan struct{}
+	once   sync.Once
+	closed atomic.Bool // intentional Close: waiter skips pi_exited
+
+	// Event queue (per spawn). Unbounded on purpose: a bounded queue would
+	// only move the same stall from the UI thread back to the reader.
+	evMu      sync.Mutex
+	evQueue   []Event
+	evStopped bool          // Close(): drop instead of buffering
+	evWake    chan struct{} // cap 1, "queue is non-empty"
+	evEOF     chan struct{} // reader hit EOF: flush, then stop
+	evStop    chan struct{} // Close(): stop the pump now
+	evExited  chan struct{} // pump goroutine returned
+	evOnce    sync.Once     // creates the channels above
+	evRunOnce sync.Once     // starts the pump
+	evEOFOnce sync.Once     // closes evEOF
+	evStopOne sync.Once     // closes evStop
 }
 
 // Options controls how pi is spawned.
@@ -131,8 +155,8 @@ func Spawn(opt Options) (*Client, error) {
 		// must not look like a crash: the replacer respawnMsg owns the UI.
 		// Without this, the old pi's death notice can land after respawnMsg
 		// (respawning already false) and fake a "pi has exited".
-		if !c.closed.Load() && c.OnEvent != nil {
-			c.OnEvent(Event{Type: "pi_exited"})
+		if fn := c.eventFn(); !c.closed.Load() && fn != nil {
+			fn(Event{Type: "pi_exited"})
 		}
 	}()
 	return c, nil
@@ -141,9 +165,14 @@ func Spawn(opt Options) (*Client, error) {
 // readLoop splits stdout on '\n' only (protocol requirement) and routes lines.
 // One unmarshal per line: Response carries type+id, so the envelope and the
 // response share a single parse; events keep the raw line bytes (cloned —
-// the bufio buffer is reused — for the UI thread to parse once).
+// the bufio buffer is reused — for the pump/UI thread to parse once).
+//
+// Every event is queued, never delivered here: readLoop only touches the
+// queue mutex, so a slow OnEvent can never stall stdout. Responses still
+// resolve inline — they are matched to a Send that is already waiting.
 func (c *Client) readLoop(r *os.File) {
 	defer r.Close()
+	defer c.finishReading()
 	br := bufio.NewReaderSize(r, 1<<20)
 	for {
 		line, err := br.ReadBytes('\n')
@@ -168,10 +197,278 @@ func (c *Client) readLoop(r *os.File) {
 			}
 			continue
 		}
-		if c.OnEvent != nil {
-			c.OnEvent(Event{Type: resp.Type, Raw: bytes.Clone(line)})
+		c.enqueue(Event{Type: resp.Type, Raw: bytes.Clone(line)})
+	}
+}
+
+// Event queue -------------------------------------------------------
+//
+// enqueue hands one event to the pump. It is what the reader calls, so it
+// must stay O(1) and lock-free with respect to the UI: the only lock it
+// takes is a short queue mutex, never c.mu.
+func (c *Client) enqueue(ev Event) {
+	c.initEventQueue()
+	c.evRunOnce.Do(func() { go c.eventPump() })
+
+	c.evMu.Lock()
+	dropped := c.evStopped
+	if !dropped {
+		c.evQueue = append(c.evQueue, ev)
+	}
+	c.evMu.Unlock()
+	if dropped {
+		return // Close() already ran: the UI is tearing down
+	}
+	select {
+	case c.evWake <- struct{}{}:
+	default: // a wake is already pending
+	}
+}
+
+// initEventQueue creates the queue channels lazily, so a hand-built
+// Client (tests) behaves exactly like a spawned one.
+func (c *Client) initEventQueue() {
+	c.evOnce.Do(func() {
+		c.evWake = make(chan struct{}, 1)
+		c.evEOF = make(chan struct{})
+		c.evStop = make(chan struct{})
+		c.evExited = make(chan struct{})
+	})
+}
+
+// finishReading: readLoop hit EOF (pi closed stdout). The pump delivers
+// what is left and then exits, so nothing already read is dropped.
+func (c *Client) finishReading() {
+	c.initEventQueue()
+	c.evEOFOnce.Do(func() { close(c.evEOF) })
+}
+
+// stopEventPump: Close(). Drops the backlog — pi is being killed, so the
+// UI only cares about the stream stopping.
+func (c *Client) stopEventPump() {
+	c.initEventQueue()
+	c.evMu.Lock()
+	c.evStopped = true
+	c.evQueue = nil
+	c.evMu.Unlock()
+	c.evStopOne.Do(func() { close(c.evStop) })
+}
+
+// takeEvents hands the pump everything queued so far.
+func (c *Client) takeEvents() []Event {
+	c.evMu.Lock()
+	defer c.evMu.Unlock()
+	if len(c.evQueue) == 0 {
+		return nil
+	}
+	batch := c.evQueue
+	c.evQueue = nil
+	return batch
+}
+
+// queueEmpty reports whether the reader has nothing pending.
+func (c *Client) queueEmpty() bool {
+	c.evMu.Lock()
+	defer c.evMu.Unlock()
+	return len(c.evQueue) == 0
+}
+
+// streamLinger bounds how long the pump parks a trailing streaming chunk
+// waiting for its successor to merge into it. It is only paid at the tail
+// of a burst and is well under one UI frame.
+const streamLinger = 3 * time.Millisecond
+
+// eventPump is the only caller of OnEvent, so delivery order matches pi's
+// stdout order. It never holds c.mu: that would block Send/Fire for as
+// long as the UI is busy, which is the stall we are removing.
+//
+// A trailing streaming chunk is parked for up to streamLinger so the next
+// chunk of the same kind can merge into it — pi streams text in bursts, and
+// merging them keeps one burst from becoming hundreds of UI hops.
+func (c *Client) eventPump() {
+	defer close(c.evExited)
+	linger := time.NewTimer(time.Hour)
+	if !linger.Stop() {
+		<-linger.C
+	}
+	defer linger.Stop()
+
+	var hold Event
+	holding := false
+	// flush delivers a parked run on its own (linger expiry, EOF, or a
+	// successor that turned out not to match).
+	flush := func() {
+		if holding {
+			holding = false
+			c.dispatch(hold)
 		}
 	}
+
+	for {
+		batch := c.takeEvents()
+		if holding {
+			batch = append([]Event{hold}, batch...)
+		}
+		// Park the trailing run (if any) instead of dispatching it: the
+		// next batch can still merge into it.
+		hold, holding = c.mergeBatch(batch, true)
+
+		var wait <-chan time.Time
+		if holding {
+			if !linger.Stop() {
+				select {
+				case <-linger.C:
+				default:
+				}
+			}
+			linger.Reset(streamLinger)
+			wait = linger.C
+		}
+		select {
+		case <-c.evWake:
+		case <-wait:
+			// Only give up the parked run when nothing else is waiting —
+			// otherwise keep it and let the next round merge into it.
+			if c.queueEmpty() {
+				flush()
+			}
+		case <-c.evEOF:
+			// Final drain: everything the reader queued is still delivered,
+			// parked run first, in order.
+			for {
+				rest := c.takeEvents()
+				if len(rest) == 0 {
+					flush()
+					return
+				}
+				if holding {
+					rest = append([]Event{hold}, rest...)
+					holding = false
+				}
+				c.mergeBatch(rest, false)
+			}
+		case <-c.evStop:
+			return
+		}
+	}
+}
+
+// mergeBatch walks batch in order, merging consecutive streaming chunks of
+// the same kind and content block into one line so a burst of text costs
+// one UI hop instead of hundreds. Every other event type is forwarded
+// untouched — merging is a streaming optimisation, not a filter.
+//
+// When park is set and the batch ends in a streaming run, that (already
+// merged) run is returned instead of dispatched, so the next batch can
+// still merge into it. Nothing is lost either way.
+func (c *Client) mergeBatch(batch []Event, park bool) (Event, bool) {
+	for i := 0; i < len(batch); {
+		typ, index, text, ok := streamingDelta(batch[i])
+		if !ok {
+			c.dispatch(batch[i])
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(batch) {
+			t2, index2, s2, ok2 := streamingDelta(batch[j])
+			if !ok2 || t2 != typ || index2 != index {
+				break
+			}
+			text += s2
+			j++
+		}
+		ev := batch[i]
+		if j > i+1 {
+			ev = mergeDelta(ev, text)
+		}
+		if park && j == len(batch) {
+			return ev, true
+		}
+		c.dispatch(ev)
+		i = j
+	}
+	return Event{}, false
+}
+
+func (c *Client) dispatch(ev Event) {
+	// Copy the callback out under the lock, then call it unlocked: the
+	// callback re-enters the UI and may itself rewire the client.
+	if fn := c.eventFn(); fn != nil {
+		fn(ev)
+	}
+}
+
+// SetOnEvent installs the event callback. The UI thread calls this once after
+// Spawn (and again after a respawn); the pump and the process waiter read it
+// from their own goroutines.
+func (c *Client) SetOnEvent(fn func(Event)) {
+	c.cbMu.Lock()
+	c.onEv = fn
+	c.cbMu.Unlock()
+}
+
+// eventFn returns the current callback, or nil when none is installed.
+func (c *Client) eventFn() func(Event) {
+	c.cbMu.RLock()
+	defer c.cbMu.RUnlock()
+	return c.onEv
+}
+
+// streamingDelta reports whether ev is an assistant text/thinking stream
+// chunk and returns its merge key (delta type + content block) plus the
+// chunk payload. Only those two merge: every other delta carries
+// structured data (toolCall arguments, ids) that concatenation would
+// corrupt. contentIndex is part of the key so two adjacent text blocks
+// never bleed into each other.
+func streamingDelta(ev Event) (typ string, contentIndex int, text string, ok bool) {
+	if ev.Type != "message_update" {
+		return "", 0, "", false
+	}
+	var mu struct {
+		Event struct {
+			Type         string `json:"type"`
+			ContentIndex int    `json:"contentIndex"`
+			Delta        string `json:"delta"`
+		} `json:"assistantMessageEvent"`
+	}
+	if json.Unmarshal(ev.Raw, &mu) != nil {
+		return "", 0, "", false
+	}
+	switch mu.Event.Type {
+	case "text_delta", "thinking_delta":
+		return mu.Event.Type, mu.Event.ContentIndex, mu.Event.Delta, true
+	}
+	return "", 0, "", false
+}
+
+// mergeDelta returns base with its delta payload replaced by text; every
+// other field is carried over verbatim, so the merged line parses exactly
+// like the chunks it replaces.
+func mergeDelta(base Event, text string) Event {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(base.Raw, &top) != nil {
+		return base
+	}
+	var inner map[string]json.RawMessage
+	if json.Unmarshal(top["assistantMessageEvent"], &inner) != nil {
+		return base
+	}
+	payload, err := json.Marshal(text)
+	if err != nil {
+		return base
+	}
+	inner["delta"] = payload
+	innerRaw, err := json.Marshal(inner)
+	if err != nil {
+		return base
+	}
+	top["assistantMessageEvent"] = innerRaw
+	merged, err := json.Marshal(top)
+	if err != nil {
+		return base
+	}
+	return Event{Type: base.Type, Raw: json.RawMessage(merged)}
 }
 
 // Done closes when the pi process exits.
@@ -249,9 +546,11 @@ func (c *Client) Fire(cmd Command) error {
 }
 
 // Close kills the pi process. The waiter suppresses pi_exited for an
-// intentional close, so reconnects never report a fake crash.
+// intentional close, so reconnects never report a fake crash. The event
+// pump is stopped too, so a torn-down client stops feeding the UI.
 func (c *Client) Close() {
 	c.closed.Store(true)
+	c.stopEventPump()
 	if c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 	}

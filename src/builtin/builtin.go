@@ -13,18 +13,31 @@ import (
 	"pitago/src/pirpc"
 )
 
+// openLogin is the /login entry point. The pi re-import is blocking file
+// I/O, so it runs off the event loop and comes back as LoginSyncedMsg;
+// buildLoginDialog then builds the picker on the event loop (it needs the
+// real Model, and the union-import must already have landed).
 func openLogin(m *app.Model, arg string) tea.Cmd {
 	// Import pi → pitago first so logins added via stock `pi` (API keys
 	// and OAuth) appear here (union, never overwrite). Opening /login is
 	// the re-sync point; pitago also mirrors pi logins to pi_auth.json.
-	pirpc.SyncFromPi(m.KeyPath)
+	keyPath := m.KeyPath
 	authPath := m.AuthPath
 	if authPath == "" {
 		authPath = pirpc.AuthStatePath()
 	}
-	pirpc.SyncAuthStateFromPi(authPath)
-	// Two-pane picker: left = providers (API-key + OAuth-only + anything
-	// pi knows), right = saved keys + auth actions.
+	return func() tea.Msg {
+		pirpc.SyncFromPi(keyPath)
+		pirpc.SyncAuthStateFromPi(authPath)
+		return app.LoginSyncedMsg{Arg: arg}
+	}
+}
+
+// buildLoginDialog is the hidden continuation of /login (BuiltinLoginDialog):
+// it runs on the event loop once the re-import has landed and does no I/O of
+// its own. Two-pane picker: left = providers (API-key + OAuth-only +
+// anything pi knows), right = saved keys + auth actions.
+func buildLoginDialog(m *app.Model, arg string) tea.Cmd {
 	seen := map[string]bool{}
 	var provs []string
 	for _, p := range pirpc.AllLoginProviders() {
@@ -125,14 +138,39 @@ func openLoginMethod(m *app.Model, provider, env string) {
 // rest (use /login to switch).
 
 func openLogout(m *app.Model, arg string) tea.Cmd {
-	keys := pirpc.LoadKeys(m.KeyPath)
+	keyPath := m.KeyPath
+	authPath := m.AuthPath
+	if authPath == "" {
+		authPath = pirpc.AuthStatePath()
+	}
+	// Building the picker reads the keystore and pi's auth.json once per
+	// provider, so the reads run off the event loop; the dialog is built
+	// from app.LogoutListMsg. An exact /logout <provider> still tears down
+	// directly, in the same Cmd.
+	return func() tea.Msg {
+		opts, descs := logoutProviders(keyPath)
+		if len(opts) == 0 {
+			return app.LogoutListMsg{Arg: arg}
+		}
+		for _, o := range opts {
+			if strings.EqualFold(o, arg) {
+				return logoutCmd(keyPath, authPath, o, pirpc.LookupEnv(o))()
+			}
+		}
+		return app.LogoutListMsg{Arg: arg, Opts: opts, Descs: descs}
+	}
+}
+
+// logoutProviders lists the logout-able providers with their key/OAuth
+// summary. Pure file I/O: callers must run it off the event loop.
+func logoutProviders(keyPath string) (opts, descs []string) {
+	keys := pirpc.LoadKeys(keyPath)
 	oauth := map[string]bool{}
 	for _, e := range pirpc.ListPiAuth() {
 		if e.Type == "oauth" {
 			oauth[e.Provider] = true
 		}
 	}
-	var opts, descs []string
 	for _, p := range pirpc.AllLoginProviders() {
 		env := pirpc.LookupEnv(p)
 		_, hasKey := keys[env]
@@ -147,7 +185,7 @@ func openLogout(m *app.Model, arg string) tea.Cmd {
 		if env != "" {
 			desc += " · " + env
 		}
-		if ks, active := pirpc.ListKeys(m.KeyPath, env); env != "" && len(ks) > 0 {
+		if ks, active := pirpc.ListKeys(keyPath, env); env != "" && len(ks) > 0 {
 			desc += fmt.Sprintf(" · %d key", len(ks))
 			if len(ks) > 1 {
 				desc += "s"
@@ -176,84 +214,75 @@ func openLogout(m *app.Model, arg string) tea.Cmd {
 		opts = append(opts, e.Provider)
 		descs = append(descs, e.Provider+" · "+e.Type+" (pi only)")
 	}
-	if len(opts) == 0 {
-		m.AddBlock(app.Block{Kind: "notice", Text: "nothing to remove — no keys or pi logins"})
-		m.Refresh()
-		return nil
-	}
-	for i, o := range opts {
-		if strings.EqualFold(o, arg) {
-			return doLogout(m, o, descs[i])
-		}
-	}
-	d := &app.Dialog{Kind: "logout", Title: "Remove login", Message: "Pick a provider: deletes its ACTIVE key, or disconnects OAuth (pi too).", Options: opts, Descs: descs}
-	if arg != "" {
-		d.Filter = arg
-	}
-	d.Reindex()
-	m.Dialogs = append(m.Dialogs, d)
-	m.Refresh()
-	return nil
+	return opts, descs
 }
 
 // doLogout deletes the ACTIVE key then reconnects pi. With several keys
 // left it switches to the next one and stays logged in. Providers with no
 // saved keys but a pi OAuth entry get disconnected instead.
 
+// doLogout resolves the paths on the event loop and hands the real work to
+// logoutCmd, which runs off it.
 func doLogout(m *app.Model, provider, desc string) tea.Cmd {
-	env := pirpc.LookupEnv(provider)
 	authPath := m.AuthPath
 	if authPath == "" {
 		authPath = pirpc.AuthStatePath()
 	}
-	if env == "" {
-		return doOAuthLogout(m, provider, authPath)
-	}
-	keysBefore, active := pirpc.ListKeys(m.KeyPath, env)
-	if active < 0 {
-		// No saved keys: maybe an OAuth login in pi — disconnect it.
-		if _, _, ok := pirpc.PiOAuth(provider); ok {
-			return doOAuthLogout(m, provider, authPath)
-		}
-		m.AddBlock(app.Block{Kind: "notice", Text: "no saved keys for " + provider})
-		m.Refresh()
-		return nil
-	}
-	masked := ""
-	if active >= 0 && active < len(keysBefore) {
-		masked = pirpc.MaskKey(keysBefore[active])
-	}
-	if err := pirpc.DeleteKeyAt(m.KeyPath, env, active); err != nil {
-		m.AddBlock(app.Block{Kind: "notice", Text: "failed to delete key: " + err.Error(), Err: true})
-		m.Refresh()
-		return nil
-	}
-	// Keep pi in sync (auth.json wins over env): last key removes pi's
-	// entry, otherwise pi follows the new active key.
-	pirpc.PushActiveToPi(m.KeyPath, env)
-	keys, _ := pirpc.ListKeys(m.KeyPath, env)
-	if len(keys) == 0 {
-		m.AddBlock(app.Block{Kind: "notice", Text: "deleted key " + provider + " " + masked + " (last key) → pi — reconnecting…"})
-	} else {
-		m.AddBlock(app.Block{Kind: "notice", Text: fmt.Sprintf("deleted active key %s %s — switched to %s (%d left) → pi, reconnecting…",
-			provider, masked, pirpc.MaskKey(keys[0]), len(keys))})
-	}
-	return m.RespawnPi()
+	return logoutCmd(m.KeyPath, authPath, provider, pirpc.LookupEnv(provider))
 }
 
-// doOAuthLogout disconnects a pi subscription login: drops pi's OAuth
-// entry + pitago's mirror, then reconnects.
-func doOAuthLogout(m *app.Model, provider, authPath string) tea.Cmd {
+// logoutCmd is the /logout teardown for one provider, with its paths already
+// resolved. Every branch is blocking file I/O, and the OAuth fallback shares
+// the same teardown, so the whole decision runs off the event loop and
+// reports which branch it took. The notice and the respawn follow in app's
+// LogoutDoneMsg / OAuthGoneMsg handlers.
+func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
+	if env == "" {
+		return func() tea.Msg { return teardownOAuth(provider, authPath) }
+	}
+	return func() tea.Msg {
+		keysBefore, active := pirpc.ListKeys(keyPath, env)
+		if active < 0 {
+			// No saved keys: maybe an OAuth login in pi — disconnect it.
+			if _, _, ok := pirpc.PiOAuth(provider); ok {
+				return teardownOAuth(provider, authPath)
+			}
+			return app.LogoutDoneMsg{Provider: provider, Kind: "no-keys"}
+		}
+		masked := ""
+		if active >= 0 && active < len(keysBefore) {
+			masked = pirpc.MaskKey(keysBefore[active])
+		}
+		if err := pirpc.DeleteKeyAt(keyPath, env, active); err != nil {
+			return app.LogoutDoneMsg{Provider: provider, Kind: "failed", Err: err}
+		}
+		// Keep pi in sync (auth.json wins over env): last key removes pi's
+		// entry, otherwise pi follows the new active key. The re-read shares
+		// this Cmd so the notice can never describe a pending write.
+		pirpc.PushActiveToPi(keyPath, env)
+		keys, _ := pirpc.ListKeys(keyPath, env)
+		return app.LogoutDoneMsg{Provider: provider, Kind: "deleted", Masked: masked, Left: keys}
+	}
+}
+
+// teardownOAuth drops pi's OAuth entry and pitago's mirror, reporting which
+// way it went. DeletePiAuth's failure skips the mirror, as before. Shared by
+// the /logout OAuth fallback and the disconnect actions.
+func teardownOAuth(provider, authPath string) app.OAuthGoneMsg {
 	if err := pirpc.DeletePiAuth(provider); err != nil {
-		m.AddBlock(app.Block{Kind: "notice", Text: "failed to disconnect " + provider + ": " + err.Error(), Err: true})
-		m.Refresh()
-		return nil
+		return app.OAuthGoneMsg{Prov: provider, Err: err}
 	}
 	pirpc.ForgetAuthState(authPath, provider)
 	pirpc.SyncAuthStateFromPi(authPath)
-	m.AddBlock(app.Block{Kind: "notice", Text: "disconnected OAuth " + provider + " (pi + pitago) — reconnecting…"})
-	m.Refresh()
-	return m.RespawnPi()
+	return app.OAuthGoneMsg{Prov: provider}
+}
+
+// doOAuthLogout disconnects a pi subscription login: drops pi's OAuth
+// entry + pitago's mirror, then reconnects. The teardown is blocking file
+// I/O, so it runs off the event loop and lands as app.OAuthGoneMsg — which
+// keeps DeletePiAuth's early-out (a failure skips the mirror) intact.
+func doOAuthLogout(m *app.Model, provider, authPath string) tea.Cmd {
+	return func() tea.Msg { return teardownOAuth(provider, authPath) }
 }
 
 // respawnPi kills the old pi and respawns keeping the same session (to pick up added/removed keys).
@@ -599,54 +628,71 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 	}
 	next := nextVal(fr.vals, cur)
 	if fr.local {
-		applyLocalSetting(m, fr, next)
+		save := applyLocalSetting(m, fr, next)
 		st.HideThinking = m.HideThinking
 		st.AutocompleteMax = palette.Win
 		opts, descs, cats := settingsOptions(st)
 		d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
 		d.Reindex()
 		m.Refresh()
-		return m, nil
+		return m, save // in-memory state already applied; persistence deferred
 	}
 	m.Status = "saving " + strings.ToLower(fr.label) + "…"
 	m.Refresh()
-	if err := pirpc.SetPiSetting(fr.path, fr.toVal(next)); err != nil {
-		m.Status = "ready"
-		m.AddBlock(app.Block{Kind: "notice", Text: "settings write failed: " + err.Error(), Err: true})
-		m.Refresh()
-		return m, nil
+	// Blocking settings.json write, so it runs off the event loop. The row is
+	// applied and pi respawned from the SettingWrittenMsg handler — after
+	// the write lands, so the respawn still reads the new value.
+	return m, func() tea.Msg {
+		if err := pirpc.SetPiSetting(fr.path, fr.toVal(next)); err != nil {
+			return app.SettingWrittenMsg{D: d, Path: fr.path, Err: err}
+		}
+		if st.Vals == nil {
+			st.Vals = map[string]string{}
+		}
+		st.Vals[fr.path] = next
+		// settingsOptions lives here, so the rebuilt rows ship in the
+		// message: the handler must not recompute them off the loop.
+		opts, descs, cats := settingsOptions(st)
+		return app.SettingWrittenMsg{D: d, Path: fr.path, St: st,
+			Opts: opts, Descs: descs, Cats: cats}
 	}
-	if st.Vals == nil {
-		st.Vals = map[string]string{}
-	}
-	st.Vals[fr.path] = next
-	if fr.path == "terminal.showImages" || fr.path == "terminal.imageWidthCells" {
-		m.ApplyImageSettings() // this TUI owns rendering; invalidate it immediately
-	}
-	opts, descs, cats := settingsOptions(st)
-	d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
-	d.Reindex()
-	m.Status = "reconnecting pi…"
-	m.Refresh()
-	return m, m.RespawnPi()
 }
 
-// applyLocalSetting applies a pitago-local row instantly and persists it.
-func applyLocalSetting(m *app.Model, fr fileSetting, next string) {
-	prefs := app.LoadPrefs(m.PrefsPath())
+// applyLocalSetting applies a pitago-local row instantly in memory and
+// returns a Cmd that persists it off the event loop (errors were already
+// ignored here, so the Cmd reports nothing back). Every value the Cmd needs
+// is captured now: reading palette.Win or m inside the closure would pick up
+// whatever the user did while the write was in flight.
+func applyLocalSetting(m *app.Model, fr fileSetting, next string) tea.Cmd {
+	prefsPath := m.PrefsPath()
+	path, val := fr.path, fr.toVal(next)
 	switch fr.label {
 	case "Hide thinking":
 		m.HideThinking = next == "on"
-		prefs.HideThinking = m.HideThinking
-		_ = pirpc.SetPiSetting(fr.path, fr.toVal(next)) // cross-compat with stock pi
-		_ = app.SavePrefs(m.PrefsPath(), prefs)
+		hide := m.HideThinking
+		return func() tea.Msg {
+			_ = pirpc.SetPiSetting(path, val) // cross-compat with stock pi
+			prefs := app.LoadPrefs(prefsPath)
+			prefs.HideThinking = hide
+			_ = app.SavePrefs(prefsPath, prefs)
+			return nil
+		}
 	case "Autocomplete max":
 		palette.Win = atoiOr(next, 10)
-		prefs.AutocompleteMax = palette.Win
-		_ = app.SavePrefs(m.PrefsPath(), prefs)
+		win := palette.Win
+		return func() tea.Msg {
+			prefs := app.LoadPrefs(prefsPath)
+			prefs.AutocompleteMax = win
+			_ = app.SavePrefs(prefsPath, prefs)
+			return nil
+		}
 	case "Tree filter mode":
-		_ = pirpc.SetPiSetting(fr.path, fr.toVal(next)) // /tree reads it live
+		return func() tea.Msg {
+			_ = pirpc.SetPiSetting(path, val) // /tree reads it live
+			return nil
+		}
 	}
+	return nil
 }
 
 // renderTree renders the session tree pi-style: branch connectors, a "• "
@@ -1057,6 +1103,14 @@ func All() []app.Builtin {
 		pi("login", "<provider> — Configure provider authentication", "/login [provider]", func(m *app.Model, arg string) tea.Cmd {
 			return openLogin(m, arg)
 		}),
+		{
+			// Hidden continuation of /login: app re-enters this with the
+			// original arg once openLogin's off-loop re-import reports back
+			// (app.LoginSyncedMsg). Not a user command, so it stays out of
+			// the palette and out of slash-command interception.
+			Name: app.BuiltinLoginDialog, Hidden: true,
+			Run: func(m *app.Model, arg string) tea.Cmd { return buildLoginDialog(m, arg) },
+		},
 		pi("logout", "Remove provider authentication", "/logout [provider]", func(m *app.Model, arg string) tea.Cmd {
 			return openLogout(m, arg)
 		}),
@@ -1170,8 +1224,14 @@ func All() []app.Builtin {
 				}
 				// The extension command is synchronous and does not start a
 				// model turn. In RPC mode it answers with a custom message,
-				// which the app turns into the full dashboard overlay.
-				return m.ForwardExtensionCommand("/team " + arg)
+				// which the app turns into the full dashboard overlay — so a
+				// bare forward is silent by construction: the RPC ack has no
+				// body, and mid-turn pi buffers the custom message until the
+				// turn ends. ForwardTeamCommand owns the observable window
+				// (status while in flight, a delivered flag set from
+				// openTeamDashboard, a bounded watchdog, and a queued notice
+				// while a turn is streaming) instead of the plain forward.
+				return m.ForwardTeamCommand("/team " + arg)
 			},
 		},
 	}

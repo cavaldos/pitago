@@ -68,7 +68,7 @@ func TestPiExitedSuppressedOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	c.OnEvent = func(e Event) { got <- e.Type }
+	c.SetOnEvent(func(e Event) { got <- e.Type })
 	select {
 	case typ := <-got:
 		if typ != "pi_exited" {
@@ -82,7 +82,7 @@ func TestPiExitedSuppressedOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	c2.OnEvent = func(e Event) { got <- e.Type }
+	c2.SetOnEvent(func(e Event) { got <- e.Type })
 	c2.Close()
 	select {
 	case typ := <-got:
@@ -102,7 +102,7 @@ func TestReadLoopRoutesResponseAndEvent(t *testing.T) {
 	respCh := make(chan Response, 1)
 	c.pending["go-1"] = respCh
 	events := make(chan Event, 4)
-	c.OnEvent = func(e Event) { events <- e }
+	c.SetOnEvent(func(e Event) { events <- e })
 	go c.readLoop(r)
 
 	respLine := `{"type":"response","id":"go-1","command":"get_state","success":true,"data":{"a":1}}`

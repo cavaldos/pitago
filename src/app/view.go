@@ -155,6 +155,8 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string) uint64 {
 	h.Write([]byte{0})
 	h.Write([]byte(bl.ToolResult))
 	h.Write([]byte{0})
+	h.Write([]byte(bl.ToolDiff))
+	h.Write([]byte{0})
 	h.Write([]byte(bl.ToolCallID))
 	h.Write([]byte{0})
 	if bl.Err {
@@ -352,22 +354,30 @@ func (m Model) renderToolBody(bl Block) string {
 		}
 		return renderToolResultFull(tool, bl.ToolResult)
 	case "edit":
-		text := strings.TrimSpace(bl.ToolResult)
-		lang := ""
-		if text == "" {
-			// no details.diff reported: reconstruct - old / + new from args
-			text = format.EditDiffFallback(bl.ToolArgsRaw)
-			lang = "diff"
+		// pi's edit tool always reports a one-line "Successfully replaced
+		// ..." receipt, so the real change only lives in details.diff. Prefer
+		// it; then a result that is itself a real diff, because the args
+		// reconstruction below is a 2-line guess and must never mask
+		// authoritative diff text; then the guess, then the bare receipt.
+		if bl.ToolDiff != "" {
+			return renderEditDiff(bl.ToolDiff)
 		}
+		if resultDiff := strings.TrimSpace(bl.ToolResult); codeLangIsDiff(resultDiff) {
+			return renderPreview(format.CallPreview(resultDiff, true), "diff", false)
+		}
+		if fb := format.EditDiffFallback(bl.ToolArgsRaw); fb != "" {
+			// The reconstructed diff is a bare -/+ pair, so the chroma `diff`
+			// lexer still applies here (no gutter, no "..." markers).
+			return renderPreview(format.CallPreview(fb, true), "diff", false)
+		}
+		text := strings.TrimSpace(bl.ToolResult)
 		if text == "" {
 			return ""
 		}
 		p := format.CallPreview(text, true)
-		if lang == "" {
-			lang = format.LangFromPath(toolPath(bl))
-			if _, ok := codeLang(text); ok {
-				lang = "diff"
-			}
+		lang := format.LangFromPath(toolPath(bl))
+		if _, ok := codeLang(text); ok {
+			lang = "diff"
 		}
 		// The preview is already complete, so pass expanded=false only to
 		// suppress the generic ctrl+g-to-collapse affordance.
@@ -375,6 +385,54 @@ func (m Model) renderToolBody(bl Block) string {
 	default:
 		return renderToolResultCompact(tool, bl.ToolStatus, bl.ToolResult, m.expandTools)
 	}
+}
+
+// codeLangIsDiff reports whether s is itself a unified diff. codeLang also
+// accepts JSON and fenced blocks, so match on the returned lang rather than on
+// ok — a fenced edit result must not be mistaken for diff text.
+func codeLangIsDiff(s string) bool {
+	lang, ok := codeLang(s)
+	return ok && lang == "diff"
+}
+
+// renderEditDiff renders pi's details.diff for an edit tool. That payload is
+// display-oriented — line-number gutter, -/+ rows, "..." elision markers — and
+// carries no ANSI of its own, so it must not go through the chroma `diff`
+// lexer, which only understands unified patches (---/+++/@@) and would color
+// it wrong. Rows are tinted by their marker here instead, and the gutter is
+// left intact.
+func renderEditDiff(text string) string {
+	p := format.CallPreview(text, true) // expanded: never collapse a diff
+	if p.Hidden || len(p.Lines) == 0 {
+		return ""
+	}
+	rows := make([]string, len(p.Lines))
+	for i, ln := range p.Lines {
+		rows[i] = colorEditDiffLine(ln)
+	}
+	p.Lines = rows
+	// lang "" keeps renderPreview off the highlighter; expanded=false only
+	// suppresses the ctrl+g-to-collapse hint (CallPreview already returned
+	// every line, so there is nothing to collapse).
+	return renderPreview(p, "", false)
+}
+
+// colorEditDiffLine tints one diff row by its leading marker: removed lines
+// red, added lines green, "..." elision markers dim, everything else (the
+// gutter and context rows) normal. The marker sits after the gutter indent,
+// so compare against the left-trimmed row; context rows start with the line
+// number, which keeps a leading "-" inside the code itself from misfiring.
+func colorEditDiffLine(ln string) string {
+	body := strings.TrimLeft(ln, " ")
+	switch {
+	case strings.HasPrefix(body, "-"):
+		return errStyle.Render(ln)
+	case strings.HasPrefix(body, "+"):
+		return okStyle.Render(ln)
+	case body == "..." || body == "…":
+		return toolStyle.Render(ln)
+	}
+	return codeStyle.Render(ln)
 }
 
 // renderToolResultCompact shows no partial output while a generic tool is
@@ -1027,7 +1085,7 @@ func (m Model) renderDialog() string {
 	if d.Message != "" {
 		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
 	}
-	if isFilterKind(d.Kind) {
+	if filterableDialog(d) {
 		b.WriteString(statusBarStyle.Render("filter: "+d.Filter+"▌") + "\n")
 	}
 	// Adaptive box: wide terminals get a wider dialog (settings rows
@@ -1100,9 +1158,23 @@ func (m Model) renderDialog() string {
 				cursor = "▸ "
 				style = rowHiStyle
 			}
-			row := Short(d.Options[ri], 44)
+			// Extension option labels are plugin-authored and routinely
+			// longer than 44 columns, which the old constant silently ate.
+			// Bound them by the box instead, and hand the description only
+			// the room that is actually left so a row can never wrap.
+			labelW := 44
+			if d.Kind == "ui" || d.Kind == "askUser" {
+				labelW = rowW - 2
+			}
+			row := Short(d.Options[ri], labelW)
 			if desc := DescOf(d, ri); desc != "" {
-				row += "  " + toolStyle.Render("— "+Short(desc, rowW-47))
+				room := rowW - 47
+				if d.Kind == "ui" || d.Kind == "askUser" {
+					room = rowW - 2 - lipgloss.Width(row) - 3
+				}
+				if room > 4 {
+					row += "  " + toolStyle.Render("— "+Short(desc, room))
+				}
 			}
 			if fi == d.Cursor {
 				b.WriteString(cursor + style.Width(rowW).Render(row) + "\n")
@@ -1120,7 +1192,7 @@ func (m Model) renderDialog() string {
 	foot := "↑↓ select · Enter confirm · Esc cancel"
 	if d.Kind == "input" {
 		foot = "type · Enter save · Esc cancel"
-	} else if isFilterKind(d.Kind) {
+	} else if filterableDialog(d) {
 		foot = "type to filter · " + foot
 	}
 	if d.Kind == "sessions" {
@@ -2047,6 +2119,84 @@ func boolInt(value bool) int {
 	return 0
 }
 
+// panelHeight is lipgloss.Height with the empty-string-is-one-row trap
+// handled. A panel that rendered "" must cost zero rows, not one — the
+// View() reserve/join math below is only exact if this holds.
+func panelHeight(s string) int {
+	if s == "" {
+		return 0
+	}
+	return lipgloss.Height(s)
+}
+
+// extPanelBudget is the row pool the generic plugin panels may draw from.
+// It mirrors teamWidgetHeightLimit (which already reserves the header, the
+// input box, the task widget, every popup and three chat rows) and subtracts
+// what the team dashboard already took, so the two panel families can never
+// each claim the full budget and overflow the frame.
+func (m Model) extPanelBudget(teamH int) int {
+	return max(0, m.teamWidgetHeightLimit()-teamH)
+}
+
+// renderExtWidgets draws every generic (non-team) extension panel for one
+// placement, in m.extWidgetKeys() order. This is what makes pi-lens,
+// plan-mode, web-activity and any other setWidget plugin visible as a live
+// surface instead of a one-shot notice that scrolled away.
+//
+// Constraints mirror the team panel: the frame budget is never exceeded, the
+// real terminal width is never painted past (mainW has a small-terminal
+// floor the widget must not inherit), every line is clipped with truncANSI
+// so ANSI survives, and "" is returned when there is no room so the viewport
+// math in View() stays valid.
+func (m Model) renderExtWidgets(placement string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	// mainW has a small-terminal floor for the main layout; a panel must
+	// never inherit that floor and paint past the actual terminal width.
+	width := max(1, min(m.winW, m.mainW()))
+	var keys []string
+	for _, key := range m.extWidgetKeys() {
+		if p := m.extWidgetPanel(key); p != nil && p.Placement == placement && len(p.Lines) > 0 {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	var out []string
+	rows, dropped := 0, 0
+	for _, key := range keys {
+		p := m.extWidgetPanel(key)
+		room := budget - rows - 1 // one row for this panel's owner tag
+		if room <= 0 {
+			dropped += 1 + len(p.Lines)
+			continue
+		}
+		lines := p.Lines
+		if len(lines) > room {
+			// A panel's tail is the live part, so overflow drops from the
+			// head — but the head is the plugin's own summary, so say so
+			// rather than silently swapping one for the other.
+			dropped += len(lines) - room
+			lines = lines[len(lines)-room:]
+		}
+		out = append(out, truncANSI(sideTitleStyle.Render("["+key+"]"), width))
+		for _, line := range lines {
+			out = append(out, truncANSI(line, width))
+		}
+		rows += 1 + len(lines)
+	}
+	if dropped > 0 && rows < budget {
+		out = append(out, truncANSI(toolStyle.Render(fmt.Sprintf("… +%d plugin rows hidden", dropped)), width))
+		rows++
+	}
+	if len(out) > budget {
+		out = out[:budget]
+	}
+	return strings.Join(out, "\n")
+}
+
 func teamWorkerStart(line string) bool {
 	plain := strings.TrimSpace(stripANSI(line))
 	if teamWorkerSummary(line) {
@@ -2239,6 +2389,13 @@ func (m Model) View() string {
 	teamAbove := teamPanel != "" && m.TeamWidgetPlacement != "belowEditor"
 	teamBelow := teamPanel != "" && m.TeamWidgetPlacement == "belowEditor"
 	taskPanel := m.renderTaskWidget()
+	// The team dashboard and the generic plugin panels share one row pool:
+	// both measure against teamWidgetHeightLimit, so without this
+	// subtraction each family would claim the full budget and the stack
+	// would grow past winH.
+	extBudget := m.extPanelBudget(panelHeight(teamPanel))
+	extAbove := m.renderExtWidgets("aboveEditor", extBudget)
+	extBelow := m.renderExtWidgets("belowEditor", max(0, extBudget-panelHeight(extAbove)))
 	chatVp := m.vp
 	// Persistent panels consume chat rows from a local viewport copy; keeping
 	// m.vp unchanged avoids mutating layout state during render. lipgloss
@@ -2250,6 +2407,7 @@ func (m Model) View() string {
 	if taskPanel != "" {
 		reserved += lipgloss.Height(taskPanel)
 	}
+	reserved += panelHeight(extAbove) + panelHeight(extBelow)
 	chatVp.Height = max(0, chatVp.Height-reserved)
 	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
 	bodyParts := []string{chatView()}
@@ -2259,7 +2417,13 @@ func (m Model) View() string {
 	if taskPanel != "" {
 		bodyParts = append(bodyParts, taskPanel)
 	}
+	if extAbove != "" {
+		bodyParts = append(bodyParts, extAbove)
+	}
 	bodyParts = append(bodyParts, m.renderInput())
+	if extBelow != "" {
+		bodyParts = append(bodyParts, extBelow)
+	}
 	if teamBelow {
 		bodyParts = append(bodyParts, teamPanel)
 	}
@@ -2271,6 +2435,9 @@ func (m Model) View() string {
 		}
 		if taskPanel != "" {
 			parts = append(parts, taskPanel)
+		}
+		if extAbove != "" {
+			parts = append(parts, extAbove)
 		}
 		if inlineUI {
 			// extension menu (plan-mode) floats above chat like /commands;
@@ -2290,6 +2457,9 @@ func (m Model) View() string {
 			parts = append(parts, m.renderInputBox())
 		}
 		parts = append(parts, m.renderInput())
+		if extBelow != "" {
+			parts = append(parts, extBelow)
+		}
 		if teamBelow {
 			parts = append(parts, teamPanel)
 		}

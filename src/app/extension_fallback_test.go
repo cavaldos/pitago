@@ -23,20 +23,26 @@ func TestUnknownUIRequestFallsBack(t *testing.T) {
 }
 
 // setWidget carries string arrays in RPC mode (e.g. plan-mode's PLAN
-// widget — factories are ignored pi-side): lines render as a toast, while
-// clear (omitted lines) stays silent.
-func TestSetWidgetShowsToast(t *testing.T) {
+// widget — factories are ignored pi-side). A non-team, non-progress key now
+// gets a real panel instead of a one-shot toast: downgrading it to a toast
+// is what made pi-lens / plan-mode / web-activity vanish. Clear (omitted
+// lines) retires that key alone and stays silent.
+func TestSetWidgetGetsPanel(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m = m.handleUIRequest([]byte(`{"id":"w1","method":"setWidget","widgetKey":"plan","widgetLines":["plan active","Step 1"]}`))
-	if len(m.toasts) != 1 {
-		t.Fatalf("toasts = %+v, want 1", m.toasts)
+	if len(m.toasts) != 0 {
+		t.Fatalf("a live widget must not become a toast: %+v", m.toasts)
 	}
-	if !strings.Contains(m.toasts[0].Text, "plan active") {
-		t.Fatalf("toast must carry widget lines: %q", m.toasts[0].Text)
+	p := m.extWidgetPanel("plan")
+	if p == nil || len(p.Lines) != 2 || p.Lines[0] != "plan active" || p.Placement != "aboveEditor" {
+		t.Fatalf("panel = %+v, want 2 lines aboveEditor", p)
 	}
 	m = m.handleUIRequest([]byte(`{"id":"w2","method":"setWidget","widgetKey":"plan"}`))
-	if len(m.toasts) != 1 {
+	if len(m.toasts) != 0 {
 		t.Fatalf("clear must stay silent, toasts = %+v", m.toasts)
+	}
+	if m.extWidgetPanel("plan") != nil {
+		t.Fatalf("clear must retire the panel, got %+v", m.extWidgetPanel("plan"))
 	}
 }
 
