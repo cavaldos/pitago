@@ -20,11 +20,27 @@ func writePiAuth(t *testing.T, dir string, v map[string]any) {
 	}
 }
 
+// clearAmbientPiKeys neutralises API-key env vars the developer's shell may
+// export. A real key in the ambient env used to make the "no leak" assertion
+// in TestPushActiveToPiWritesAuth fail — and print that real key into the test
+// log. t.Setenv restores whatever the shell had once the test ends, so the
+// assertion tests PushActiveToPi, not the developer's environment.
+func clearAmbientPiKeys(t *testing.T, envs ...string) {
+	t.Helper()
+	for _, e := range envs {
+		if e == "" {
+			continue
+		}
+		t.Setenv(e, "")
+	}
+}
+
 // pitago -> pi: PushActiveToPi must write auth.json (env alone is not
 // enough — pi's auth.json wins over env).
 func TestPushActiveToPiWritesAuth(t *testing.T) {
 	clearPiChildEnv()
 	t.Cleanup(clearPiChildEnv)
+	clearAmbientPiKeys(t, "GROQ_API_KEY")
 	agent := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", agent)
 	keys := filepath.Join(t.TempDir(), "keys.json")
@@ -47,16 +63,18 @@ func TestPushActiveToPiWritesAuth(t *testing.T) {
 		t.Fatalf("pi key = %q", m["groq"].Key)
 	}
 	// The env half goes to the pi CHILD only: pitago's own environment must
-	// stay exactly what the user's shell exported.
-	if os.Getenv("GROQ_API_KEY") != "" {
-		t.Fatalf("PushActiveToPi leaked into pitago's own env: %q", os.Getenv("GROQ_API_KEY"))
+	// stay exactly what it was before the push (empty here — see
+	// clearAmbientPiKeys). Never print the value: on a real shell it is a
+	// live credential.
+	if v := os.Getenv("GROQ_API_KEY"); v != "" {
+		t.Fatalf("PushActiveToPi leaked into pitago's own env (%d bytes, value withheld)", len(v))
 	}
 	if v, ok := PiChildEnv("GROQ_API_KEY"); !ok || v != "gsk-pitago-12345678" {
 		t.Fatalf("child env = %q (ok=%v)", v, ok)
 	}
 	// ...and the child actually receives it.
 	if !containsEnv(piChildEnviron(), "GROQ_API_KEY=gsk-pitago-12345678") {
-		t.Fatalf("pi child env missing the key: %v", piChildEnviron())
+		t.Fatalf("pi child env missing the key (%d vars, value withheld)", len(piChildEnviron()))
 	}
 	// last key deleted → the child var is dropped, not left behind
 	if err := DeleteKeyAt(keys, "GROQ_API_KEY", 0); err != nil {
@@ -64,10 +82,10 @@ func TestPushActiveToPiWritesAuth(t *testing.T) {
 	}
 	PushActiveToPi(keys, "GROQ_API_KEY")
 	if v, ok := PiChildEnv("GROQ_API_KEY"); !ok || v != "" {
-		t.Fatalf("deleted key still in child env: %q (ok=%v)", v, ok)
+		t.Fatalf("deleted key still in child env: ok=%v, %d bytes withheld", ok, len(v))
 	}
 	if containsEnv(piChildEnviron(), "GROQ_API_KEY=") {
-		t.Fatalf("dropped var still handed to the child: %v", piChildEnviron())
+		t.Fatalf("dropped var still handed to the child (%d vars, value withheld)", len(piChildEnviron()))
 	}
 }
 

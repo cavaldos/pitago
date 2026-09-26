@@ -61,6 +61,14 @@ func displayWidth(s string) int {
 // escapeLen returns the byte length of the escape sequence at the start of s,
 // or 0 when it does not match a form recognised here. Returning 0 sends the
 // caller to ansi.StringWidth, which is why an omission here is safe.
+//
+// The grammar is ECMA-48: ESC introduces a sequence that ends at a final byte
+// (0x30-0x7e), and every byte before that is either a parameter byte (CSI
+// only) or an intermediate byte (0x20-0x2f) that the sequence may carry
+// through. An intermediate byte is therefore not an end of sequence: ESC SP m
+// is one three-byte sequence, and ESC ( B likewise. Truncating at the
+// intermediate would print the final byte as text and count a cell that the
+// sequence swallows.
 func escapeLen(s string) int {
 	if len(s) < 2 {
 		return 0
@@ -88,15 +96,24 @@ func escapeLen(s string) int {
 			}
 		}
 		return 0
-	case '(', ')', '*', '+', '-', '.', '/': // designation, one more byte
-		if len(s) >= 3 {
-			return 3
-		}
-		return 0
 	default:
+		// An intermediate byte (0x20-0x2f) does not finish the sequence:
+		// the state machine keeps collecting until a final byte
+		// (0x30-0x7e) arrives, so ESC SP m is one three-byte sequence and
+		// not ESC SP followed by a printed "m".
+		if s[1] >= 0x20 && s[1] <= 0x2f {
+			i := 1
+			for i < len(s) && s[i] >= 0x20 && s[i] <= 0x2f {
+				i++
+			}
+			if i < len(s) && s[i] >= 0x30 && s[i] <= 0x7e {
+				return i + 1
+			}
+			return 0
+		}
 		// ECMA-48 two-byte escape (RIS, IND, NEL, DECSC…). A byte outside
 		// the two ranges the grammar allows is unrecognised.
-		if s[1] >= 0x20 && s[1] <= 0x2f || s[1] >= 0x30 && s[1] <= 0x7e {
+		if s[1] >= 0x30 && s[1] <= 0x7e {
 			return 2
 		}
 		return 0
