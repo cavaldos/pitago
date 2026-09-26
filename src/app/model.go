@@ -46,6 +46,7 @@ type Dialog struct {
 	Paths             []string              // sessions picker: parallel session file per option
 	Scope             string                // sessions picker: "current" | "all" (Tab toggles)
 	Payload           []string              // yank picker: full text per option; login: raw keys ("" for action rows)
+	BlockIdx          int                   // blockactions: target chat block index (for Payload kinds)
 	TreeJump          []int                 // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
 	TreeRole          []string              // tree: role ("user"/"assistant") of a message row, "" for every other entry type
 	McpServers        []pirpc.McpServerInfo // mcp: full server record per list row (transport, source, state, tools)
@@ -222,6 +223,12 @@ type Model struct {
 	PetStyle            string            // sidebar pet look: pet.StyleASCII (default) | pet.StyleClassic
 	prefsPath           string            // persisted pitago-local prefs ("" = don't persist)
 	savedModel          *ModelRef         // last user-picked model this process wrote (in-memory mirror of prefs.currentModel)
+	blockRows           []int             // rendered start line of each block (mouse hit-testing)
+	chatLines           []string          // absolute rendered chat content lines (selection source)
+	gutterCols          []int             // leading gutter cells per chat line (0 or 2), parallel to chatLines
+	sel                 Selection         // chat-column drag selection state
+	LastPressAt         time.Time         // last single-click timestamp (double-click detection)
+	LastPressLine       int               // line of last single-click
 	builtins            []Builtin
 	confirm             map[string]ConfirmFunc
 	expandTools         bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
@@ -1140,7 +1147,7 @@ func (m *Model) ToggleMouse(arg string) tea.Cmd {
 	on := pitago.ResolveMouse(arg, m.Mouse)
 	m.Mouse = on
 	if on {
-		m.AddBlock(Block{Kind: "notice", Text: "mouse on — click sidebar · wheel scrolls · hold Option/Shift to select text"})
+		m.AddBlock(Block{Kind: "notice", Text: "mouse on — drag chat to select+copy (sidebar excluded) · right-click copy menu · sidebar click/wheel"})
 	} else {
 		m.AddBlock(Block{Kind: "notice", Text: "mouse off — native text selection · ↑↓ scrolls · Shift+↑↓ recalls history · sidebar scrolls with Ctrl+↑↓"})
 	}

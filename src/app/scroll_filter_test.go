@@ -57,7 +57,6 @@ func TestFilterDropsAreExactNoOps(t *testing.T) {
 			t.Fatal("motion should be dropped")
 		}
 	})
-
 	t.Run("sidebar wheel at its edge", func(t *testing.T) {
 		m := sideModel(t)
 		m.sideVp.SetYOffset(0)
@@ -137,5 +136,20 @@ func TestFilterPassesOtherMessages(t *testing.T) {
 		if !filterKeeps(t, m, msg) {
 			t.Fatalf("%T must pass the filter", msg)
 		}
+	}
+}
+
+// A chat drag selection reads motion (press → motion* → release), so motion
+// must pass while one is active — otherwise drags can never extend.
+func TestFilterKeepsMotionDuringDrag(t *testing.T) {
+	m := scrollModel(t, 400)
+	m.vp.GotoTop()
+	ev := tea.MouseMsg{X: 10, Y: 10, Action: tea.MouseActionMotion}
+	if filterKeeps(t, m, ev) {
+		t.Fatal("idle motion should still be dropped")
+	}
+	m.sel = Selection{Active: true, Anchor: Point{Line: 0, Col: 0}, Focus: Point{Line: 0, Col: 0}}
+	if !filterKeeps(t, m, ev) {
+		t.Fatal("motion must pass while a drag selection is active")
 	}
 }

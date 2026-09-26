@@ -327,22 +327,35 @@ func frameTables(s string, width int) string {
 }
 
 // Render turns markdown into ANSI for the chat column, wrapped to width.
-// Default is Go (Glamour); PITAGO_RENDER=pi opts into pi's bridge.
+// Default is Go (Glamour); PITAGO_RENDER=pi opts into pi's bridge. File
+// paths are linkified against the process cwd (no session cwd available).
 func Render(src string, width int) string {
+	return RenderCwd(src, width, "")
+}
+
+// RenderCwd is Render with an explicit session cwd so relative file paths
+// resolve against the workspace instead of the process cwd.
+func RenderCwd(src string, width int, cwd string) string {
 	if strings.TrimSpace(src) == "" || !isMarkdown(src) {
 		return src
 	}
 	if width < 20 {
 		width = 80
 	}
+	// The pi bridge does not emit OSC 8; injecting Markdown link syntax there
+	// would expose raw targets. Keep the Go/Glamour linkification path only.
+	linkified := src
+	if os.Getenv("PITAGO_RENDER") != "pi" {
+		linkified = LinkifyPaths(src, cwd)
+	}
 	if os.Getenv("PITAGO_RENDER") == "pi" {
-		out, err := pimark.Render(src, width, pimark.Assistant)
+		out, err := pimark.Render(linkified, width, pimark.Assistant)
 		if err != nil || strings.TrimSpace(out) == "" {
-			return strings.Trim(rtrim(frameTables(gomark.Render(src, width), width)), "\n")
+			return strings.Trim(rtrim(frameTables(gomark.Render(linkified, width), width)), "\n")
 		}
 		return strings.Trim(rtrim(frameTables(out, width)), "\n")
 	}
-	return strings.Trim(rtrim(frameTables(gomark.Render(src, width), width)), "\n")
+	return strings.Trim(rtrim(frameTables(gomark.Render(linkified, width), width)), "\n")
 }
 
 // Highlight colors code with Chroma (no auto-detect, like pi's rule).

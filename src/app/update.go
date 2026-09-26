@@ -318,6 +318,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, nil
 
+	case selectionTickMsg:
+		// 33 ms edge-scroll pulse while a drag is held at the viewport edge.
+		return m.updateSelectionTick()
+
 	case connectedMsg:
 		if m.followRemote {
 			return m, nil // an in-flight owned fetch must not replace remote history
@@ -1221,6 +1225,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.RespawnPi()
 
 	case tea.MouseMsg:
+		// App-owned chat drag selection (left press/motion/release).
+		// Sidebar clicks/wheel/dialogs fall through untouched.
+		if m2, cmd, handled := m.updateSelection(msg); handled {
+			return m2, cmd
+		}
+		// Right-click on an assistant chat block → semantic copy menu.
+		// Chat-only: sidebars keep their own click handlers below.
+		if m.Mouse && msg.Action == tea.MouseActionPress &&
+			msg.Button == tea.MouseButtonRight && !m.overSide(msg.X) &&
+			msg.Y >= 1 && msg.Y < m.vp.Height {
+			if idx := m.chatRowToBlock(msg.Y); idx >= 0 && m.blocks[idx].Kind == "assistant" {
+				if d := newBlockActionsDialog(m.blocks, idx); d != nil {
+					m.Dialogs = append(m.Dialogs, d)
+					m.Refresh()
+					return m, nil
+				}
+			}
+		}
 		// Click (release) on the sidebar: PLUGINS header collapses/expands,
 		// a recent model switches to it. Terminals report release with
 		// Button None (SGR `m` / X10 code 3 carry no button), so match any

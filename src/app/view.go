@@ -123,14 +123,22 @@ func (m *Model) renderBlocks() string {
 	}
 	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
 	tidy := m.Tidy
-	// blockLine is rebuilt on every pass (JumpToEntry scrolls by it) but the
-	// per-block strings are not: they come from the render cache, so a clean
-	// history is only re-measured, never re-rendered.
+	// Two parallel start-line tables, same values for the same block:
+	//   m.blockRows — mouse hit-tests (right-click copy menu, drag selection)
+	//   m.blockLine — JumpToEntry scroll anchor
+	// Both are rebuilt on every pass but the per-block strings come from the
+	// render cache, so a clean history is only re-measured, never re-rendered.
+	if len(m.blockRows) != len(m.blocks) {
+		m.blockRows = make([]int, len(m.blocks))
+	}
 	if len(m.blockLine) != len(m.blocks) {
 		nl := make([]int, len(m.blocks))
 		copy(nl, m.blockLine)
 		m.blockLine = nl
 	}
+	// Use the same trailing-newline-aware line count for the preamble as
+	// for each rendered block, so hit-testing stays aligned with connErr.
+	cursor := ly(b.String())
 	line := strings.Count(b.String(), "\n")
 	for i, bl := range m.blocks {
 		// The jump mark lives outside renderOneBlock on purpose: it is a
@@ -138,10 +146,12 @@ func (m *Model) renderBlocks() string {
 		// string would fold it into blockKey's input for every other block.
 		if i == m.jumpBlock {
 			b.WriteString(toolStyle.Render(jumpMark) + "\n")
+			cursor++
 			line++
 		}
 		// Hidden/skipped blocks render as "", so they record the line the
-		// next visible block will use and the table never drifts.
+		// next visible block will use and the tables never drift.
+		m.blockRows[i] = cursor
 		m.blockLine[i] = line
 		// Image-bearing transcript blocks are always rebuilt as safe squares.
 		// This purges any cache entry created by an older image-render path
@@ -151,8 +161,10 @@ func (m *Model) renderBlocks() string {
 		}
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
 		if m.renderCacheKey[i] == key {
-			b.WriteString(m.renderCache[i])
-			line += strings.Count(m.renderCache[i], "\n")
+			s := m.renderCache[i]
+			b.WriteString(s)
+			cursor += ly(s)
+			line += strings.Count(s, "\n")
 			continue
 		}
 		s, skip := m.renderOneBlock(bl, cw)
@@ -162,12 +174,80 @@ func (m *Model) renderBlocks() string {
 		m.renderCacheKey[i] = key
 		m.renderCache[i] = s
 		b.WriteString(s)
+		cursor += ly(s)
 		line += strings.Count(s, "\n")
 	}
 	if m.thinking {
 		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
 	}
-	return b.String()
+	out := b.String()
+	m.chatLines = strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	// The gutter rides on the first line of every block ("● ") and on
+	// every line of a boxed block (blank 2-cell gutter on continuations).
+	// Track its width per line so selection (drag / double-click) can
+	// clamp past it instead of copying the glyph.
+	m.gutterCols = make([]int, len(m.chatLines))
+	for i, bl := range m.blocks {
+		s := m.renderCache[i]
+		if s == "" {
+			continue // skipped/streaming leftover: no lines rendered
+		}
+		start := m.blockRows[i]
+		boxed := bl.Kind == "user"
+		if bl.Kind == "assistant" {
+			boxed = startsPreformatted(bl.Text)
+		}
+		// Tool/bash frames are flush-left (no external gutter).
+		if bl.Kind == "tool" || bl.Kind == "bash" {
+			continue
+		}
+		first := true
+		for li, ln := range strings.Split(s, "\n") {
+			if strings.TrimSpace(stripSelectionANSI(ln)) == "" {
+				continue
+			}
+			if boxed || first {
+				if idx := start + li; idx < len(m.gutterCols) {
+					m.gutterCols[idx] = 2
+				}
+			}
+			first = false
+		}
+	}
+	return out
+}
+
+// ly counts rendered lines for a block string (trailing-newline aware).
+func ly(s string) int {
+	n := strings.Count(s, "\n")
+	if n == 0 {
+		if s == "" {
+			return 0
+		}
+		return 1
+	}
+	if strings.HasSuffix(s, "\n") {
+		return n
+	}
+	return n + 1
+}
+
+// chatRowToBlock maps a screen y (chat column, 0-indexed absolute row
+// AFTER the header) to the block index under it, or -1. y is the mouse row;
+// the header occupies row 0 (renderHeader), the viewport starts at row 1.
+func (m *Model) chatRowToBlock(screenY int) int {
+	abs := m.vp.YOffset + (screenY - 1)
+	if abs < 0 {
+		return -1
+	}
+	idx := -1
+	for i, start := range m.blockRows {
+		if start > abs {
+			break
+		}
+		idx = i
+	}
+	return idx
 }
 
 // blockKey fingerprints one block's rendered output: every field
@@ -235,7 +315,7 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		boxed = true
 	case "assistant":
 		icon = statusBarStyle.Render("●")
-		body = renderMarkdown(bl.Text, cw) + "\n\n"
+		body = renderMarkdown(m, bl.Text, cw) + "\n\n"
 		// Table/fence-led replies render as aligned rows: keep the 2-cell
 		// gutter so "● " doesn't push the first row 2 cells past the rest.
 		boxed = startsPreformatted(bl.Text)
@@ -290,9 +370,9 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 
 // renderMarkdown renders assistant output with the Go renderer (Glamour
 // tables/lists/bold, Chroma fenced code) wrapped to the chat width. Plain text comes back unchanged from markdown.Render and keeps the
-// old unstyled render.
-func renderMarkdown(src string, width int) string {
-	if out := markdown.Render(src, width); out != src {
+// old unstyled render. File paths linkify against the session cwd.
+func renderMarkdown(m *Model, src string, width int) string {
+	if out := markdown.RenderCwd(src, width, m.cwd); out != src {
 		return out
 	}
 	return lipgloss.NewStyle().Foreground(cText).Width(width).Render(src)
@@ -2879,7 +2959,12 @@ func (m Model) View() string {
 	if chatVp.Height != m.vp.Height && m.vp.AtBottom() {
 		chatVp.GotoBottom()
 	}
-	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
+	// The selection overlay runs on this rendered viewport copy, not on m.vp:
+	// highlighting m.vp instead would highlight different pixels than the
+	// ones being drawn.
+	chatView := func() string {
+		return padToHeight(overlaySelection(chatVp.View(), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
+	}
 	input := m.renderInput()
 	popupOpen := m.cmdOpen || m.atOpen || inlineUI || m.inputOpen()
 	// A popup replaces the body wholesale, so build exactly one of the two

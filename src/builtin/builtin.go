@@ -1248,6 +1248,27 @@ func All() []app.Builtin {
 			},
 		},
 		{
+			Name: "copy-md", Desc: "Copy last assistant message as raw markdown", Usage: "/copy-md",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.CopyLastAs("md")
+			},
+		},
+		{
+			Name: "copy-tables", Desc: "Copy tables from last assistant message", Usage: "/copy-tables",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.CopyLastAs("tables")
+			},
+		},
+		{
+			Name: "copy-code", Desc: "Copy code blocks from last assistant message", Usage: "/copy-code",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.CopyLastAs("code")
+			},
+		},
+		{
 			Name: "sidebar", Desc: "Hide/show sidebar (hide for clean drag-select of chat)", Usage: "/sidebar",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {

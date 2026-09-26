@@ -14,30 +14,31 @@ import (
 // Wired into app via UseBuiltins; app's confirmDialog only dispatches.
 func Confirmers() map[string]app.ConfirmFunc {
 	return map[string]app.ConfirmFunc{
-		"model":       confirmModel,
-		"recent":      confirmRecent,
-		"sessions":    confirmSessions,
-		"thinking":    confirmThinking,
-		"pet":         confirmPet,
-		"settings":    confirmSettings,
-		"pconfig":     confirmPconfig,
-		"login":       confirmLogin,
-		"loginMethod": confirmLoginMethod,
-		"loginOAuth":  confirmLoginOAuth,
-		"logout":      confirmLogout,
-		"secret":      confirmSecret,
-		"yank":        confirmYank,
-		"update":      confirmUpdate,
-		"trajectory":  confirmTrajectory,
-		"tree":        confirmTree,
-		"treeAction":  confirmTreeAction,
-		"fork":        confirmFork,
-		"subagents":   confirmSubagents,
-		"live":        confirmLive,
-		"mcp":         confirmMcp,
-		"mcpAction":   confirmMcpAction,
-		"mcpExposure": confirmMcpExposure,
-		"mcpTools":    confirmMcpBack,
+		"model":        confirmModel,
+		"recent":       confirmRecent,
+		"sessions":     confirmSessions,
+		"thinking":     confirmThinking,
+		"pet":          confirmPet,
+		"settings":     confirmSettings,
+		"pconfig":      confirmPconfig,
+		"login":        confirmLogin,
+		"loginMethod":  confirmLoginMethod,
+		"loginOAuth":   confirmLoginOAuth,
+		"logout":       confirmLogout,
+		"secret":       confirmSecret,
+		"yank":         confirmYank,
+		"update":       confirmUpdate,
+		"trajectory":   confirmTrajectory,
+		"blockactions": confirmBlockActions,
+		"tree":         confirmTree,
+		"treeAction":   confirmTreeAction,
+		"fork":         confirmFork,
+		"subagents":    confirmSubagents,
+		"live":         confirmLive,
+		"mcp":          confirmMcp,
+		"mcpAction":    confirmMcpAction,
+		"mcpExposure":  confirmMcpExposure,
+		"mcpTools":     confirmMcpBack,
 	}
 }
 
@@ -460,4 +461,13 @@ func confirmYank(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	}
 	m.YankText(text)
 	return m, nil
+}
+
+// confirmBlockActions runs the picked semantic copy action (markdown / tables /
+// code / plain) for a BlockActionsDialog. The app owns the work; this
+// only closes the dialog and dispatches, so the copy logic stays testable
+// without a picker.
+func confirmBlockActions(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	m.Dialogs = m.Dialogs[1:]
+	return m, m.RunBlockAction(d, ri)
 }

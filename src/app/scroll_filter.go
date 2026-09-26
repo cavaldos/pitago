@@ -17,10 +17,10 @@ import (
 //
 // Two kinds of mouse traffic hit that path for nothing:
 //
-//   - Motion reports, which this app never acts on: only Release carries
-//     meaning (the sidebar click on update.go:1133). With mouse cell motion
-//     on, simply moving the pointer across the window spends a frame per
-//     report.
+//   - Motion reports outside an active chat drag, which nothing else
+//     reads: only Release carries meaning (the sidebar click on
+//     update.go:1133). With mouse cell motion on, simply moving the
+//     pointer across the window spends a frame per report.
 //   - Wheel reports that arrive after the viewport is already pinned at that
 //     edge. A macOS flick ends in a long momentum tail, so a fast scroll to
 //     the top or the bottom ends with dozens of reports that cannot move
@@ -48,7 +48,13 @@ func ScrollEventFilter(m tea.Model, msg tea.Msg) tea.Msg {
 		return msg
 	}
 	if mm.Action == tea.MouseActionMotion {
-		return nil // no binding reads motion; see above
+		// A chat drag selection reads motion (press → motion* → release):
+		// while one is active every report extends the focus. Otherwise
+		// no binding reads motion; see above.
+		if md.sel.Active {
+			return msg
+		}
+		return nil
 	}
 	if mm.Shift {
 		return msg
