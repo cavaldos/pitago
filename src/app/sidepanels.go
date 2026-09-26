@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ const (
 	SideCommands  = "commands"
 	SidePlugins   = "plugins"
 	SideMCP       = "mcp"
+	SideLSP       = "lsp"
 	SideTodos     = "todos"
 	SideTools     = "tools"
 	SideWorkspace = "workspace"
@@ -39,7 +41,8 @@ const (
 // sideOrder is the Sidebar tab row order (top-to-bottom like the sidebar).
 var sideOrder = []string{
 	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
-	SideCommands, SidePlugins, SideMCP, SideTodos, SideTools, SideWorkspace,
+	SideCommands, SidePlugins, SideMCP, SideLSP, SideTodos, SideTools,
+	SideWorkspace,
 }
 
 // sideLabel is the Sidebar tab display name per section key.
@@ -63,6 +66,8 @@ func sideLabel(key string) string {
 		return "Plugins"
 	case SideMCP:
 		return "MCP servers"
+	case SideLSP:
+		return "LSP diagnostics"
 	case SideTodos:
 		return "Todos"
 	case SideTools:
@@ -1108,4 +1113,229 @@ func (m Model) renderTodosSection(inner int) string {
 	}
 	b.WriteString(sep() + "\n")
 	return b.String()
+}
+
+// LSP diagnostics ----------------------------------------------------------
+// The section is fed by the newest lsp_diagnostics result in the transcript
+// (see lsp_panel.go for why that is the data source). Rows follow pi's own
+// sidebar: a header badge of ●13E !8W, one ● file row carrying that file's
+// 13E8W counts, then one ● row per diagnostic — the color of the ● is the
+// severity, so no per-severity glyph exists. Header also mirrors
+// renderPluginsSection by carrying the fold mark.
+
+// lspSeverityStyle maps a severity onto a theme token (no hardcoded colors):
+// pi draws every row with the same ● and lets the color carry the severity.
+func lspSeverityStyle(sev string) lipgloss.Style {
+	switch sev {
+	case lspSevError:
+		return errStyle
+	case lspSevWarning:
+		return warnStyle
+	case lspSevInfo:
+		return lipgloss.NewStyle().Foreground(cCyan)
+	}
+	return toolStyle
+}
+
+// lspCountBadge is pi's header spelling: "●13E !8W", one space between the
+// two groups, neither group shown when its count is 0. The two halves are
+// styled apart (never nested) so the colors stay independent.
+func lspCountBadge(errs, warns int) string {
+	var e, w string
+	if errs > 0 {
+		e = errStyle.Render(fmt.Sprintf("●%dE", errs))
+	}
+	if warns > 0 {
+		w = warnStyle.Render(fmt.Sprintf("!%dW", warns))
+	}
+	switch {
+	case e != "" && w != "":
+		return e + " " + w
+	case e != "":
+		return e
+	}
+	return w
+}
+
+// lspFileCounts is the right-hand spelling pi puts on a file row: "13E8W",
+// numbers glued to their letters and no glyph, muted so the counts sit calm
+// against the colored ● rows below.
+func lspFileCounts(errs, warns int) string {
+	var b strings.Builder
+	if errs > 0 {
+		fmt.Fprintf(&b, "%dE", errs)
+	}
+	if warns > 0 {
+		fmt.Fprintf(&b, "%dW", warns)
+	}
+	return b.String()
+}
+
+// renderLspSection draws the collapsible LSP toggle: header only when folded
+// (▸), header + rows when open (▾). The badge counts errors and warnings;
+// infos and hints show in the rows but stay out of the number. Every row is
+// fitted to inner, so the block can never widen the sidebar column.
+func (m Model) renderLspSection(inner int) string {
+	var b strings.Builder
+	diags := m.lspDiags()
+	raw, ran := lastLspResultRaw(m.blocks)
+	collapsed := LspCollapsed()
+
+	mark := "▾"
+	if collapsed {
+		mark = "▸"
+	}
+	// pi titles the panel with the lens/server that produced the data; the
+	// server name is more useful here than a fixed "LSP" when we know it.
+	title := "LSP"
+	var st LspStatus
+	if ran {
+		st = lspStatusDistilled(raw)
+		if st.Server != "" {
+			title = st.Server
+		}
+	}
+	head := sideTitleStyle.Render(Short(title, inner))
+	errs, warns := lspCounts(diags)
+	if badge := lspCountBadge(errs, warns); badge != "" {
+		head += "  " + badge
+	}
+	b.WriteString(truncANSI(head+" "+statusBarStyle.Render(mark), inner) + "\n")
+
+	if !collapsed {
+		switch {
+		case len(diags) == 0 && ran:
+			// Say *why* it is empty. A missing language server and a clean
+			// file look identical otherwise, and the difference is the whole
+			// point of looking.
+			if reason := lspStatusSummary(st, inner); reason != "" {
+				b.WriteString(toolStyle.Render(Short(reason, inner)) + "\n")
+			} else {
+				b.WriteString(toolStyle.Render(Short(" — no diagnostics", inner)) + "\n")
+			}
+		case len(diags) == 0:
+			b.WriteString(toolStyle.Render(Short(" — run lsp_diagnostics for diagnostics", inner)) + "\n")
+		default:
+			shown := 0
+			for _, f := range groupLspDiagnostics(diags) {
+				for i, d := range f.Diags {
+					if shown >= lspRowsMax {
+						break
+					}
+					if i == 0 {
+						fe, fw := lspCounts(f.Diags)
+						b.WriteString(lspFileRow(f.Path, fe, fw, inner))
+					}
+					b.WriteString(lspDiagRow(d, inner))
+					shown++
+				}
+			}
+			if left := len(diags) - shown; left > 0 {
+				b.WriteString(toolStyle.Render(Short(fmt.Sprintf(" … +%d more", left), inner)) + "\n")
+			}
+		}
+	}
+	b.WriteString(sep() + "\n")
+	return b.String()
+}
+
+// lspFileRow is pi's file line: "● intro.page.tsx  13E8W" — the path, then
+// that file's error/warning counts hugging the right edge of the column.
+func lspFileRow(path string, errs, warns, inner int) string {
+	counts := lspFileCounts(errs, warns)
+	cw := lipgloss.Width(counts)
+	// " " + ● + " " is the fixed lead; the counts keep a 1-cell gutter.
+	avail := inner - 3 - cw - 1
+	if avail < 1 {
+		avail = 1
+	}
+	p := Short(path, avail)
+	pad := inner - 3 - lipgloss.Width(p) - cw
+	if pad < 1 {
+		pad = 1
+	}
+	row := lipgloss.NewStyle().Foreground(cText).Render(" "+lspFileGlyph+" "+p) +
+		strings.Repeat(" ", pad)
+	if counts != "" {
+		row += statusBarStyle.Render(counts)
+	}
+	return truncANSI(row, inner) + "\n"
+}
+
+// lspFileGlyph / lspDiagGlyph are the same ● pi draws on both row kinds.
+const lspFileGlyph = "●"
+
+// lspTag is the source+code field, rejoined the way pi's payload spells it:
+// "typescript:6133" from source "typescript" + code "6133". No code means
+// the source alone; no source at all means the field disappears entirely and
+// the row closes the gap instead of padding it.
+func lspTag(d LspDiagnostic) string {
+	if d.Source == "" {
+		return ""
+	}
+	if d.Code == "" {
+		return d.Source
+	}
+	return d.Source + ":" + d.Code
+}
+
+// lspFitTag gives the message the column. pi runs messages long, so the tag
+// is the field that gives way.
+//
+// Preference order: the natural-width tag, then a trimmed tag, then nothing.
+// Trimming is only worth it while it does not starve the message — a trimmed
+// tag is pointless if it buys just a handful of message cells, so once the
+// column is wide enough to carry a message on its own the tag is dropped
+// outright and the message takes every cell.
+func lspFitTag(tag string, avail int) string {
+	const msgMin = 10  // a message shorter than this is not worth a tag
+	const soloMin = 20 // …and below this a tag-less message is not worth much
+	if tag == "" {
+		return ""
+	}
+	if avail-lipgloss.Width(tag)-2 >= msgMin {
+		return tag
+	}
+	// The tag only fits truncated and the message would still be starved by
+	// it: the message reads better with the full column and no tag.
+	if avail >= soloMin {
+		return ""
+	}
+	for _, cap := range []int{14, 10, 7} {
+		t := Short(tag, cap)
+		if avail-lipgloss.Width(t)-2 >= msgMin {
+			return t
+		}
+	}
+	return ""
+}
+
+// lspDiagRow is one diagnostic: "● L162 typescript:6133  'wc' is declared
+// but its value is never read." — glyph, L<line> (line only; the column is
+// not pi's shape), the tag, two spaces, then the message with whatever width
+// is left. truncANSI is the final guard for glyphs a terminal may draw wider
+// than one cell.
+func lspDiagRow(d LspDiagnostic, inner int) string {
+	style := lspSeverityStyle(d.Severity)
+	loc := "L" + strconv.Itoa(d.Line)
+	// " " + ● + " " + L<n> + " " is the fixed prefix.
+	used := lipgloss.Width(loc) + 4
+	if inner <= used {
+		return truncANSI(" "+style.Render(lspFileGlyph)+" "+statusBarStyle.Render(loc), inner) + "\n"
+	}
+	avail := inner - used
+	tag := lspFitTag(lspTag(d), avail)
+	msgW := avail
+	if tag != "" {
+		msgW -= lipgloss.Width(tag) + 2
+	}
+	if msgW < 1 {
+		msgW = 1
+	}
+	row := " " + style.Render(lspFileGlyph) + " " + statusBarStyle.Render(loc) + " "
+	if tag != "" {
+		row += toolStyle.Render(tag) + "  "
+	}
+	row += lipgloss.NewStyle().Foreground(cText).Render(Short(d.Message, msgW))
+	return truncANSI(row, inner) + "\n"
 }

@@ -1202,6 +1202,14 @@ func All() []app.Builtin {
 			},
 		},
 		{
+			Name: "lsp", Desc: "Collapse/expand language-server diagnostics in the sidebar", Usage: "/lsp",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				m.ToggleLspSection()
+				return nil
+			},
+		},
+		{
 			Name: "mouse", Desc: "Toggle mouse — Alt+M · off for native text selection", Usage: "/mouse [on|off]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {

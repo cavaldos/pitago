@@ -214,54 +214,23 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		icon = statusBarStyle.Render("○")
 		body = toolStyle.Render(Short(t, 160)) + "\n\n"
 	case "tool":
-		switch bl.ToolStatus {
-		case "done":
-			icon = okStyle.Render("●")
-		case "error":
-			icon = errStyle.Render("×")
-		default:
-			icon = statusBarStyle.Render("○")
-		}
-		// A shell call is one framed unit — command, divider, output — set
-		// flush left with no status bullet, like oh-my-pi. The bullet is
-		// what the border color replaces here (see toolBorder).
-		if isShell(bl.ToolName) {
-			return m.renderShellBlock(bl, cw) + "\n\n", false
-		}
-		head := bl.ToolArgs
-		// pi suffixes the write header with the added line count
-		// ("write game.js +211").
-		if strings.ToLower(bl.ToolName) == "write" {
-			if content, ok := format.WriteContent(bl.ToolArgsRaw); ok {
-				if n := countLines(content); n > 0 {
-					head += fmt.Sprintf(" +%d", n)
-				}
-			}
-		}
-		if strings.TrimSpace(head) == "" {
-			head = "tool"
-		}
-		// oh-my-pi look: bold tool name on the header row, everything
-		// else dim. No full-bleed background fill — the block has to
-		// stay readable on terminals without truecolor, where a
-		// Background() is dropped and used to leave flat raw rows.
-		body = toolNameStyle.Render(bl.ToolName)
-		if head != "" {
-			body += " " + toolStyle.Render(Short(head, cw-10))
-		}
-		if d := toolDetail(bl); d != "" {
-			body += "\n" + toolStyle.Render(d)
-		}
-		if r := m.renderToolBody(bl); r != "" {
-			body += "\n" + r
-		}
-		body += "\n\n"
-		// Continuation rows keep a blank 2-cell gutter so the result tree
-		// lines up under the header text.
-		boxed = true
+		// Every tool call is one bounded block: header, detail line and
+		// body preview inside a rounded frame with a background fill, so
+		// a tool execution never bleeds into the assistant prose around
+		// it. renderToolBlock owns the frame; the status bullet stays on
+		// the header row as a color-free fallback for terminals that
+		// drop the fill entirely.
+		return m.renderToolBlock(bl, cw) + "\n\n", false
 	case "bash":
-		icon = statusBarStyle.Render("●")
-		body = markdown.Highlight("bash", Short(bl.Text, 400)) + "\n\n"
+		// A local shell echo (!cmd) is output without an agent tool call,
+		// so it has no execution state: quiet neutral block, reddened
+		// when the command failed.
+		class := format.StatusNeutral
+		if bl.Err {
+			class = format.StatusError
+		}
+		rows := strings.Split(markdown.Highlight("bash", Short(bl.Text, 400)), "\n")
+		return framedBlock(rows, cw, blockThemeFor(class)) + "\n\n", false
 	case "tree":
 		icon = statusBarStyle.Render("●")
 		body = codeStyle.Render(shortTree(bl.Text, 3000)) + "\n\n"
@@ -322,7 +291,7 @@ func codeLang(s string) (lang string, ok bool) {
 }
 
 // isShell reports whether a tool's output is command output, which gets
-// the bordered "── Output ──" box instead of a result tree.
+// the bordered "── Output ──" section instead of a result tree.
 func isShell(tool string) bool {
 	switch strings.ToLower(tool) {
 	case "bash", "powershell":
@@ -334,28 +303,105 @@ func isShell(tool string) bool {
 // toolDetail is the dim line under a tool header: a live marker while the
 // call is still running, and an explicit "no output" when a finished call
 // has nothing to show (read hides its payload on success by design).
+//
+// The state comes from format.ToolStatusClass, the same classifier the frame
+// fill uses, so the label can never contradict the tint: an upstream rename
+// to "ok"/"success" would otherwise paint a finished-green block that still
+// claims to be running.
 func toolDetail(bl Block) string {
-	if bl.ToolStatus == "done" || bl.ToolStatus == "error" {
-		if strings.TrimSpace(bl.ToolResult) == "" && strings.TrimSpace(bl.ToolDiff) == "" {
-			return "no output"
-		}
-		return ""
+	switch format.ToolStatusClass(bl.ToolStatus) {
+	case format.StatusRunning, format.StatusNeutral:
+		return "running…"
 	}
-	return "running…"
+	if strings.TrimSpace(bl.ToolResult) == "" && strings.TrimSpace(bl.ToolDiff) == "" {
+		return "no output"
+	}
+	return ""
+}
+
+// tool bullet: the status glyph a block header carries as a color-free
+// fallback. Inside the frame it is the only part of the block that still
+// reads when the terminal drops the background fill.
+func toolBullet(bl Block) string {
+	switch format.ToolStatusClass(bl.ToolStatus) {
+	case format.StatusSuccess:
+		return okStyle.Render("●")
+	case format.StatusError:
+		return errStyle.Render("×")
+	case format.StatusNeutral:
+		return toolStyle.Render("·")
+	}
+	return statusBarStyle.Render("○")
+}
+
+// renderToolBlock frames one tool call — header row, detail line, body
+// preview — as a single bounded block, pi style. The frame is flush
+// left: the gutter bullet that used to indent a tool block is gone,
+// because the border is now the left edge and an extra 2 cells would
+// push the frame past its column.
+//
+// A shell call is the same block in a different shape (see
+// renderShellBlock): command line, divider, output.
+func (m Model) renderToolBlock(bl Block, w int) string {
+	if isShell(bl.ToolName) {
+		return m.renderShellBlock(bl, w)
+	}
+	inner := blockInner(w)
+	rows := []string{toolHeaderRow(bl, toolHead(bl), inner)}
+	if d := toolDetail(bl); d != "" {
+		rows = append(rows, toolStyle.Render(d))
+	}
+	if r := m.renderToolBody(bl); r != "" {
+		rows = append(rows, r)
+	}
+	return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
+}
+
+// toolHead is the header text after the tool name: the pretty args, plus
+// pi's added-line-count suffix on a write ("write game.js +211").
+func toolHead(bl Block) string {
+	head := bl.ToolArgs
+	if strings.ToLower(bl.ToolName) == "write" {
+		if content, ok := format.WriteContent(bl.ToolArgsRaw); ok {
+			if n := countLines(content); n > 0 {
+				head += fmt.Sprintf(" +%d", n)
+			}
+		}
+	}
+	return head
+}
+
+// toolHeaderRow is one header row: the status bullet, the tool name in
+// its kind accent (bold, so the name is the block's title), and the
+// args — dim, and truncated to whatever the frame's inner column has
+// left so the row can never wrap out of the box.
+func toolHeaderRow(bl Block, head string, inner int) string {
+	name := bl.ToolName
+	if strings.TrimSpace(name) == "" {
+		name = "tool"
+	}
+	name = Short(name, max(inner-6, 8))
+	if strings.TrimSpace(head) == "" {
+		head = "tool"
+	}
+	row := toolBullet(bl) + " " + toolNameStyleFor(bl.ToolName).Render(name)
+	// Measure the unstyled text: the row is built before the accent is
+	// applied, and ANSI must not eat into the args budget.
+	avail := inner - lipgloss.Width(name) - len(" ● ") - 1
+	if avail < 8 {
+		avail = 8
+	}
+	return row + " " + toolStyle.Render(Short(head, avail))
 }
 
 // renderShellBlock frames one whole shell call — command, then a divider,
-// then output — in a single rounded box, oh-my-pi style. The box is flush
-// left with no status bullet, so the border color is what tells pending
-// from done from error (see toolBorder). The box is still rendered while
-// the call runs, holding just the command, so a long command does not
-// pop into existence with its output.
+// then output — as one block. It stays bullet-free: the line already
+// opens with the shell prompt, which is the row's own title. The box is
+// still rendered while the call runs, holding just the command, so a
+// long command does not pop into existence with its output.
 func (m Model) renderShellBlock(bl Block, w int) string {
-	if w < 20 {
-		w = 20 // framedBox's floor; clamp here so inner matches the real box
-	}
 	rows := []string{shellCommandRow(bl)}
-	inner := w - 4 // border 2 + padding 2
+	inner := blockInner(w) // clamped to the same floor framedBlock uses
 	if out := m.shellOutput(bl); out != "" {
 		label := "Output"
 		if bl.ToolStatus == "error" {
@@ -363,7 +409,7 @@ func (m Model) renderShellBlock(bl Block, w int) string {
 		}
 		rows = append(rows, dividerRow(inner, label), out)
 	}
-	return framedBox(rows, w, toolBorder(bl.ToolStatus))
+	return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
 }
 
 // shellCommandRow is the box's first row: the bare prompt plus the
@@ -427,18 +473,112 @@ func shellLang(tool string) string {
 	return "bash"
 }
 
-// toolBorder colors a shell block's frame by execution status. It takes
-// over the ●/×/○ bullet a framed block has no room for, so the state is
-// still readable without truecolor.
+// toolBorder colors a tool block's frame by raw execution status. It is
+// the status-keyed shorthand over toolFrame; a shell block has no header
+// bullet to carry the state, so its frame is the only signal.
 func toolBorder(status string) lipgloss.Color {
-	switch status {
-	case "error":
-		return cRed
-	case "done":
-		return cBorder
-	default:
-		return cMuted
+	return toolFrame(format.ToolStatusClass(status))
+}
+
+// blockTheme is the palette one block paints with: the frame (border)
+// color and the background fill, both resolved from theme tokens, so a
+// /theme switch recolors every block and nothing is hardcoded here.
+type blockTheme struct {
+	frame lipgloss.Color
+	fill  lipgloss.Color
+}
+
+// blockThemeFor resolves the frame/fill pair for one execution state
+// (format.Status*). Status drives the block; the tool kind drives the
+// header accent inside it (see toolNameStyleFor).
+func blockThemeFor(class string) blockTheme {
+	return blockTheme{frame: toolFrame(class), fill: toolFill(class)}
+}
+
+// Block geometry. A block is border (2 cells) + padding (1 per side), so
+// a content row may use w-4 cells. 20 is the narrowest frame that still
+// fits a header row and a "─── Output ──" divider without wrapping.
+const (
+	blockMinW   = 20
+	blockChrome = 4
+)
+
+// blockInner is the usable content width inside a block of width w,
+// clamped to the same floor framedBlock applies, so a divider row and
+// the box that wraps it are always measured the same.
+func blockInner(w int) int {
+	if w < blockMinW {
+		w = blockMinW
 	}
+	return w - blockChrome
+}
+
+// framedBlock is the one bordered renderer for the chat stream, and the
+// only place a tool block turns into a box: a rounded frame exactly w
+// cells wide, a low-contrast background fill, content inset one cell per
+// side, and a hard width clamp so a block can never overflow its column
+// and never break a border mid-line.
+//
+// Padding insets the content so it never touches the border; lipgloss
+// counts padding inside Width, hence w-2 (the border adds the other 2
+// back). MaxWidth is the backstop for a row that arrives wider than the
+// column — a long unbreakable token, say: lipgloss wraps at the column
+// first, and the clamp guarantees the invariant even if it ever does not.
+func framedBlock(rows []string, w int, t blockTheme) string {
+	if w < blockMinW {
+		w = blockMinW
+	}
+	seq := fillSeq(t.fill)
+	// Copy before painting: the caller's rows (a previews slice, a
+	// highlight result) must come back unchanged for the next repaint.
+	painted := make([]string, len(rows))
+	for i, r := range rows {
+		painted[i] = fillRow(r, seq)
+	}
+	st := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.frame).
+		Padding(0, 1).
+		Width(w - 2).
+		MaxWidth(w)
+	if t.fill != "" {
+		// Background colors the content block and its padding;
+		// BorderBackground colors the frame glyphs themselves, so the
+		// fill reaches the frame instead of stopping at the content.
+		st = st.Background(t.fill).BorderBackground(t.fill)
+	}
+	return st.Render(strings.Join(painted, "\n"))
+}
+
+// fillSeq is the escape lipgloss emits for a background color under the
+// active color profile, or "" when that profile has no color at all (a
+// truecolor-less terminal, and the test binary). It is derived from
+// lipgloss rather than termenv so the profile decision stays in one
+// place: wherever lipgloss would drop the fill, the re-arm is a no-op
+// too and the block degrades to a plain outline.
+func fillSeq(c lipgloss.Color) string {
+	if c == "" {
+		return ""
+	}
+	s := lipgloss.NewStyle().Background(c).Render(" ")
+	i := strings.IndexByte(s, ' ')
+	if i <= 0 {
+		return ""
+	}
+	return s[:i]
+}
+
+// fillRow paints one content row with the block's fill. lipgloss sets
+// the fill once per line, but every styled span inside a row ends with
+// a full reset — a syntax-highlighted token, a dim hint, a border color
+// — which would switch the fill off for the rest of the line and leave
+// transparent gaps between tokens. Re-arming after each reset is what
+// makes the fill continuous under highlighted output.
+func fillRow(row, seq string) string {
+	if seq == "" || row == "" {
+		return row
+	}
+	return seq + strings.ReplaceAll(row, "\x1b[0m", "\x1b[0m"+seq) + "\x1b[0m"
 }
 
 // dividerRow is a full-width section rule with an inline label, the
@@ -452,32 +592,15 @@ func dividerRow(inner int, label string) string {
 	return sepStyle.Render(head)
 }
 
-// framedBox wraps rows in a rounded border exactly w cells wide. Padding
-// insets the content one cell per side so it never touches the border;
-// lipgloss counts padding inside Width, hence the -2 (the border itself
-// adds the other 2 back).
-func framedBox(rows []string, w int, border lipgloss.Color) string {
-	if w < 20 {
-		w = 20
-	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(border).
-		Padding(0, 1).
-		Width(w - 2).
-		Render(strings.Join(rows, "\n"))
-}
-
 // renderResultRows renders result rows with or without tree glyphs: every
 // row but the last is prefixed "├── " and the last "└── " when tree is set,
 // so a file-list-shaped result reads as one block instead of a ragged list.
 // st styles each row (pass an empty style for already-colored ANSI rows).
 // Blank rows stay blank so a gap never grows a phantom branch.
 //
-// Rows carry no leading indent of their own: every tool block is already
-// wrapped in gutterBox, whose 2-cell continuation gutter is the single
-// source of indentation. Indenting here too would push the tree two cells
-// past the shell box and the header text it belongs under.
+// Rows carry no leading indent of their own: every tool block is wrapped
+// in a frame whose padding is the single source of indentation. Indenting
+// here too would push the tree two cells past the block edge.
 func renderResultRows(rows []string, st lipgloss.Style, tree bool) string {
 	out := make([]string, 0, len(rows))
 	for i, r := range rows {
@@ -508,10 +631,11 @@ func skipHint(p format.ToolPreview) string {
 }
 
 // toolBg is pi's tool Box background by execution status: pending while
-// running, green on success, red on error. The tool block no longer paints
-// it (the 'tool' case of renderOneBlock is unfilled now, so it survives
-// truecolor-less terminals); the colors stay because ApplyTheme still
-// resolves them from the theme and /theme round-trips the palette.
+// running, green on success, red on error. framedBlock paints it as the
+// block fill (via toolFill), and on a terminal whose color profile has no
+// background the fill is dropped by lipgloss while the frame, the header
+// bullet and all text stay — so a block degrades to a plain outline
+// rather than to raw rows.
 func toolBg(status string) lipgloss.Color {
 	switch status {
 	case "done":
@@ -941,6 +1065,9 @@ func (m Model) buildSidebarContent() string {
 	}
 	if m.SideVisible(SideTodos) {
 		b.WriteString(m.renderTodosSection(inner))
+	}
+	if m.SideVisible(SideLSP) {
+		b.WriteString(m.renderLspSection(inner))
 	}
 	if m.SideVisible(SideTools) {
 		if tools := m.invokedTools(); len(tools) > 0 {

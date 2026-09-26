@@ -478,19 +478,30 @@ func TestRenderToolBodyEditReceiptOnly(t *testing.T) {
 // oh-my-pi look: a tool block is never a full-bleed Background fill
 // (terminals without truecolor drop Background and used to leave flat raw
 // rows). A shell call is one flush-left framed box — command, divider,
-// output, no bullet; every other tool is a status bullet + bold name over
-// a tree body.
+// A tool block is a bordered box with a background fill, pi style: the
+// frame replaces the old full-bleed Background() so a terminal that
+// drops the fill still shows a clean outline. A shell call frames
+// command + output in one box, flush left, with no status bullet: the
+// border color carries the status instead. Every other tool keeps the
+// bullet + bold name header (now inside the frame) over a tree body.
 func TestToolBlockRestyle(t *testing.T) {
 	bash := Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
 		ToolArgs: "go test ./src/app/", ToolResult: "ok  \tpitago/src/app\t3.4s\nFAIL"}
 	read := Block{Kind: "tool", ToolName: "read", ToolStatus: "done",
 		ToolArgs: "game.js", ToolArgsRaw: `{"path":"game.js"}`,
 		ToolResult: "const a = 1;\nconst b = 2;\nconst c = 3;"}
+	// Both kinds render inside a closed frame, flush left, whatever the
+	// tool — the frame is now the block's left edge, so no gutter bullet
+	// may push the border past its column.
 	for _, bl := range []Block{bash, read} {
 		m := Model{blocks: []Block{bl}}
 		m.vp = viewport.New(62, 20) // cw = 60
-		if out := m.renderBlocks(); strings.Contains(out, "\x1b[48;2;") {
-			t.Fatalf("%s block painted a background: %q", bl.ToolName, out)
+		rows := strings.Split(strings.TrimRight(stripANSI(m.renderBlocks()), "\n"), "\n")
+		if !strings.HasPrefix(rows[0], "╭─") {
+			t.Fatalf("%s block must open the frame: %q", bl.ToolName, rows[0])
+		}
+		if !strings.HasPrefix(rows[len(rows)-1], "╰─") {
+			t.Fatalf("%s block must close the frame: %q", bl.ToolName, rows[len(rows)-1])
 		}
 	}
 
@@ -524,11 +535,16 @@ func TestToolBlockRestyle(t *testing.T) {
 		t.Fatalf("border must carry the status the bullet gave up")
 	}
 
-	// Every other tool keeps the bullet + bold name header over a tree.
+	// Every other tool is framed too, with the status bullet + bold name
+	// as the header row inside the box.
 	rm0 := Model{blocks: []Block{read}, vp: viewport.New(62, 20)}
 	plain = stripANSI(rm0.renderBlocks())
-	if head := strings.Split(plain, "\n")[0]; !strings.HasPrefix(head, "● read ") {
-		t.Fatalf("read block header = %q, want \"● read …\"", head)
+	rows := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+	if !strings.HasPrefix(rows[0], "╭─") {
+		t.Fatalf("read block must open the frame: %q", plain)
+	}
+	if !strings.Contains(rows[1], "● read ") {
+		t.Fatalf("read block header = %q, want \"● read …\" inside the box", rows[1])
 	}
 	// Styling is dropped when no color profile is set (the case this
 	// restyle targets), so assert the style itself, not its escape.

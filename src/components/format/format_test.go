@@ -161,6 +161,20 @@ func TestEditDiffFallback(t *testing.T) {
 	}
 }
 
+func TestWriteDiffFallback(t *testing.T) {
+	raw := `{"path":"keys_test.go","content":"package main\n\nfunc main() {}\n"}`
+	got := WriteDiffFallback(raw)
+	if got != "+ package main\n+ func main() {}" {
+		t.Errorf("WriteDiffFallback = %q", got)
+	}
+	if got := WriteDiffFallback(`{"path":"a.go"}`); got != "" {
+		t.Errorf("WriteDiffFallback without content = %q", got)
+	}
+	if got := WriteDiffFallback(`{"content":"  \n"}`); got != "" {
+		t.Errorf("WriteDiffFallback blank content = %q", got)
+	}
+}
+
 func TestShortNeverExceedsWidth(t *testing.T) {
 	cases := []struct {
 		s string

@@ -995,6 +995,22 @@ func (m *Model) TogglePlugins() {
 	m.Refresh()
 }
 
+// ToggleLspSection collapses/expands the sidebar LSP diagnostics list (/lsp).
+// When the section is hidden (Sidebar tab default) the first toggle reveals it
+// expanded instead of flipping blind state — same contract as TogglePlugins.
+func (m *Model) ToggleLspSection() {
+	if !m.SideVisible(SideLSP) {
+		m.setSideVisible(SideLSP, true)
+		lspCollapsed.Store(false)
+	} else {
+		ToggleLspCollapsed()
+	}
+	if !m.ready {
+		return
+	}
+	m.Refresh()
+}
+
 // ToggleMouse flips mouse capture at runtime (/mouse): on = clickable
 // sidebar + wheel scroll, off = native text selection.
 // Arg parsing is pitago-owned (src/pitago); this is the thin MVC controller.

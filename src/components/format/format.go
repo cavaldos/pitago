@@ -517,6 +517,25 @@ func EditDiffFallback(raw string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// WriteDiffFallback renders a write call as an all-additions diff ("+ " per
+// line) so a written file reads like the edit steps beside it instead of one
+// escaped JSON blob. The previous content is not recoverable from the call
+// args, so a rewrite shows the whole new file as added lines instead of
+// guessing which lines were removed. Empty when the args carry no content.
+func WriteDiffFallback(raw string) string {
+	content, ok := WriteContent(raw)
+	if !ok || strings.TrimSpace(content) == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, ln := range strings.Split(content, "\n") {
+		if strings.TrimSpace(ln) != "" {
+			b.WriteString("+ " + ln + "\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // ArgPath extracts the file path from tool-call JSON args (file_path or
 // path). Empty when absent so callers can fall back to the pretty header.
 func ArgPath(raw string) string {

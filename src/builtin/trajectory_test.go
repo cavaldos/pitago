@@ -128,11 +128,43 @@ func TestTrajBodyRendersEditDiff(t *testing.T) {
 	}
 }
 
+func TestTrajBodyRendersWriteAsAddedLines(t *testing.T) {
+	writeArgs := json.RawMessage(`{"path":"keys_test.go","content":"package main\n\nfunc main() {}\n"}`)
+
+	assistant := pirpc.TreeEntry{Type: "message", ID: "assistant"}
+	assistant.Message.Role = "assistant"
+	assistant.Message.Content = json.RawMessage(`[{"type":"toolCall","id":"write-call","name":"write","arguments":` + string(writeArgs) + `}]`)
+
+	body := trajBody(assistant, nil)
+	if !strings.Contains(body, "tool: [write: keys_test.go]\ndiff:\n+ package main\n+ func main() {}") {
+		t.Fatalf("assistant write call should render added lines: %q", body)
+	}
+	if strings.Contains(body, string(writeArgs)) || strings.Contains(body, "args:") {
+		t.Fatalf("valid write args should be replaced by diff: %q", body)
+	}
+
+	result := pirpc.TreeEntry{Type: "message", ID: "result"}
+	result.Message.Role = "toolResult"
+	result.Message.ToolCallID = "write-call"
+	result.Message.Content = json.RawMessage(`[{"type":"text","text":"Successfully wrote to keys_test.go"}]`)
+
+	body = trajBody(result, map[string]pirpc.ContentBlock{
+		"write-call": {Type: "toolCall", Name: "write", Arguments: writeArgs},
+	})
+	if !strings.Contains(body, "call: [write: keys_test.go]") || !strings.Contains(body, "diff:\n+ package main\n+ func main() {}") {
+		t.Fatalf("write result should render added lines: %q", body)
+	}
+	if !strings.Contains(body, "result:\nSuccessfully wrote to keys_test.go") {
+		t.Fatalf("write result text should be preserved: %q", body)
+	}
+}
+
 func TestTrajBodyKeepsRawArgsForMalformedEditAndNonEdit(t *testing.T) {
 	for _, tc := range []struct {
 		name, tool, args string
 	}{
 		{name: "malformed edit", tool: "edit", args: `{"edits":[`},
+		{name: "write without content", tool: "write", args: `{"path":"a.go"}`},
 		{name: "non-edit", tool: "read", args: `{"path":"a.go"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

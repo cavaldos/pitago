@@ -9,8 +9,27 @@ import (
 	"strings"
 )
 
+// ToolPalette is the chat tool-block palette: the frame color the block
+// outline takes per execution state, plus the header accent per tool
+// kind. An empty field falls back to the theme's own base slot (see
+// Resolve), so a theme only states what it actually changes and every
+// block still recolors when the theme is swapped.
+type ToolPalette struct {
+	Frame   string // neutral outline (also the success outline)
+	Running string // outline while a call is in flight
+	Error   string // outline of a failed call
+	Read    string // header accent: read / view
+	Write   string // header accent: write / create
+	Edit    string // header accent: edit / patch
+	Shell   string // header accent: bash / exec
+	Dir     string // header accent: cd / workdir
+	Search  string // header accent: grep / glob / ls
+	Other   string // header accent: anything else
+}
+
 // Theme is one named palette. Fields map 1:1 to the color slots in
-// src/app/styles.go (cAccent, cBorder, … + highlight row bg/fg).
+// src/app/styles.go (cAccent, cBorder, … + tool block frame/fill/accent
+// slots + highlight row bg/fg).
 type Theme struct {
 	Name                                string
 	Accent, Border, Muted, Text, Code   string
@@ -18,6 +37,8 @@ type Theme struct {
 	Plan                                string
 	Input, InputDim                     string
 	ToolPending, ToolSuccess, ToolError string
+	ToolNeutral                         string // quiet fill: output with no execution state
+	Tool                                ToolPalette
 	HiBg, HiFg                          string
 }
 
@@ -29,7 +50,8 @@ var builtins = []Theme{
 		Green: "114", Red: "203", Yellow: "11", Cyan: "6",
 		Input: "252", InputDim: "240",
 		ToolPending: "#282832", ToolSuccess: "#283228", ToolError: "#3c2828",
-		HiBg: "238", HiFg: "15",
+		ToolNeutral: "#2b2b33",
+		HiBg:        "238", HiFg: "15",
 		Plan: "13",
 	},
 	{
@@ -92,7 +114,11 @@ var builtins = []Theme{
 		Green: "#40A02B", Red: "#D20F39", Yellow: "#DF8E1D", Cyan: "#04A5E5",
 		Input: "#8839EF", InputDim: "#9CA0B0",
 		ToolPending: "#E6E9EF", ToolSuccess: "#DCEBDA", ToolError: "#F3DCE0",
-		HiBg: "#BCC0CC", HiFg: "#4C4F69",
+		// Latte's pending panel is already a light gray; the quiet fill
+		// steps one notch toward the surface so a neutral block still
+		// separates from the terminal background.
+		ToolNeutral: "#EFF1F5",
+		HiBg:        "#BCC0CC", HiFg: "#4C4F69",
 		Plan: "#8839EF",
 	},
 	{
@@ -164,6 +190,7 @@ var builtins = []Theme{
 		Green: "#C3E88D", Red: "#F07178", Yellow: "#FFCB6B", Cyan: "#89DDFF",
 		Input: "#82AAFF", InputDim: "#545454",
 		ToolPending: "#2A2A2A", ToolSuccess: "#243026", ToolError: "#332527",
+		Tool: ToolPalette{Other: "#8A8A8A"}, // Muted is near-invisible bold
 		HiBg: "#303030", HiFg: "#EEFFFF",
 		Plan: "#C792EA",
 	},
@@ -227,6 +254,9 @@ var builtins = []Theme{
 		Green: "#7F9F7F", Red: "#CC9393", Yellow: "#E0CF9F", Cyan: "#93E0E3",
 		Input: "#8CD0D3", InputDim: "#7F7F7F",
 		ToolPending: "#4A4A4A", ToolSuccess: "#43513F", ToolError: "#524242",
+		// Muted is too dim to carry a bold header name here, so the
+		// catch-all accent is raised one step.
+		Tool: ToolPalette{Other: "#BFBFBF"},
 		HiBg: "#4F4F4F", HiFg: "#DCDCCC",
 		Plan: "#DC8CC3",
 	},
@@ -267,8 +297,15 @@ func norm(s string) string {
 	return s
 }
 
-// Get returns the named theme, falling back to default.
+// Get returns the named theme, falling back to default. The result is
+// always resolved (see Resolve), so callers can read every slot without
+// a second step.
 func Get(name string) Theme {
+	t := find(name)
+	return Resolve(t)
+}
+
+func find(name string) Theme {
 	n := norm(name)
 	for _, t := range builtins {
 		if t.Name == n {
@@ -283,6 +320,43 @@ func Get(name string) Theme {
 		}
 	}
 	return builtins[0]
+}
+
+// Resolve fills every unset slot from the theme's own base colors, so a
+// palette that only overrides one accent still renders a complete, and
+// still theme-derived, tool block:
+//
+//	fill     quiet/neutral → the pending panel, an already-neutral gray
+//	frame    neutral      → Border; running → Muted; error → Red
+//	accents  read → Cyan, write → Green, edit → Yellow, shell → Accent,
+//	         cd → Code, search → Text, other → Muted
+//
+// A theme that states a slot keeps it, which is how a palette diverges
+// from the default derivation (see zenburn, material-darker).
+func Resolve(t Theme) Theme {
+	if t.Plan == "" {
+		t.Plan = "13"
+	}
+	if t.ToolNeutral == "" {
+		t.ToolNeutral = t.ToolPending
+	}
+	fill := func(v, fallback string) string {
+		if v == "" {
+			return fallback
+		}
+		return v
+	}
+	t.Tool.Frame = fill(t.Tool.Frame, t.Border)
+	t.Tool.Running = fill(t.Tool.Running, t.Muted)
+	t.Tool.Error = fill(t.Tool.Error, t.Red)
+	t.Tool.Read = fill(t.Tool.Read, t.Cyan)
+	t.Tool.Write = fill(t.Tool.Write, t.Green)
+	t.Tool.Edit = fill(t.Tool.Edit, t.Yellow)
+	t.Tool.Shell = fill(t.Tool.Shell, t.Accent)
+	t.Tool.Dir = fill(t.Tool.Dir, t.Code)
+	t.Tool.Search = fill(t.Tool.Search, t.Text)
+	t.Tool.Other = fill(t.Tool.Other, t.Muted)
+	return t
 }
 
 // ThemePath is ~/.config/pitago/theme.json: {"theme":"one-dark"}.

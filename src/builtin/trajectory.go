@@ -175,7 +175,7 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 		for _, b := range pirpc.BlocksOf(msg.Content) {
 			if b.Type == "toolCall" && b.Name != "" {
 				call := "tool: " + treeTool(b.Name, b.Arguments)
-				if diff := trajEditDiff(b.Name, string(b.Arguments)); diff != "" {
+				if diff := trajToolDiff(b.Name, string(b.Arguments)); diff != "" {
 					parts = append(parts, call+"\ndiff:\n"+trajCap(diff, 2000))
 					continue
 				}
@@ -199,12 +199,8 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 		if msg.ToolCallID != "" {
 			if tc, ok := tcm[msg.ToolCallID]; ok {
 				parts = append(parts, "call: "+treeTool(tc.Name, tc.Arguments))
-				if tc.Name == "edit" {
-					if diff := trajEditDiff(tc.Name, string(tc.Arguments)); diff != "" {
-						parts = append(parts, "diff:\n"+trajCap(diff, 2000))
-					} else if args := strings.TrimSpace(string(tc.Arguments)); args != "" {
-						parts = append(parts, "args: "+trajCap(args, 1000))
-					}
+				if diff := trajToolDiff(tc.Name, string(tc.Arguments)); diff != "" {
+					parts = append(parts, "diff:\n"+trajCap(diff, 2000))
 				} else if args := strings.TrimSpace(string(tc.Arguments)); args != "" {
 					parts = append(parts, "args: "+trajCap(args, 1000))
 				}
@@ -235,9 +231,16 @@ func trajBody(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 	}
 }
 
-func trajEditDiff(tool, args string) string {
-	if tool == "edit" {
+// trajToolDiff renders file-mutating tool calls as a diff so the detail
+// shows the code that changed, not the raw JSON args: edit rebuilds its
+// -/+ pairs, write lists the whole new file as added lines. Empty for other
+// tools or unusable args, so those keep the plain args line.
+func trajToolDiff(tool, args string) string {
+	switch tool {
+	case "edit":
 		return componentformat.EditDiffFallback(args)
+	case "write":
+		return componentformat.WriteDiffFallback(args)
 	}
 	return ""
 }
