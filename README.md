@@ -287,6 +287,7 @@ In short: `app` is a thin MVC shell, `components` holds pure view primitives,
 - `~/.config/pitago/keys.json` (0600) — saved API keys, several per provider with one active + optional name/added-date (`/login`, `/logout`; active key is also written to pi's `auth.json` so pi sees models)
 - `~/.config/pitago/pi_auth.json` (0600) — mirrored pi logins (OAuth account/expiry, no secrets) so `/login` lists + disconnects subscriptions done in stock pi
 - `~/.config/pitago/recent_models.json` — recent models (max 5)
+- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win)
 - `~/.config/pitago/theme.json` — active TUI theme (25 built-ins: default, one-dark, gruvbox, catppuccin-mocha, dracula… — `/theme` lists all)
 - `~/.config/pitago/update.json` — last update-check timestamp + tag (24h TTL)
 - `/tmp/pitago-pi-stderr.log` — pi child stderr

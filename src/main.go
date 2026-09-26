@@ -78,6 +78,11 @@ func main() {
 		Provider: *provider, Model: *modelFlag,
 		Continue: *cont, NoSession: *noSession, Dir: cwd,
 	}
+	// Restore the last model the user picked here, before Spawn: the child
+	// gets --provider/--model, so the first get_state already reports it
+	// and no in-session set_model is needed (respawns reuse these opts).
+	// Explicit -provider/-model flags still win.
+	applyRestoredModel(&opts, app.LoadPrefs(app.PrefsPath()))
 	pi, err := pirpc.Spawn(opts)
 	if err != nil {
 		fmt.Println("Cannot start pi:", err)
@@ -96,10 +101,10 @@ func main() {
 		_ = theme.Save(theme.ThemePath(), *themeFlag)
 	}
 	m.Configure(opts, keyPath)
-	// No model to restore: pi owns the default (settings.json
-	// defaultProvider/defaultModel, or the --provider/--model flags above)
-	// and the sidebar reads the live value back from get_state. pitago keeps
-	// no second copy, so the footer can never disagree with pi.
+	// Nothing else to restore: the model went out with the spawn flags
+	// above (or pi's own default applies), and the sidebar reads the live
+	// value back from get_state — pitago keeps no mid-session copy that
+	// the footer could disagree with.
 	// Preload the update cache so the welcome banner ("⬆ … pitago
 	// --update") shows on the first frame — the async auto-check in
 	// Init() refreshes it right after.
@@ -122,6 +127,24 @@ func main() {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
+}
+
+// applyRestoredModel fills the (empty) spawn options from the last model
+// the user picked in prefs.json. A flag on the command line always wins;
+// a half-saved ref (only provider or only id) is not applied. Returns
+// whether a value was applied.
+func applyRestoredModel(opts *pirpc.Options, p app.Prefs) bool {
+	ref := p.CurrentModel
+	if ref == nil {
+		return false
+	}
+	if opts.Provider == "" {
+		opts.Provider = ref.Provider
+	}
+	if opts.Model == "" {
+		opts.Model = ref.ID
+	}
+	return opts.Provider != "" && opts.Model != ""
 }
 
 // runUpdate checks the latest GitHub release and replaces this binary.

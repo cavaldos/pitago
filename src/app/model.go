@@ -201,6 +201,7 @@ type Model struct {
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
 	themePath           string            // persisted theme ("" = don't persist)
 	prefsPath           string            // persisted pitago-local prefs ("" = don't persist)
+	savedModel          *ModelRef         // last user-picked model this process wrote (in-memory mirror of prefs.currentModel)
 	builtins            []Builtin
 	confirm             map[string]ConfirmFunc
 	expandTools         bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
@@ -1170,6 +1171,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.CurAgent = prefs.CurrentSubagent
+	m.savedModel = prefs.CurrentModel
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts
 	palette.Win = prefs.EffectiveAutocompleteMax()

@@ -11,18 +11,27 @@ import (
 // HideThinking mirrors pi's "Hide thinking"; AutocompleteMax mirrors pi's
 // "Autocomplete max items" (applied to the / popup window).
 //
-// The model and the thinking level are deliberately NOT here: pi owns them
-// (settings.json defaultProvider/defaultModel + defaultThinkingLevel) and
-// serves the live values over get_state. A second copy in prefs.json is a
-// shadow that disagrees with pi — pi would answer with its own default while
-// pitago displayed the remembered one. Model/thinking switches are session
-// scope, exactly like pi's RPC set_model / set_thinking_level.
+// CurrentModel is the last model the user explicitly picked (global, not
+// per-project): one nested key so prefs.json never grows flat model keys.
+type ModelRef struct {
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id,omitempty"`
+}
+
+// The model copy is safe because it has exactly one writer (SetCurrentModel,
+// only from a ModelCycleMsg, i.e. a user action) and exactly one reader
+// (main at process start, which turns it into --provider/--model on the pi
+// child). It is never read back mid-session to render the footer — the
+// label always comes from get_state — so it can no longer disagree with
+// what pi is actually running. The thinking level stays out of prefs:
+// unlike the model, pitago has no way to pass it to the pi child at spawn.
 
 // Prefs is the persisted pitago-local display prefs (zero = pi defaults).
 type Prefs struct {
 	HideThinking    bool              `json:"hideThinking,omitempty"`
 	AutocompleteMax int               `json:"autocompleteMax,omitempty"`
 	CurrentSubagent string            `json:"currentSubagent,omitempty"` // last-picked /subagents entry (● marker)
+	CurrentModel    *ModelRef         `json:"currentModel,omitempty"`    // last-picked model, restored at spawn only
 	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 }
@@ -38,6 +47,28 @@ func PrefsPath() string {
 
 // PrefsPath returns this Model's prefs file path ("" = don't persist).
 func (m *Model) PrefsPath() string { return m.prefsPath }
+
+// CurrentModelRef returns the last-picked model (nil = none saved).
+func (m *Model) CurrentModelRef() *ModelRef {
+	if m.savedModel != nil {
+		return m.savedModel
+	}
+	return LoadPrefs(m.prefsPath).CurrentModel
+}
+
+// SetCurrentModel persists the model the user just picked, so the next
+// process start (and every respawn) can pass it to the pi child. Same
+// LoadPrefs → mutate → SavePrefs dance as SetCurrentSubagent.
+func (m *Model) SetCurrentModel(provider, id string) {
+	if provider == "" && id == "" {
+		return
+	}
+	ref := &ModelRef{Provider: provider, ID: id}
+	m.savedModel = ref
+	prefs := LoadPrefs(m.prefsPath)
+	prefs.CurrentModel = ref
+	_ = SavePrefs(m.prefsPath, prefs)
+}
 
 // LoadPrefs reads prefs (zero Prefs when missing/unparseable).
 func LoadPrefs(path string) Prefs {

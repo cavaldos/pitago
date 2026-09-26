@@ -293,9 +293,10 @@ func TestSettingsTwoPaneRenders(t *testing.T) {
 	}
 }
 
-// pi owns the model (settings.json defaultProvider/defaultModel) and the
-// thinking level (defaultThinkingLevel); pitago must keep no copy of either.
-// A model switch — session scope, like pi's RPC set_model — writes nothing.
+// The thinking level stays pi's (settings.json defaultThinkingLevel): pitago
+// must keep no copy of it. The model may be saved — but only under the
+// nested currentModel key, never as the old flat modelProvider/modelID
+// shadow, and never as a mid-session value the footer renders.
 func TestPrefsHoldNoModelShadow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prefs.json")
 	if err := SavePrefs(path, Prefs{HideThinking: true}); err != nil {
@@ -357,5 +358,67 @@ func TestNewSessionDoesNotRestoreModel(t *testing.T) {
 	}
 	if um.(Model).Status == "ready — restoring model…" {
 		t.Error("/new must not announce a pitago-side model restore")
+	}
+}
+
+// The last user-picked model round-trips through prefs.json under one
+// nested key (currentModel) and is readable back through LoadPrefs.
+func TestSetCurrentModelRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	if err := SavePrefs(path, Prefs{HideThinking: true}); err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, t.TempDir())
+	m.prefsPath = path
+	m.SetCurrentModel("opencode", "space-bunny-free")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("prefs not written: %v", err)
+	}
+	if !strings.Contains(string(raw), `"currentModel"`) {
+		t.Fatalf("currentModel missing from prefs.json: %s", raw)
+	}
+	p := LoadPrefs(path)
+	if p.CurrentModel == nil {
+		t.Fatal("currentModel did not load back")
+	}
+	if p.CurrentModel.Provider != "opencode" || p.CurrentModel.ID != "space-bunny-free" {
+		t.Errorf("CurrentModel = %+v, want opencode/space-bunny-free", *p.CurrentModel)
+	}
+	if !p.HideThinking {
+		t.Error("unrelated prefs must survive a model save")
+	}
+	if got := m.CurrentModelRef(); got == nil || got.ID != "space-bunny-free" {
+		t.Errorf("CurrentModelRef() = %+v, want the saved model", got)
+	}
+}
+
+// A ModelCycleMsg (only ever produced by an explicit user pick) persists
+// the model so the next process start can restore it.
+func TestModelCycleMsgPersistsModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	m := New(nil, t.TempDir())
+	m.prefsPath = path
+	m.recentPath = filepath.Join(t.TempDir(), "recent.json")
+	um, _ := m.Update(ModelCycleMsg{Label: "space-bunny-free", Provider: "opencode", ID: "space-bunny-free"})
+	_ = um.(Model)
+	p := LoadPrefs(path)
+	if p.CurrentModel == nil {
+		t.Fatal("ModelCycleMsg did not persist the picked model")
+	}
+	if p.CurrentModel.Provider != "opencode" || p.CurrentModel.ID != "space-bunny-free" {
+		t.Errorf("CurrentModel = %+v, want opencode/space-bunny-free", *p.CurrentModel)
+	}
+}
+
+// A prefs.json with no currentModel (fresh install, or a legacy file) must
+// not invent a restore.
+func TestNoSavedModelNoRestore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prefs.json")
+	if err := os.WriteFile(path, []byte(`{"hideThinking":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p := LoadPrefs(path); p.CurrentModel != nil {
+		t.Errorf("CurrentModel = %+v, want nil for prefs without the key", p.CurrentModel)
 	}
 }

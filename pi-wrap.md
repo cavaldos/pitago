@@ -38,12 +38,17 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
   input/editor → free-text dialog (Enter submits, Esc cancels); notify/setStatus/set_editor_text → shown/applied accordingly
 - `agent_settled` → refresh get_session_stats (tokens, cost, context %) into the sidebar
 - Enter: prompt (idle) / steer (streaming); Esc: dialog? close : clear_queue+abort+restore queued text into the input; Ctrl+N: new_session; Ctrl+C: quit + kill pi
-- Model & thinking are pi's: pitago never keeps a second copy (no startup override, no
-  prefs.json shadow). `/model` and `/thinking` are session-scope, exactly like pi's picker
-  and `set_model`/`set_thinking_level` over RPC; pi's settings.json `defaultProvider` /
-  `defaultModel` / `defaultThinkingLevel` stay the single source of truth, and pi's
-  `new_session` reset is not second-guessed. pitago writes pi's settings.json only for keys
-  pi exposes no RPC for, and never mutates pi's auth.json or environment at launch.
+- Model: pitago remembers the last model the user *explicitly* picked (`/model`, `/recent`,
+  `Ctrl+P`) in `~/.config/pitago/prefs.json` (`currentModel`, single writer, user action only)
+  and passes it to the pi child as `--provider/--model` at process start; explicit
+  `--provider`/`--model` flags win. pi's settings.json `defaultProvider`/`defaultModel`
+  stay the source of truth when nothing was ever picked. The saved value is never read back
+  mid-session — the footer always comes from `get_state` — so it cannot disagree with pi.
+  `/new` is not second-guessed: it keeps pi's own default until the next process start.
+- Thinking stays pi's: pitago keeps no copy. `/model` and `/thinking` are session-scope,
+  exactly like pi's picker and `set_model`/`set_thinking_level` over RPC. pitago writes pi's
+  settings.json only for keys pi exposes no RPC for, and never mutates pi's auth.json or
+  environment at launch.
 - Startup: get_state (model) + get_messages (repaint history) + get_session_stats
 
 ## Native built-ins (pi built-ins don't run over RPC, so re-implemented)

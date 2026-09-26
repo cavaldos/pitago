@@ -573,6 +573,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.RefreshFollow()
 		// No model restore: pi's NewSession resets to its own default and
 		// the label is re-read from get_state below, exactly like pi.
+		// (The saved pick is only applied at process start, not here.)
 		return m, m.queryStats()
 
 	case ModelCycleMsg:
@@ -588,6 +589,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				id = msg.Label
 			}
 			m.pushRecent(msg.Provider, id, msg.Label)
+			// ModelCycleMsg only ever comes from an explicit user pick
+			// (/model, /recent), never from a get_state readback — so this
+			// is the "user chose a model" signal worth persisting for the
+			// next process start. The connected/state-refresh paths must
+			// NOT write here: they echo pi's own default.
+			m.SetCurrentModel(msg.Provider, id)
 			m.Status = "ready"
 			m.AddBlock(Block{Kind: "notice", Text: "model switched → " + msg.Label})
 			m.Refresh()
