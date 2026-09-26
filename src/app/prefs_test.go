@@ -35,7 +35,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 
 func TestSideDefaults(t *testing.T) {
 	var p Prefs // nothing ever toggled: MCP + Plugins + Commands hide, the rest show
-	for _, k := range []string{"mcp", "plugins", "commands"} {
+	for _, k := range []string{"mcp", "plugins", "commands", "subagents"} {
 		if p.SideVisible(k) {
 			t.Errorf("%s should hide by default", k)
 		}

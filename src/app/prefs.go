@@ -105,7 +105,7 @@ func SavePrefs(path string, p Prefs) error {
 // (including LSP, so diagnostics are visible without hunting for a toggle).
 func DefaultSideVisible(key string) bool {
 	switch key {
-	case SidePlugins, SideMCP, SideCommands:
+	case SidePlugins, SideMCP, SideCommands, SideSubagents:
 		return false
 	}
 	return true

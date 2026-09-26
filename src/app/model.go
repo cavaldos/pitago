@@ -69,16 +69,22 @@ type Dialog struct {
 	OAuthConn         map[string]bool // login: provider -> oauth connected in pi
 	LoginCounts       map[string]int  // login: provider -> saved key count
 	Settings          SettingsState
-	LoginProvider     string // login flow: provider id
-	LoginEnv          string // login flow: env var
-	TrajOff           int    // trajectory/team dialog: detail scroll offset (lines)
-	TeamTab           string // team dialog: workers | inspect | console | cost
-	TeamFollow        bool   // team dialog: follow worker activity
-	TeamDetail        bool   // team dialog: focused worker detail view
-	TeamReturnMessage string // dashboard text restored by Esc from worker detail
-	TeamReturnCursor  int    // selected worker restored by Esc from worker detail
-	UpdateTo          string // update flow: target tag (Kind "update")
-	ShortcutCmd       string // cmdshortcut capture: /command being assigned ("" = none)
+	LoginProvider     string   // login flow: provider id
+	LoginEnv          string   // login flow: env var
+	TrajOff           int      // trajectory/team dialog: detail scroll offset (lines)
+	TeamTab           string   // team dialog: workers | inspect | console | cost
+	TeamFollow        bool     // team dialog: follow worker activity
+	TeamDetail        bool     // team dialog: focused worker detail view
+	TeamReturnMessage string   // dashboard text restored by Esc from worker detail
+	TeamReturnCursor  int      // selected worker restored by Esc from worker detail
+	UpdateTo          string   // update flow: target tag (Kind "update")
+	ShortcutCmd       string   // cmdshortcut capture: /command being assigned ("" = none)
+	SubDetail         bool     // subagents overlay: detail pane open
+	SubID             string   // subagents overlay: focused row ID (detail + steer target)
+	SubSize           int      // subagents overlay: detail size preset (^O cycles)
+	SubLines          []string // subagents overlay: cached detail transcript lines
+	SubOffset         int      // subagents overlay: detail scroll offset from tail
+	SubHeader         string   // subagents overlay: detail activity header
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -207,6 +213,9 @@ type Model struct {
 	trayRet             int         // input offset to restore on Esc
 	pet                 petState
 	task                taskRuntime
+	Subagents           []SubagentRow   // subagent presence (sidebar SUBAGENTS + /subagent-herd overlay)
+	subagentsAt         time.Time       // last subagent disk scan (throttled by subagentScanTTL)
+	dismissed           map[string]bool // X-dismissed row IDs + session files (blocks disk rescan re-add)
 	recentModels        []RecentModel
 	recentPath          string // persisted recent models ("" = don't persist)
 	favModels           []FavEntry
@@ -551,6 +560,7 @@ func New(pi *pirpc.Client, cwd string) Model {
 		Pi:            pi,
 		liveBridge:    &live.Bridge{CWD: cwd, OwnPID: pi.PID()},
 		tools:         make(map[string]int),
+		dismissed:     make(map[string]bool),
 		progressByKey: make(map[string]int),
 		curAsst:       -1,
 		curThink:      -1,
@@ -566,7 +576,7 @@ func New(pi *pirpc.Client, cwd string) Model {
 func (m Model) Init() tea.Cmd {
 	// No auto-attach: /live is the only way into follow mode, and it starts
 	// the transport on demand (see ToggleLiveSession).
-	cmds := []tea.Cmd{m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true)}
+	cmds := []tea.Cmd{m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true), subagentsTickCmd()}
 	// The sidebar pet is on screen from the first frame, so its animation
 	// loop has to start at boot instead of waiting for the first turn to
 	// arm it (F1: this path arms the loop, so it returns the command).

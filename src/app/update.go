@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -234,7 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.(type) {
-		case tea.WindowSizeMsg, pasteDoneMsg, quitDisarmMsg, escDisarmMsg,
+		case tea.WindowSizeMsg, pasteDoneMsg, orcaTermDoneMsg, quitDisarmMsg, escDisarmMsg,
 			clearCopyHintMsg,
 			petTickMsg, petFlashMsg, streamFlushMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
@@ -322,6 +323,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 33 ms edge-scroll pulse while a drag is held at the viewport edge.
 		return m.updateSelectionTick()
 
+	case subagentsTickMsg:
+		m.refreshSubagents(false)
+		m.Refresh()
+		return m, subagentsTickCmd()
+
 	case connectedMsg:
 		if m.followRemote {
 			return m, nil // an in-flight owned fetch must not replace remote history
@@ -369,6 +375,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Plugins = getPlugins()
 		m.sessionFile = msg.state.SessionFile
 		m.refreshPiTasks() // store file covers /tasks-menu edits (no RPC)
+		m.Subagents = restoreSubagentsFromMessages(msg.msgs)
+		m.refreshSubagents(true)
 		m.blocks = nil
 		m.jumpBlock = -1 // a jump mark belongs to the transcript it was set in
 		m.tools = make(map[string]int)
@@ -445,6 +453,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// sidebar keeps the old session's list until the next tool
 				// event or menu step (looks like a "delayed" update).
 				m.refreshPiTasks()
+				m.refreshSubagents(true)
 			}
 			if !msg.state.IsStreaming && m.thinking {
 				// A settle swallowed behind an open dialog: the turn really
@@ -538,6 +547,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pasteDoneMsg:
 		m.applyPaste(msg)
+		return m, nil
+
+	case orcaTermDoneMsg:
+		host := msg.host
+		if host == "" {
+			host = "pane host"
+		}
+		switch {
+		case errors.Is(msg.err, errNoSurfaceCtl):
+			// Host-agnostic degradation, not a failure: no pane host here.
+			m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s — no pane host installed, %s left untouched", msg.handle, host)})
+		case msg.err != nil:
+			// The retry hint must be the failing host's own discovery verb.
+			// Hardcoding one here rendered `cmux terminal list --json` on a
+			// cmux row — another host's grammar, on a command that does not
+			// exist for this host.
+			retry := msg.hints.list
+			if retry == "" {
+				m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s failed (%s) — pane untouched", host, msg.action, msg.err), Err: true})
+				break
+			}
+			m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s failed (%s) — pane untouched (retry: %s)", host, msg.action, msg.err, retry), Err: true})
+		default:
+			m.AddBlock(Block{Kind: "notice", Text: msg.label})
+		}
+		m.Refresh()
 		return m, nil
 
 	case toastTickMsg:
@@ -1252,6 +1287,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.TogglePlugins()
 				return m, nil
 			}
+			// SUBAGENTS truncation line → herd overlay (RECENT MODELS
+			// style: click the affordance, not a command name).
+			if m.subagentsMoreAt(msg.X, msg.Y) {
+				m.OpenSubagentHerd()
+				return m, nil
+			}
+			// SUBAGENTS row click → that row's detail, open directly.
+			if id := m.subagentRowAt(msg.X, msg.Y); id != "" {
+				row, ok := subagentRowByID(m, id)
+				if !ok {
+					return m, nil
+				}
+				m.OpenSubagentHerd()
+				if len(m.Dialogs) > 0 {
+					// Show the row's own scope, so backing out lands on a
+					// list that actually contains it.
+					if row.Status == SubagentDone || row.Status == SubagentStalled || row.Status == SubagentError {
+						m.Dialogs[0].Scope = subagentsScopeFinished
+						rebuildSubagentsOptions(m, m.Dialogs[0])
+					}
+					openSubagentsDetail(m, m.Dialogs[0], row)
+					m.applyPopupH()
+					m.Refresh()
+				}
+				return m, nil
+			}
 			if idx, ok := m.recentAt(msg.X, msg.Y); ok {
 				r := m.recentModels[idx]
 				if r.ID == m.ModelLbl || r.DispLabel() == m.ModelLbl {
@@ -1582,6 +1643,9 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		if isTodoTool(p.ToolName) {
 			m.updateTodosFromRaw(p.Args, p.Details, p.Input)
 		}
+		if isSubagentTool(p.ToolName) {
+			m.trackSubagentStart(p.ToolCallID, p.ToolName, p.Args)
+		}
 		pcmd = m.petSet(petWorking)
 	case "tool_execution_update":
 		var p struct {
@@ -1630,6 +1694,11 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 				m.refreshPiTasks() // store file is fresh on disk by now
 			}
 		}
+		if isSubagentTool(p.ToolName) {
+			m.trackSubagentEnd(p.ToolCallID, p.ToolName,
+				json.RawMessage(m.blocks[i].ToolArgsRaw), joinText(p.Result.Content), p.IsError)
+			m.refreshSubagents(false)
+		}
 	case "agent_settled":
 		m.thinking = false
 		m.escArm = time.Time{} // turn over: cancel arm no longer applies
@@ -1638,6 +1707,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.MCP = getMcpServers()
 		m.Plugins = getPlugins()
 		m.refreshPiTasks()
+		m.refreshSubagents(false)
 		m.Refresh()
 		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
 	case "agent_end":
@@ -2303,6 +2373,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if d.Kind == shortcutKind {
 		return m.updateShortcutDialog(km, d)
+	}
+	if d.Kind == "subagent-herd" || d.Kind == "subagents-steer" {
+		return m.updateSubagentsDialog(km, d)
 	}
 	n := len(d.FIdx)
 	switch km.Type {

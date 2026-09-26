@@ -37,6 +37,7 @@ const (
 	SideTodos     = "todos"
 	SideTools     = "tools"
 	SideSkills    = "skills"
+	SideSubagents = "subagents"
 	SideWorkspace = "workspace"
 )
 
@@ -44,7 +45,7 @@ const (
 var sideOrder = []string{
 	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
 	SideCommands, SidePlugins, SideMCP, SideLSP, SideTodos, SideTools,
-	SideSkills, SideWorkspace,
+	SideSkills, SideSubagents, SideWorkspace,
 }
 
 // sideLabel is the Sidebar tab display name per section key.
@@ -76,6 +77,8 @@ func sideLabel(key string) string {
 		return "Tools"
 	case SideSkills:
 		return "Skills"
+	case SideSubagents:
+		return "Subagents"
 	case SideWorkspace:
 		return "Workspace"
 	}
@@ -90,6 +93,12 @@ func (m Model) SideVisible(key string) bool {
 		if v, ok := m.Side[key]; ok {
 			return v
 		}
+	}
+	if key == SideSubagents {
+		// Auto-visibility (no explicit toggle): hidden when zero,
+		// shown while any row exists. Rows persist for the session,
+		// so the first spawn reveals the section.
+		return len(m.Subagents) > 0
 	}
 	return DefaultSideVisible(key)
 }
@@ -1357,4 +1366,169 @@ func lspDiagRow(d LspDiagnostic, inner int) string {
 	}
 	row += lipgloss.NewStyle().Foreground(cText).Render(Short(d.Message, msgW))
 	return truncANSI(row, inner) + "\n"
+}
+
+// renderSubagentsSection draws the SUBAGENTS presence list: one row per
+// agent with a status glyph, display name, and activity/elapsed suffix.
+// Shown only while rows exist (see SideVisible auto-visibility).
+// subagentsMoreHint renders the truncation hint. No command name: the
+// panel is reachable by click (RECENT MODELS already works that way), and
+// the click affordance only appears when the terminal reports mouse events.
+func (m Model) subagentsMoreHint() string {
+	if m.Mouse {
+		return "click for all"
+	}
+	return "truncated"
+}
+
+// subagentsMoreAt reports whether (x, y) lands on the sidebar truncation
+// line of the subagents section, so a click opens the herd overlay. It
+// matches against the cached sidebar content (m.sideCache) instead of
+// summing section row counts, so the hit test stays correct no matter
+// which other panels are enabled or disabled.
+func (m Model) subagentsMoreAt(x, y int) bool {
+	if !m.ready || !m.Mouse || !m.showSide() || len(m.Dialogs) > 0 {
+		return false
+	}
+	if !m.SideVisible(SideSubagents) || len(m.Subagents) <= subagentsShowMax {
+		return false // nothing truncated, so the line is not rendered
+	}
+	if x < m.mainW()+1 || x > m.winW {
+		return false
+	}
+	want := fmt.Sprintf("+%d more", len(m.Subagents)-subagentsShowMax)
+	for i, line := range strings.Split(m.sideCache, "\n") {
+		// Keep scanning: a subagent name could contain the same text, and
+		// only the rendered hint's own row may open the overlay.
+		if strings.Contains(stripANSI(line), want) && y-1+m.sideVp.YOffset == i {
+			return true
+		}
+	}
+	return false
+}
+
+// subagentsRenderedRows returns the sidebar line index of each rendered
+// subagent row, in display order, so a click maps back to a row by position
+// (names repeat and get truncated, so text matching is not reliable). Rows
+// are recognized structurally: inside the SUBAGENTS section, a line whose
+// first cell is a status glyph is a row.
+func (m Model) subagentsRenderedRows() (lines []int, start int, ok bool) {
+	rows := m.Subagents
+	if len(rows) > subagentsShowMax {
+		rows = rows[:subagentsShowMax]
+	}
+	inSection := false
+	for i, line := range strings.Split(m.sideCache, "\n") {
+		plain := strings.TrimRight(stripANSI(line), " ")
+		if strings.HasPrefix(plain, "Subagents (") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		switch {
+		case plain == "" || strings.HasPrefix(plain, "…"):
+			// End of the row block (blank line or the "+N more" hint).
+			// Unconditional: continuing would let a later panel's glyph
+			// lines shift the positional mapping onto the wrong rows.
+			return lines, start, ok
+		case strings.HasPrefix(plain, "─"): // separator: section ended
+			return lines, start, ok
+		case strings.ContainsRune("◐◌○✓!", []rune(plain)[0]):
+			lines = append(lines, i)
+			if !ok {
+				start = i
+				ok = true
+			}
+		}
+	}
+	return lines, start, ok
+}
+
+// subagentRowAt returns the ID of the subagent row under (x, y) in the
+// sidebar, or "" when the click misses. Clicking a row opens its detail in
+// the herd overlay, the way RECENT MODELS rows switch models.
+func (m Model) subagentRowAt(x, y int) string {
+	if !m.ready || !m.Mouse || !m.showSide() || len(m.Dialogs) > 0 {
+		return ""
+	}
+	if !m.SideVisible(SideSubagents) || len(m.Subagents) == 0 {
+		return ""
+	}
+	if x < m.mainW()+1 || x > m.winW {
+		return ""
+	}
+	rows := m.Subagents
+	if len(rows) > subagentsShowMax {
+		rows = rows[:subagentsShowMax]
+	}
+	lines, _, _ := m.subagentsRenderedRows()
+	if len(lines) != len(rows) {
+		return "" // render and row list disagree; fail closed
+	}
+	screenY := y - 1 + m.sideVp.YOffset
+	for i, line := range lines {
+		if line == screenY {
+			return rows[i].ID
+		}
+	}
+	return ""
+}
+
+func (m Model) renderSubagentsSection(inner int) string {
+	var b strings.Builder
+	active := 0
+	for _, r := range m.Subagents {
+		if r.Status == SubagentActive || r.Status == SubagentStarting || r.Status == SubagentWaiting {
+			active++
+		}
+	}
+	title := fmt.Sprintf("Subagents (%d)", len(m.Subagents))
+	if active > 0 {
+		title = fmt.Sprintf("Subagents (%d active)", active)
+	}
+	b.WriteString(sideTitleStyle.Render(title) + "\n")
+	shown := m.Subagents
+	if len(shown) > subagentsShowMax {
+		shown = shown[:subagentsShowMax]
+	}
+	for _, r := range shown {
+		g, alert := subagentGlyph(r.Status)
+		var glyph string
+		if alert {
+			glyph = warnStyle.Render(g)
+		} else if r.Status == SubagentDone {
+			glyph = okStyle.Render(g)
+		} else if r.Status == SubagentActive {
+			glyph = lipgloss.NewStyle().Foreground(cText).Render(g)
+		} else {
+			glyph = statusBarStyle.Render(g)
+		}
+		end := time.Now()
+		if r.DoneAt != nil {
+			end = *r.DoneAt
+		}
+		suffix := formatSubagentElapsed(end.Sub(r.StartedAt).Milliseconds())
+		if strings.TrimSpace(r.StatusLabel) != "" {
+			suffix = r.StatusLabel + " · " + suffix
+		}
+		suffix = "  " + suffix
+		nameMax := inner - 3 - len(suffix)
+		if nameMax < 0 {
+			nameMax = 0
+		}
+		name := Short(r.Name, nameMax)
+		if name == "" {
+			name = Short(string(r.Status), nameMax)
+		}
+		b.WriteString(statusBarStyle.Render(" ") + glyph + " " +
+			lipgloss.NewStyle().Foreground(cText).Render(name) +
+			toolStyle.Render(Short(suffix, inner-lipgloss.Width(name)-3)) + "\n")
+	}
+	if hidden := len(m.Subagents) - len(shown); hidden > 0 {
+		b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more · %s", hidden, m.subagentsMoreHint())) + "\n")
+	}
+	b.WriteString(sep() + "\n")
+	return b.String()
 }

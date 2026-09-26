@@ -20,7 +20,7 @@ func TestAllCoversPi(t *testing.T) {
 		"changelog", "hotkeys", "fork", "clone", "trust",
 		"login", "logout", "new", "compact", "resume", "reload", "quit",
 		"recent", "yank", "sidebar", "update", "plugins", "mouse", "theme", "pitago-setting",
-		"trajectory", "notification", "subagents", "team",
+		"trajectory", "notification", "subagents", "team", "subagent-herd",
 	} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("builtin /%s missing", want)
@@ -31,6 +31,17 @@ func TestAllCoversPi(t *testing.T) {
 	}
 	if got["model"] != OriginPi {
 		t.Error("/model must be marked pi origin")
+	}
+	// The registry dispatches by name, so two entries sharing one silently
+	// shadow each other: the palette shows one and Enter runs the other.
+	seen := map[string]int{}
+	for _, c := range All() {
+		seen[c.Name]++
+	}
+	for name, n := range seen {
+		if n > 1 {
+			t.Errorf("builtin /%s registered %d times; the second shadows the first", name, n)
+		}
 	}
 }
 
