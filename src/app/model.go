@@ -773,6 +773,17 @@ func (m *Model) submit(mode int) tea.Cmd {
 		m.Refresh()
 		return b.Run(m, arg)
 	}
+	// A pi-owned command (builtin/extension) is answered by pi's command
+	// handler, not by a model turn, so it is forwarded without entering the
+	// turn state. Sending it as a prompt would pin "pi is running…" until an
+	// agent_settled that never arrives (see FindPiCommand).
+	if _, ok := m.FindPiCommand(text); ok {
+		m.ta.Reset()
+		m.refreshCmds()
+		m.refreshAt()
+		m.Refresh()
+		return m.ForwardExtensionCommand(text)
+	}
 	// @image.png → vision attachments (pi CLI parity); the @text
 	// stays so history keeps the file ref, images ride the RPC.
 	// Tray chips (drops/pastes/Tab-completed @) join in too.
@@ -1289,12 +1300,10 @@ func (m *Model) ApplyImageSettings() {
 	m.renderCacheKey = nil
 }
 
-// FindBuiltin matches "/name" or "/name args" against the registry.
-// Anything else (extension/prompt/skill commands, chat text) falls through
-// to pi via Prompt.
-func (m *Model) FindBuiltin(text string) (Builtin, string, bool) {
+// splitCommand splits "/name args" into its name and argument.
+func splitCommand(text string) (string, string, bool) {
 	if len(text) < 2 || text[0] != '/' {
-		return Builtin{}, "", false
+		return "", "", false
 	}
 	rest := text[1:]
 	name, arg := rest, ""
@@ -1302,6 +1311,49 @@ func (m *Model) FindBuiltin(text string) (Builtin, string, bool) {
 		name, arg = rest[:i], strings.TrimSpace(rest[i+1:])
 	}
 	if strings.Contains(name, "\n") || name == "" {
+		return "", "", false
+	}
+	return name, arg, true
+}
+
+// FindPiCommand reports a slash command pi's own command handler consumes,
+// i.e. one listed by get_commands as a builtin or an extension command.
+// These are NOT model turns: pi answers them synchronously and — measured on
+// `pi --mode rpc`, where `{"type":"prompt","message":"/team"}` emits
+// extension_ui_request + message_start/message_end and nothing else — it
+// sends no agent_start and no agent_settled.
+//
+// That is why they must not travel through sendCmd: that path sets
+// m.thinking and m.Status = "pi is running…" up front and relies on
+// agent_settled (or a get_state push, which only follows an event) to clear
+// them. With no such event the footer spins "pi is running…" forever on an
+// idle session, and Enter keeps steering instead of prompting.
+//
+// prompt and skill rows are deliberately excluded: those expand into real
+// user text and DO open a turn, so they keep the sendCmd lifecycle.
+func (m *Model) FindPiCommand(text string) (string, bool) {
+	name, _, ok := splitCommand(text)
+	if !ok {
+		return "", false
+	}
+	for _, c := range m.Cmds {
+		if !strings.EqualFold(strings.TrimSpace(c.Name), name) {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(c.Source)) {
+		case "builtin", "extension":
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// FindBuiltin matches "/name" or "/name args" against the registry.
+// Extension commands and chat text fall through to pi; see FindPiCommand
+// for the split between a no-turn command forward and a model prompt.
+func (m *Model) FindBuiltin(text string) (Builtin, string, bool) {
+	name, arg, ok := splitCommand(text)
+	if !ok {
 		return Builtin{}, "", false
 	}
 	for _, b := range m.builtins {

@@ -71,6 +71,32 @@ func TestFindBuiltinRouting(t *testing.T) {
 	}
 }
 
+// A pi-owned command (builtin/extension row from get_commands) is a
+// no-turn forward; prompt/skill rows expand into a real turn and must stay
+// on the sendCmd lifecycle, or the reconciler never sees an agent_settled.
+func TestFindPiCommandRouting(t *testing.T) {
+	var m Model
+	m.Cmds = []pirpc.RepoCommand{
+		{Name: "team-enable", Source: "extension"},
+		{Name: "login", Source: "builtin"},
+		{Name: "review", Source: "prompt"},
+		{Name: "dataviz", Source: "skill"},
+	}
+	for _, text := range []string{"/team-enable off", "/team-enable", "/LOGIN", "/login"} {
+		if name, ok := m.FindPiCommand(text); !ok || name == "" {
+			t.Errorf("%q: want a no-turn command forward, got name=%q ok=%v", text, name, ok)
+		}
+	}
+	for _, text := range []string{"/review", "/dataviz", "hello", "/nope", "/", ""} {
+		if _, ok := m.FindPiCommand(text); ok {
+			t.Errorf("%q: must fall through to the model prompt path", text)
+		}
+	}
+	if _, ok := m.FindPiCommand("/team-\nenable off"); ok {
+		t.Error("a newline in the command name must never match a command")
+	}
+}
+
 // Extension commands show pi's "[u:npm:ext] desc" tag and match by extension
 // name; builtins keep the trailing [builtin].
 func TestCmdExtensionTag(t *testing.T) {
