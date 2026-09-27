@@ -896,10 +896,11 @@ func renderToolResultExpanded(tool, status, s string, expanded bool) string {
 }
 
 // renderSidebar mirrors pi's session panel: SESSION, model+ctx, STATS,
-// RECENT MODELS (clickable), COMMANDS, TOOLS, WORKSPACE, cwd. Content is
-// built by buildSidebarContent and shown through sideVp, so a tall sidebar
-// clips to the box and scrolls (wheel over it) instead of overflowing the layout.
-// recentAt maps clicks with sideVp.YOffset, so it stays correct scrolled.
+// RECENT MODELS (clickable), COMMANDS, TOOLS, SKILLS, WORKSPACE, cwd. Content
+// is built by buildSidebarContent and shown through sideVp, so a tall sidebar
+// clips to the box and scrolls (wheel over it) instead of overflowing the
+// layout. recentAt maps clicks with sideVp.YOffset, so it stays correct
+// scrolled.
 
 func (m Model) buildSidebarContent() string {
 	inner := sideInnerW
@@ -1087,6 +1088,13 @@ func (m Model) buildSidebarContent() string {
 			}
 			b.WriteString(sep() + "\n")
 		}
+	}
+	if m.SideVisible(SideSkills) {
+		// Renders nothing at all until the agent loads a skill, so a session
+		// that never touches one pays no rows and no separator (sideskills.go).
+		// Drawn after TOOLS to keep the order in sync with sideOrder, which is
+		// the row order of the /pitago-setting Sidebar tab.
+		b.WriteString(m.renderSkillsSection(inner))
 	}
 	if m.SideVisible(SideWorkspace) {
 		if m.ws.ok {

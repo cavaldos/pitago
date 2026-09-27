@@ -35,6 +35,7 @@ const (
 	SideLSP       = "lsp"
 	SideTodos     = "todos"
 	SideTools     = "tools"
+	SideSkills    = "skills"
 	SideWorkspace = "workspace"
 )
 
@@ -42,7 +43,7 @@ const (
 var sideOrder = []string{
 	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
 	SideCommands, SidePlugins, SideMCP, SideLSP, SideTodos, SideTools,
-	SideWorkspace,
+	SideSkills, SideWorkspace,
 }
 
 // sideLabel is the Sidebar tab display name per section key.
@@ -72,6 +73,8 @@ func sideLabel(key string) string {
 		return "Todos"
 	case SideTools:
 		return "Tools"
+	case SideSkills:
+		return "Skills"
 	case SideWorkspace:
 		return "Workspace"
 	}
