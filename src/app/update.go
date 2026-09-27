@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/components/chat"
+	"pitago/src/components/pet"
 	"pitago/src/ext"
 	"pitago/src/extension"
 	"pitago/src/pirpc"
@@ -531,12 +532,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case petTickMsg:
-		// 500ms loop while busy/flashing or a task is active: one timer also
-		// drives the task spinner and elapsed counter.
-		if m.pet.status.Busy() || m.pet.status.Flashing() || m.taskActive() {
+		// One timer drives the pet animation, the task spinner and the
+		// elapsed counter. It keeps running while the pet is busy/flashing,
+		// a task is active, or the pet section is simply on screen — a
+		// visible block blinks, sways and rotates even with pi idle. Hiding
+		// the section drops the last reason and the loop stops. In the
+		// classic look the tick only animates the faces — the animals do
+		// not wander, so rotation is skipped (the anchor stays put).
+		if m.petLooping() {
 			m.pet.tick++
+			// Lazily seed the rotation clock: a hand-built Model (tests) has
+			// a zero at, and time.Since on it is a huge bogus duration.
+			if m.pet.shown == "" {
+				m.pet.shown = pet.Resolve(m.PetName).Name
+				m.pet.at = time.Now()
+			}
+			if !m.petClassic() && time.Since(m.pet.at) >= petRotateEvery {
+				m.pet.shown = pet.Rotate(m.pet.shown, 1)
+				m.pet.at = time.Now()
+			}
 			m.Refresh()
-			return m, petTickCmd()
+			// Re-arm at the cadence the current state needs: fast for the
+			// elapsed counter, slow for a merely animated pet.
+			return m, petTickCmd(m.petInterval())
 		}
 		m.pet.ticking = false
 		return m, nil
@@ -638,6 +656,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Kind == "theme" {
 			title = "Select theme"
 		}
+		if msg.Kind == "pet" {
+			title = "Select pet"
+		}
 		if msg.Kind == "sessions" {
 			title = "Resume session (current)"
 			if msg.Scope == "all" {
@@ -664,7 +685,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Refresh()
 			return m, nil
 		}
-		d := &Dialog{Kind: msg.Kind, Title: title, Options: msg.Options, Descs: msg.Descs, Providers: msg.Providers, Models: msg.Models, Paths: msg.Paths, Payload: msg.Payload, Filter: msg.Filter, Scope: msg.Scope}
+		d := &Dialog{Kind: msg.Kind, Title: title, Options: msg.Options, Descs: msg.Descs, Providers: msg.Providers, Models: msg.Models, Paths: msg.Paths, Payload: msg.Payload, Filter: msg.Filter, Scope: msg.Scope, Current: msg.Current}
 		if msg.Kind == "model" {
 			// two-pane picker: left = providers, right = their models
 			d.Provs = buildProvs(msg.Providers)
@@ -2166,6 +2187,9 @@ func filterableDialog(d *Dialog) bool {
 
 func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.Dialogs[0]
+	if d.Kind == "pet" {
+		return m.updatePetDialog(km, d)
+	}
 	if d.Kind == "team" {
 		return m.updateTeamDashboardDialog(km, d)
 	}
@@ -2830,9 +2854,17 @@ func (d *Dialog) Reindex() {
 		if prov != "" && normProv(providerAt(d.Providers, i)) != prov {
 			continue
 		}
+		// The provider haystack only applies to pickers that actually carry
+		// one: normProv("") is "other", so a pet/theme/notification option
+		// would otherwise match any filter containing an "o" (e.g. "owl")
+		// and the list would never narrow.
+		provHay := ""
+		if len(d.Providers) > 0 {
+			provHay = strings.ToLower(normProv(providerAt(d.Providers, i)))
+		}
 		if f == "" || strings.Contains(strings.ToLower(d.Options[i]), f) ||
 			(i < len(d.Descs) && strings.Contains(strings.ToLower(d.Descs[i]), f)) ||
-			strings.Contains(strings.ToLower(normProv(providerAt(d.Providers, i))), f) ||
+			strings.Contains(provHay, f) ||
 			strings.Contains(d.specHay(i), f) {
 			d.FIdx = append(d.FIdx, i)
 		}

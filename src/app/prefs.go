@@ -31,6 +31,8 @@ type Prefs struct {
 	HideThinking    bool              `json:"hideThinking,omitempty"`
 	AutocompleteMax int               `json:"autocompleteMax,omitempty"`
 	CurrentSubagent string            `json:"currentSubagent,omitempty"` // last-picked /subagents entry (● marker)
+	Pet             string            `json:"pet,omitempty"`             // sidebar ASCII pet name (missing = default "cat")
+	PetStyle        string            `json:"petStyle,omitempty"`        // "ascii" (default) | "classic" kaomoji look
 	CurrentModel    *ModelRef         `json:"currentModel,omitempty"`    // last-picked model, restored at spawn only
 	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)

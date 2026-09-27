@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pitago/src/components/pet"
 )
 
 func TestPushRecent(t *testing.T) {
@@ -58,12 +60,28 @@ func TestRecentAt(t *testing.T) {
 // Regression: recentAt must hit the rows renderSidebar actually draws.
 // The hardcoded offset once ignored the PET section, so clicks landed
 // 3 rows high (wrong model, or a miss with few recents).
+//
+// Run once per pet look: the PET block is 5 rows in ascii and 2 in
+// classic, and recentAt is derived from m.petRows() — this is the test that
+// proves the click mapping follows the style.
 func TestRecentAtMatchesRender(t *testing.T) {
+	for _, style := range []string{pet.StyleASCII, pet.StyleClassic} {
+		t.Run(style, func(t *testing.T) {
+			testRecentAtMatchesRender(t, style)
+		})
+	}
+}
+
+func testRecentAtMatchesRender(t *testing.T, style string) {
 	m := New(nil, t.TempDir())
+	m.PetStyle = style
 	m.Status = "ready"
 	m.recentModels = []RecentModel{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}, {ID: "e"}}
 	m.ModelLbl = "a"
-	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	// The window must be tall enough for every section the test clicks
+	// through: the sidebar is a fixed-height viewport, so the taller pet
+	// block (name + art) would push RECENT MODELS off a 24-row frame.
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = tm.(Model)
 	lines := strings.Split(stripANSI(m.renderSidebar()), "\n")
 	head := -1

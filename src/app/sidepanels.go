@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/ext"
@@ -109,11 +110,15 @@ func (m *Model) setSideVisible(key string, v bool) {
 
 // ToggleSideSection flips one sidebar section (the /pitago-setting Sidebar
 // tab): the hub stays open so several sections toggle in one visit.
-func (m *Model) ToggleSideSection(key string) {
+// Toggling the pet section also arms (or lets lapse) the pet tick loop: an
+// invisible block has nothing to animate, a visible one needs the timer back
+// even with no turn in flight. Returns the pet command when one is started.
+func (m *Model) ToggleSideSection(key string) tea.Cmd {
 	m.setSideVisible(key, !m.SideVisible(key))
 	if m.ready {
 		m.Refresh()
 	}
+	return m.ensurePetTick()
 }
 
 type TodoStatus = ext.TodoStatus

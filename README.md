@@ -215,6 +215,7 @@ Type `/` to open the command popup. Two kinds:
 - `/yank` / `/copy` — copy last answer to clipboard
 - `/sidebar` — hide/show sidebar
 - `/theme` — switch TUI theme (`/theme` opens picker, `/theme gruvbox` applies directly; or `pitago --theme one-dark`)
+- `/pet` — pick the sidebar pet. `/pet` opens a two-pane dialog in the `/model` shape: left = the entry list (18 animals plus the `ascii` and `classic` looks, `▸` cursor, `●` the one in use, type to filter, `↑↓` move, `Enter` applies, `Esc` cancels), right = a live demo of the highlighted entry. `/pet dragon`, `/pet ascii` and `/pet classic` apply directly. In the **ascii** look the sidebar block draws the animal (name inline, 5 rows) and the animals take turns every ~20s; in the **classic** look it draws the compact animated kaomoji face with the status label on one row (2 rows, no `PET` title) and nothing rotates
 - `/plugins` — collapse/expand installed pi plugins in the sidebar
 - `/mouse` — toggle mouse (click sidebar, wheel scroll) at runtime, `[on|off]`; off for native text selection
 - `/update` — check GitHub releases + install latest (auto-checks in background, once a day)
@@ -263,7 +264,7 @@ In short: `app` is a thin MVC shell, `components` holds pure view primitives,
 - `~/.config/pitago/keys.json` (0600) — saved API keys, several per provider with one active + optional name/added-date (`/login`, `/logout`; active key is also written to pi's `auth.json` so pi sees models)
 - `~/.config/pitago/pi_auth.json` (0600) — mirrored pi logins (OAuth account/expiry, no secrets) so `/login` lists + disconnects subscriptions done in stock pi
 - `~/.config/pitago/recent_models.json` — recent models (max 5)
-- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win)
+- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win); also the sidebar pet (`pet`, missing = default `cat`) and its look (`petStyle`: `ascii` (default) or `classic`)
 - `~/.config/pitago/theme.json` — active TUI theme (25 built-ins: default, one-dark, gruvbox, catppuccin-mocha, dracula… — `/theme` lists all)
 - `~/.config/pitago/update.json` — last update-check timestamp + tag (24h TTL)
 - `/tmp/pitago-pi-stderr.log` — pi child stderr

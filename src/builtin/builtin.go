@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/app"
 	"pitago/src/components/palette"
+	"pitago/src/components/pet"
 	"pitago/src/pirpc"
 )
 
@@ -1224,6 +1226,22 @@ func All() []app.Builtin {
 					return m.OpenTheme()
 				}
 				m.SetTheme(arg)
+				return nil
+			},
+		},
+		{
+			Name: "pet", Desc: "Pick the sidebar pet (18 animals + the ascii/classic looks — /pet lists all)", Usage: "/pet [name|ascii|classic]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				if arg == "" {
+					return m.OpenPet()
+				}
+				if m.SetPet(arg) {
+					return nil
+				}
+				m.AddBlock(app.Block{Kind: "notice",
+					Text: "unknown pet: " + arg + " — /pet lists all " + strconv.Itoa(len(pet.Entries())), Err: true})
+				m.Refresh()
 				return nil
 			},
 		},

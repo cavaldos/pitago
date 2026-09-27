@@ -14,6 +14,7 @@ import (
 	"pitago/src/components/favorite"
 	"pitago/src/components/mention"
 	"pitago/src/components/palette"
+	"pitago/src/components/pet"
 	"pitago/src/components/recent"
 	terminal_image "pitago/src/components/terminal_image"
 	"pitago/src/components/theme"
@@ -45,6 +46,7 @@ type Dialog struct {
 	Paths             []string          // sessions picker: parallel session file per option
 	Scope             string            // sessions picker: "current" | "all" (Tab toggles)
 	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
+	Current           string            // the value in use, marked in the grid/list (pet: "●" cell)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
 	Placeholder       string // free-text dialog: dim hint shown while the buffer is empty
@@ -207,6 +209,8 @@ type Model struct {
 	CmdShortcuts        map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
 	themePath           string            // persisted theme ("" = don't persist)
+	PetName             string            // pinned sidebar ASCII pet (/pet, prefs.json)
+	PetStyle            string            // sidebar pet look: pet.StyleASCII (default) | pet.StyleClassic
 	prefsPath           string            // persisted pitago-local prefs ("" = don't persist)
 	savedModel          *ModelRef         // last user-picked model this process wrote (in-memory mirror of prefs.currentModel)
 	builtins            []Builtin
@@ -532,7 +536,14 @@ func New(pi *pirpc.Client, cwd string) Model {
 func (m Model) Init() tea.Cmd {
 	// No auto-attach: /live is the only way into follow mode, and it starts
 	// the transport on demand (see ToggleLiveSession).
-	return tea.Batch(m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true))
+	cmds := []tea.Cmd{m.fetchAll(), m.pollCmds(), m.pollWs(), m.CheckUpdatesCmd(true)}
+	// The sidebar pet is on screen from the first frame, so its animation
+	// loop has to start at boot instead of waiting for the first turn to
+	// arm it (F1: this path arms the loop, so it returns the command).
+	if cmd := m.ensurePetTick(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 // fetchAll loads state/messages/stats/commands after (re)connect.
@@ -1247,6 +1258,15 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.CurAgent = prefs.CurrentSubagent
+	// Resolve, not raw read: a hand-edited or stale prefs.json must still
+	// yield a drawable pet, never an empty sidebar block.
+	m.PetName = pet.Resolve(prefs.Pet).Name
+	// Same drift guard for the look: a missing or hand-edited petStyle
+	// falls back to ascii rather than rendering an unknown style.
+	m.PetStyle = pet.StyleASCII
+	if pet.IsStyle(prefs.PetStyle) {
+		m.PetStyle = prefs.PetStyle
+	}
 	m.savedModel = prefs.CurrentModel
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts

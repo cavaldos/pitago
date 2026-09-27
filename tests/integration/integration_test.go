@@ -97,8 +97,11 @@ func TestComponentsCompose(t *testing.T) {
 	if got := pet.Label(pet.Working, time.Now().Add(-7*time.Second)); got != "Working... 7s" {
 		t.Fatalf("timed label = %q", got)
 	}
-	if pet.Face(pet.Idle, 0) == "" {
-		t.Fatal("idle must have a face")
+	if p, ok := pet.Get("dragon"); !ok || len(p.Frames) < 2 {
+		t.Fatal("sidebar pet art missing or not animated")
+	}
+	if pet.Resolve("nope").Name != pet.DefaultName {
+		t.Fatal("unknown pet name must fall back to the default")
 	}
 
 	// format sanity used across sidebar + palette rows

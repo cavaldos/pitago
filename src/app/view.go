@@ -1361,6 +1361,9 @@ func inputBox(title string, lines []string, innerW int, border lipgloss.Color) s
 
 func (m Model) renderDialog() string {
 	d := m.Dialogs[0]
+	if d.Kind == "pet" {
+		return m.renderPetDialog(d)
+	}
 	if d.Kind == "pconfig" && len(d.Provs) > 0 {
 		return m.renderPconfigDialog(d)
 	}

@@ -25,7 +25,7 @@ const (
 func (m Model) sideRowsBeforeRecent() int {
 	n := 0
 	if m.SideVisible(SidePet) {
-		n += petRows
+		n += m.petRows() // style-dependent: ascii 5, classic 2
 	}
 	if m.SideVisible(SideSession) {
 		n += sideSessionRows

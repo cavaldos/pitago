@@ -19,6 +19,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"sessions":    confirmSessions,
 		"thinking":    confirmThinking,
 		"theme":       confirmTheme,
+		"pet":         confirmPet,
 		"settings":    confirmSettings,
 		"pconfig":     confirmPconfig,
 		"login":       confirmLogin,
@@ -147,14 +148,17 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	}
 	switch p := d.Payload[ri]; {
 	case strings.HasPrefix(p, "side:"):
-		m.ToggleSideSection(strings.TrimPrefix(p, "side:"))
+		// ToggleSideSection may start the pet tick loop (the sidebar pet
+		// block just became visible again) — F1: the returned command is
+		// the only delivery path, so it must be batched, never dropped.
+		sideCmd := m.ToggleSideSection(strings.TrimPrefix(p, "side:"))
 		cur := d.Cursor // toggle rebuilds rows: keep the cursor where it was
 		m.LoadPsecRows(d)
 		if cur < len(d.FIdx) {
 			d.Cursor = cur
 		}
 		m.Refresh()
-		return m, nil
+		return m, sideCmd
 	case strings.HasPrefix(p, "tasks:"):
 		m.CycleTasksSetting(strings.TrimPrefix(p, "tasks:"))
 		cur := d.Cursor // cycle rebuilds rows: keep the cursor where it was
@@ -214,6 +218,18 @@ func confirmTheme(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	}
 	m.Dialogs = m.Dialogs[1:]
 	m.SetTheme(d.Options[ri])
+	return m, nil
+}
+
+// confirmPet applies the picked /pet entry (Options parallel pet.Entries():
+// the animal names plus the "ascii"/"classic" looks; SetPet resolves it).
+// The dialog pops first so the notice and the repaint have no popup on top.
+func confirmPet(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	if ri < 0 || ri >= len(d.Options) {
+		return m, nil
+	}
+	m.Dialogs = m.Dialogs[1:]
+	m.SetPet(d.Options[ri])
 	return m, nil
 }
 
