@@ -1,6 +1,7 @@
 package app
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 
@@ -64,15 +65,52 @@ func (m Model) findCmdShortcut(label string) (string, bool) {
 	return "", false
 }
 
-// hasCmd reports a /command still in the catalog (uninstalled ones keep
-// their row stale instead of firing into "unknown command").
+// hasCmd reports a /command still runnable — a local builtin or a row in
+// the pi catalog (uninstalled ones keep their shortcut row stale instead
+// of firing into "unknown command").
 func (m Model) hasCmd(cmd string) bool {
+	for _, b := range m.builtins {
+		if b.Name == cmd && !b.Hidden {
+			return true
+		}
+	}
 	for _, c := range m.Cmds {
 		if c.Name == cmd {
 			return true
 		}
 	}
 	return false
+}
+
+// cmdHubRow is one Commands-tab row: the command name, its one-line
+// description and the origin tag shown in brackets.
+type cmdHubRow struct {
+	name, desc, tag string
+}
+
+// builtinCmdRows lists the Commands section: pi's re-implemented builtins
+// plus pitago's own commands, sorted by origin then name. Only the local
+// registry (builtin.All) is read — extension/prompt/skill commands never
+// appear here; they own the Skills/Prompts/Extensions sections.
+func (m Model) builtinCmdRows() []cmdHubRow {
+	out := make([]cmdHubRow, 0, len(m.builtins))
+	for _, b := range m.builtins {
+		if b.Hidden {
+			continue // continuation entry, not a user command
+		}
+		tag := b.Origin
+		if tag == "" {
+			tag = "pi"
+		}
+		out = append(out, cmdHubRow{name: b.Name, desc: b.Desc, tag: tag})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].tag != out[j].tag {
+			return out[i].tag < out[j].tag
+		}
+		return out[i].name < out[j].name
+	})
+	return out
 }
 
 // saveCmdShortcuts persists the map (LoadPrefs-mutate-SavePrefs parity).

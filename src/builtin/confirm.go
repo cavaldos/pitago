@@ -18,7 +18,6 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"recent":      confirmRecent,
 		"sessions":    confirmSessions,
 		"thinking":    confirmThinking,
-		"theme":       confirmTheme,
 		"pet":         confirmPet,
 		"settings":    confirmSettings,
 		"pconfig":     confirmPconfig,
@@ -185,10 +184,17 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		m.Status = "loading settings…"
 		m.Refresh()
 		return m, loadSettings(m, "")
-	case p == "@theme":
-		m.Dialogs = m.Dialogs[1:]
+	case strings.HasPrefix(p, "theme:"):
+		// A row in the hub's Theme section: apply it, keep the hub open and
+		// reload rows so the ✓ current marker follows.
+		m.SetTheme(strings.TrimPrefix(p, "theme:"))
+		cur := d.Cursor
+		m.LoadPsecRows(d)
+		if cur < len(d.FIdx) {
+			d.Cursor = cur
+		}
 		m.Refresh()
-		return m, m.OpenTheme()
+		return m, nil
 	case p == "@login":
 		m.Dialogs = m.Dialogs[1:]
 		m.Refresh()
@@ -204,20 +210,12 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		m.AddBlock(app.Block{Kind: "notice", Text: "already installed — Enter on a new entry installs it"})
 	case app.PsecMCP:
 		m.AddBlock(app.Block{Kind: "notice", Text: "edit ~/.pi/agent/mcp.json, then /reload"})
+	case app.PsecKeys:
+		m.AddBlock(app.Block{Kind: "notice", Text: "reference row — Ctrl+S on a custom ⌥ row re-assigns it"})
 	default:
 		m.AddBlock(app.Block{Kind: "notice", Text: "nothing to run here"})
 	}
 	m.Refresh()
-	return m, nil
-}
-
-// confirmTheme applies the picked palette (Options parallel the theme names).
-func confirmTheme(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
-	if ri < 0 || ri >= len(d.Options) {
-		return m, nil
-	}
-	m.Dialogs = m.Dialogs[1:]
-	m.SetTheme(d.Options[ri])
 	return m, nil
 }
 

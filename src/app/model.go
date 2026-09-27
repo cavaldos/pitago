@@ -138,7 +138,7 @@ type Model struct {
 	ready               bool
 	winW                int
 	winH                int
-	hideSide            bool // Ctrl+B: hide sidebar for clean drag-select of chat
+	hideSide            bool // Ctrl+E: hide sidebar for clean drag-select of chat
 	Mouse               bool // --mouse: terminal reports clicks (sidebar recent switch)
 	baseVpH             int
 	cwd                 string
@@ -207,6 +207,7 @@ type Model struct {
 	hist                []string          // sent messages, oldest→newest (↑↓ recall when input empty)
 	histIdx             int               // -1 = live input, else index into hist while browsing
 	CmdShortcuts        map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
+	RecentCmds          []string          // last-run /command names, most recent first (top of the "/" popup, persisted in prefs)
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
 	themePath           string            // persisted theme ("" = don't persist)
 	PetName             string            // pinned sidebar ASCII pet (/pet, prefs.json)
@@ -767,6 +768,7 @@ func (m *Model) submit(mode int) tea.Cmd {
 	m.pushHist(text)
 	m.histIdx = -1
 	if b, arg, ok := m.FindBuiltin(text); ok {
+		m.noteCmdUse(b.Name) // ran: leads the "/" popup next time
 		m.ta.Reset()
 		m.refreshCmds()
 		m.refreshAt()
@@ -777,7 +779,8 @@ func (m *Model) submit(mode int) tea.Cmd {
 	// handler, not by a model turn, so it is forwarded without entering the
 	// turn state. Sending it as a prompt would pin "pi is running…" until an
 	// agent_settled that never arrives (see FindPiCommand).
-	if _, ok := m.FindPiCommand(text); ok {
+	if name, ok := m.FindPiCommand(text); ok {
+		m.noteCmdUse(name) // ran: leads the "/" popup next time
 		m.ta.Reset()
 		m.refreshCmds()
 		m.refreshAt()
@@ -1281,6 +1284,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.savedModel = prefs.CurrentModel
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts
+	m.RecentCmds = prefs.RecentCmds
 	palette.Win = prefs.EffectiveAutocompleteMax()
 	m.ApplyImageSettings()
 }

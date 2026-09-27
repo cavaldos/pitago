@@ -653,9 +653,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Kind == "thinking" {
 			title = "Thinking level"
 		}
-		if msg.Kind == "theme" {
-			title = "Select theme"
-		}
 		if msg.Kind == "pet" {
 			title = "Select pet"
 		}
@@ -1256,7 +1253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncSideH()
 			m.Refresh()
 			return m, quitDisarmCmd(m.quitGen)
-		case tea.KeyCtrlB:
+		case tea.KeyCtrlE:
 			m.ToggleSide()
 			return m, nil
 		case tea.KeyCtrlY:
@@ -2217,7 +2214,6 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				d.Cursor = n - 1
 			}
-			m.previewTheme(d)
 			d.TrajOff = 0 // new step → detail back to top
 		}
 		return m, nil
@@ -2228,7 +2224,6 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				d.Cursor = 0
 			}
-			m.previewTheme(d)
 			d.TrajOff = 0 // new step → detail back to top
 		}
 		return m, nil
@@ -2316,13 +2311,6 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyEnter:
-		if d.Kind == "shortcuts" { // help page: Enter closes like Esc
-			m.Dialogs = m.Dialogs[1:]
-			m.refreshPiTasks()
-			m.drainQueuedDialogs()
-			m.Refresh()
-			return m, m.ReconcileTurnCmd()
-		}
 		return m.confirmDialog(d)
 	}
 	if km.Type == tea.KeySpace {

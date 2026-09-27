@@ -39,8 +39,8 @@ func TestOpenPconfigTwoPane(t *testing.T) {
 		t.Fatalf("expected one pconfig dialog, got %+v", m.Dialogs)
 	}
 	d := m.Dialogs[0]
-	if len(d.Provs) != 12 || len(d.PsecIDs) != 12 {
-		t.Fatalf("left pane needs 12 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
+	if len(d.Provs) != 14 || len(d.PsecIDs) != 14 {
+		t.Fatalf("left pane needs 14 sections, got %d/%d", len(d.Provs), len(d.PsecIDs))
 	}
 	if !d.ProvFocus {
 		t.Error("focus should start on the left (sections) pane")
@@ -55,7 +55,7 @@ func TestPconfigSectionSwitch(t *testing.T) {
 	m := testPconfigModel()
 	m.OpenPconfig()
 	d := m.Dialogs[0]
-	d.ProvCursor = 1 // Skills
+	d.ProvCursor = secIndex(d, PsecSkill)
 	m.LoadPsecRows(d)
 	if len(d.Options) != 1 || d.Options[0] != "/skill:archify" {
 		t.Fatalf("unexpected skill rows: %v", d.Options)
@@ -93,11 +93,23 @@ func TestPconfigEmptySections(t *testing.T) {
 	m := &Model{}
 	m.OpenPconfig()
 	d := m.Dialogs[0]
-	d.ProvCursor = 1 // Skills, empty
+	d.ProvCursor = secIndex(d, PsecSkill) // empty
 	m.LoadPsecRows(d)
 	if d.Options[0] != "— no skills —" || d.Payload[0] != "" {
 		t.Errorf("empty skills should show an info placeholder, got %v/%v", d.Options, d.Payload)
 	}
+}
+
+// secIndex resolves a section id to its left-pane index. Tests use it
+// instead of a literal so inserting a section never silently retargets an
+// assertion onto its neighbour.
+func secIndex(d *Dialog, id string) int {
+	for i, s := range d.PsecIDs {
+		if s == id {
+			return i
+		}
+	}
+	return 0
 }
 
 func TestPconfigCurPsecBounds(t *testing.T) {
@@ -119,8 +131,13 @@ func TestPconfigKeys(t *testing.T) {
 		return &m2
 	}
 
-	// ↓ on sections reloads the right pane to Skills
-	m = step(mustUpdate(t, m, key(tea.KeyDown)))
+	// ↓ on sections reloads the right pane: Agent → Commands → Shortcuts → Skills
+	if secIndex(m.Dialogs[0], PsecSkill) != 3 {
+		t.Fatalf("section order changed: %v", m.Dialogs[0].PsecIDs)
+	}
+	for i := 0; i < 3; i++ { // Agent → Commands → Shortcuts → Skills
+		m = step(mustUpdate(t, m, key(tea.KeyDown)))
+	}
 	d := m.Dialogs[0]
 	if d.CurPsec() != PsecSkill || len(d.Options) != 1 {
 		t.Fatalf("down should select skills, got %s %v", d.CurPsec(), d.Options)

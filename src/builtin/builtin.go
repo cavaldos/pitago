@@ -610,10 +610,10 @@ func settingsAction(m *app.Model, ri int) (tea.Model, tea.Cmd) {
 			// pi's set_auto_retry persists retry.enabled itself.
 			return refresh()
 		}
-	case 6: // theme picker
+	case 6: // theme → the hub's Theme section
 		m.Dialogs = m.Dialogs[1:]
 		m.Refresh()
-		return m, m.OpenTheme()
+		m.OpenThemeSettings()
 	}
 	return m, nil
 }
@@ -1223,7 +1223,8 @@ func All() []app.Builtin {
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
 				if arg == "" {
-					return m.OpenTheme()
+					m.OpenThemeSettings()
+					return nil
 				}
 				m.SetTheme(arg)
 				return nil
@@ -1258,7 +1259,11 @@ func All() []app.Builtin {
 			Name: "shortcuts", Desc: "Show keyboard shortcuts (/? or Ctrl+Shift+/)", Usage: "/shortcuts",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
-				return m.OpenShortcuts()
+				// The standalone shortcuts window is gone: the settings
+				// hub's Shortcuts section is the same list, plus the
+				// hub-assigned Alt rows, and it can edit them.
+				m.OpenKeysSettings()
+				return nil
 			},
 		},
 		{

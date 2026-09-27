@@ -32,6 +32,8 @@ func (m *Model) refreshCmds() {
 			names[i] = m.Cmds[i].Name + " " + m.Cmds[i].Source + " " + m.Cmds[i].SourceTag() + " " + m.Cmds[i].Description
 		}
 		m.cmdItems = append(m.cmdItems, palette.Match(p, names)...)
+		// Recently used commands lead the list (still prefix-filtered).
+		m.floatRecentCmds()
 	}
 	m.cmdOpen = len(m.cmdItems) > 0
 	if m.cmdCursor >= len(m.cmdItems) {

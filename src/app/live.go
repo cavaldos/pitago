@@ -612,7 +612,7 @@ func (m Model) handleFollowKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch msg.Type {
 	case tea.KeyCtrlQ:
 		return m, m.detachLive(), true
-	case tea.KeyCtrlC, tea.KeyCtrlB, tea.KeyCtrlY, tea.KeyCtrlO, tea.KeyCtrlG:
+	case tea.KeyCtrlC, tea.KeyCtrlE, tea.KeyCtrlY, tea.KeyCtrlO, tea.KeyCtrlG:
 		return m, nil, false // handled by the normal switch below
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 		return m, nil, false // viewport scrolling

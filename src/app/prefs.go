@@ -36,6 +36,7 @@ type Prefs struct {
 	CurrentModel    *ModelRef         `json:"currentModel,omitempty"`    // last-picked model, restored at spawn only
 	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
+	RecentCmds      []string          `json:"recentCmds,omitempty"`      // last-run /command names, most recent first (floated to the top of the "/" popup)
 }
 
 // PrefsPath is ~/.config/pitago/prefs.json ("" when unresolvable).

@@ -179,7 +179,7 @@ script/release.sh v0.0.1
 | `Ctrl+P`                                                    | Cycle model                                                                                                                   |
 | `Ctrl+R`                                                    | Recent-models picker                                                                                                          |
 | `Ctrl+T`                                                    | Cycle thinking level (no picker)                                                                                              |
-| `Ctrl+B`                                                    | Hide/show sidebar (hide for clean drag-select of chat only)                                                                   |
+| `Ctrl+E`                                                    | Hide/show sidebar (hide for clean drag-select of chat only)                                                                   |
 | `Ctrl+Y`                                                    | Yank last assistant answer to clipboard (chat-only, no sidebar)                                                               |
 | `Ctrl+V`                                                    | Paste text — or screenshot data (pngpaste/wl-paste/xclip); errors shown, terminal Cmd+V still works                           |
 | `Backspace`                                                 | Empty input + image tray → remove last `[Image N]` chip                                                                       |
@@ -197,7 +197,7 @@ script/release.sh v0.0.1
 
 - With mouse on (default): hold `Option`/`Shift` (terminal-dependent) to select
 - Or toggle it at runtime with `/mouse` (`/mouse off` for plain highlight-to-copy), or start with `--mouse=false`
-- To copy only chat content (without sidebar): hide the sidebar with `/sidebar` or `Ctrl+B`, then select
+- To copy only chat content (without sidebar): hide the sidebar with `/sidebar` or `Ctrl+E`, then select
 - Or use `Ctrl+Y` / `/yank` (`/copy`) to copy the last assistant answer directly to clipboard
 - Or press `Ctrl+O` to pick any message to copy — sidebar stays visible
 - With mouse on: hold `Option`/`Shift` (terminal-dependent) to select

@@ -1,7 +1,6 @@
 package app
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/components/theme"
@@ -27,30 +26,31 @@ func (m *Model) SetTheme(name string) {
 	m.Refresh()
 }
 
-// previewTheme live-applies the highlighted row of the theme picker
-// (no-op for other dialogs or when already on that theme).
+// previewTheme live-applies the highlighted row of the hub's Theme
+// section (no-op for any other section, or when already on that theme).
 func (m *Model) previewTheme(d *Dialog) {
-	if d.Kind != "theme" || len(d.FIdx) == 0 {
+	if d.Kind != "pconfig" || d.CurPsec() != PsecTheme || len(d.FIdx) == 0 {
 		return
 	}
 	if d.Cursor < 0 || d.Cursor >= len(d.FIdx) {
 		return
 	}
 	ri := d.FIdx[d.Cursor]
-	if ri < 0 || ri >= len(d.Options) || d.Options[ri] == m.ThemeName {
+	if ri < 0 || ri >= len(d.Options) || d.Options[ri] == m.currentTheme() {
 		return
 	}
 	m.applyTheme(d.Options[ri])
 	m.Refresh()
 }
 
-// OpenTheme shows the theme picker (/theme with no args).
-func (m *Model) OpenTheme() tea.Cmd {
-	cur := m.ThemeName
-	if cur == "" {
-		cur = "default"
-	}
-	return func() tea.Msg {
-		return PickerMsg{Kind: "theme", Options: theme.Names(), Current: cur}
-	}
+// currentTheme is the active palette name, always resolved ("" means the
+// row list has nothing to mark as current).
+func (m Model) currentTheme() string {
+	return m.ThemeName
+}
+
+// OpenThemeSettings opens the settings hub on the Theme section. The
+// standalone theme picker is gone — /theme lands here.
+func (m *Model) OpenThemeSettings() {
+	m.OpenHubSection(PsecTheme)
 }

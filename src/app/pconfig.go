@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"pitago/src/components/theme"
 	"pitago/src/pirpc"
 )
 
@@ -23,6 +24,8 @@ import (
 // Hub section ids (Dialog.PsecIDs parallels the left pane).
 const (
 	PsecAgent  = "agent"
+	PsecCmd    = "command"
+	PsecKeys   = "shortcut"
 	PsecSkill  = "skill"
 	PsecPrompt = "prompt"
 	PsecExt    = "extension"
@@ -37,10 +40,11 @@ const (
 )
 
 // Payload markers for non-runnable right rows: "@<section>" opens the
-// classic single dialog, "" is info-only (toast hint on Enter).
+// classic single dialog, "" is info-only (toast hint on Enter). Runnables
+// that mutate in place use their own prefix ("side:", "tasks:", "theme:") —
+// see confirmPconfig in src/builtin.
 const (
 	psecActAgent = "@agent"
-	psecActTheme = "@theme"
 	psecActLogin = "@login"
 )
 
@@ -64,6 +68,10 @@ func CountCmds(cmds []pirpc.RepoCommand) (skill, prompt, ext int) {
 func psecCount(m *Model, id string) int {
 	sk, pr, ex := CountCmds(m.Cmds)
 	switch id {
+	case PsecCmd:
+		return len(m.builtinCmdRows())
+	case PsecKeys:
+		return len(m.shortcutRows())
 	case PsecSkill:
 		return sk
 	case PsecPrompt:
@@ -88,8 +96,8 @@ func psecCount(m *Model, id string) int {
 // OpenPconfig pushes the two-pane settings hub (focus starts on sections).
 func (m *Model) OpenPconfig() {
 	d := &Dialog{Kind: "pconfig", Title: "Pitago settings",
-		Provs:     []string{"Agent", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Tasks", "Sidebar", "Theme", "Login"},
-		PsecIDs:   []string{PsecAgent, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecTasks, PsecSide, PsecTheme, PsecLogin},
+		Provs:     []string{"Agent", "Commands", "Shortcuts", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Tasks", "Sidebar", "Theme", "Login"},
+		PsecIDs:   []string{PsecAgent, PsecCmd, PsecKeys, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecTasks, PsecSide, PsecTheme, PsecLogin},
 		ProvFocus: true}
 	m.LoadPsecRows(d)
 	m.Dialogs = append(m.Dialogs, d)
@@ -105,11 +113,23 @@ func tasksSettingsJump(d *Dialog, choice int) bool {
 // openTasksSettings opens the hub focused on the native Tasks tab
 // (right pane focused, ready to cycle values).
 func (m *Model) openTasksSettings() {
+	m.OpenHubSection(PsecTasks)
+}
+
+// OpenKeysSettings opens the settings hub on the Shortcuts section. The
+// standalone shortcuts dialog is gone — /shortcuts lands here.
+func (m *Model) OpenKeysSettings() {
+	m.OpenHubSection(PsecKeys)
+}
+
+// OpenHubSection opens the hub with the right pane already focused on
+// one section (/shortcuts → Shortcuts, /tasks → Settings).
+func (m *Model) OpenHubSection(id string) {
 	m.OpenPconfig()
 	if n := len(m.Dialogs); n > 0 {
 		if hd := m.Dialogs[n-1]; hd.Kind == "pconfig" {
-			for i, id := range hd.PsecIDs {
-				if id == PsecTasks {
+			for i, sid := range hd.PsecIDs {
+				if sid == id {
 					hd.ProvCursor = i
 				}
 			}
@@ -173,15 +193,60 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			[]string{"model · thinking · steering · images · skills · … (pi parity)"},
 			[]string{psecActAgent}, msg
 	case PsecTheme:
-		msg = "Enter opens the theme picker · Esc closes"
-		return []string{"Open theme picker →"},
-			[]string{"switch TUI theme"},
-			[]string{psecActTheme}, msg
+		// The theme list lives here now (the standalone picker is gone).
+		// ↑↓ live-previews through previewTheme, Enter applies and keeps
+		// the hub open. Accent hex rides the desc so the row is filterable.
+		msg = "↑↓ previews live · Enter applies · Esc closes"
+		for _, n := range theme.Names() {
+			opts = append(opts, n)
+			desc := theme.Get(n).Accent
+			if n == m.currentTheme() {
+				desc = "✓ current · " + desc
+			}
+			descs = append(descs, desc)
+			payload = append(payload, "theme:"+n)
+		}
+		if len(opts) == 0 {
+			opts = []string{"— no themes —"}
+			descs = []string{"the theme table is empty"}
+			payload = []string{""}
+		}
 	case PsecLogin:
 		msg = "Enter opens login · Esc closes"
 		return []string{"Open login →"},
 			[]string{"providers · keys · OAuth"},
 			[]string{psecActLogin}, msg
+	case PsecCmd:
+		// The local registry only: pi's re-implemented builtins and
+		// pitago's own commands. Extension/prompt/skill commands stay in
+		// their own sections, so nothing third-party lands here.
+		msg = "Enter fills /command · Ctrl+S assigns Alt-shortcut · Esc closes"
+		for _, r := range m.builtinCmdRows() {
+			opts = append(opts, "/"+r.name)
+			descs = append(descs, shortDesc(r.desc, 42)+" ["+r.tag+"]"+m.shortcutSuffix(r.name))
+			payload = append(payload, r.name)
+		}
+		if len(opts) == 0 {
+			opts = []string{"— no commands —"}
+			descs = []string{"the command registry is empty"}
+			payload = []string{""}
+		}
+	case PsecKeys:
+		// The /shortcuts reference, in the hub: every built-in key plus the
+		// Alt shortcuts assigned from the Commands section. Custom rows
+		// carry their /command as payload, so Ctrl+S re-opens the capture
+		// dialog for it; the built-in keys are info-only.
+		msg = "keyboard reference · type filters · Ctrl+S reassigns a custom row · Esc closes"
+		for _, r := range m.shortcutRows() {
+			opts = append(opts, r.key)
+			descs = append(descs, shortDesc(r.desc, 40)+" ["+r.cat+"]")
+			payload = append(payload, r.cmd)
+		}
+		if len(opts) == 0 {
+			opts = []string{"— no shortcuts —"}
+			descs = []string{"the shortcut table is empty"}
+			payload = []string{""}
+		}
 	case PsecSkill:
 		msg = "Enter fills /command · Ctrl+S assigns Alt-shortcut · Esc closes"
 		for _, c := range m.Cmds {
@@ -635,10 +700,11 @@ func (m *Model) shortcutSuffix(cmd string) string {
 }
 
 // shortcutTarget resolves the highlighted right-pane row to its assignable
-// /command (skill/prompt/extension runnable rows only, "" otherwise).
+// /command (command/skill/prompt/extension rows, and the custom Alt rows
+// of the Shortcuts section; "" otherwise).
 func shortcutTarget(d *Dialog, ri int) string {
 	switch d.CurPsec() {
-	case PsecSkill, PsecPrompt, PsecExt:
+	case PsecCmd, PsecSkill, PsecPrompt, PsecExt, PsecKeys:
 	default:
 		return ""
 	}
@@ -746,7 +812,7 @@ func (m *Model) FillCommand(name string) {
 // updateDialog path).
 func isFilterKind(kind string) bool {
 	switch kind {
-	case "model", "thinking", "sessions", "login", "logout", "shortcuts", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet":
+	case "model", "thinking", "sessions", "login", "logout", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet":
 		return true
 	}
 	return false
@@ -780,6 +846,9 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 			} else {
 				d.Cursor = (d.Cursor - 1 + n) % n
 			}
+			// Theme rows are the one hub section that previews while
+			// browsing, so ↑↓ repaints in the new palette.
+			m.previewTheme(d)
 		}
 		return m, nil
 	case tea.KeyLeft:

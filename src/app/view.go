@@ -1388,9 +1388,6 @@ func (m Model) renderDialog() string {
 	if d.Kind == "askUser" {
 		return m.renderAskUserDialog(d)
 	}
-	if d.Kind == "shortcuts" {
-		return m.renderShortcutsDialog(d)
-	}
 	if d.Kind == "settings" && len(d.Provs) > 0 {
 		return m.renderSettingsDialog(d)
 	}
