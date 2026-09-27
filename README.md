@@ -4,7 +4,11 @@
 
 <div align="center">
 
-![pitago demo](resources/demo.gif)
+<video src="resources/demo.web.mp4" poster="resources/demo-poster.jpg" width="880" autoplay muted loop playsinline controls>
+  <p>Your browser cannot play the demo video. <a href="resources/demo.web.mp4">Download the MP4</a> instead.</p>
+</video>
+
+<sub>88s walkthrough — click ▶ to play (nothing to install). Prefer something lighter? <a href="resources/demo.gif">GIF version</a> · <a href="resources/demo.web.mp4">download MP4</a></sub>
 
 [![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/cavaldos/pitago/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/cavaldos/pitago/total?style=flat-square)](https://github.com/cavaldos/pitago/releases)
