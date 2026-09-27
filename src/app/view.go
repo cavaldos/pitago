@@ -112,7 +112,26 @@ func (m *Model) renderBlocks() string {
 	}
 	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
 	tidy := m.Tidy
+	// blockLine is rebuilt on every pass (JumpToEntry scrolls by it) but the
+	// per-block strings are not: they come from the render cache, so a clean
+	// history is only re-measured, never re-rendered.
+	if len(m.blockLine) != len(m.blocks) {
+		nl := make([]int, len(m.blocks))
+		copy(nl, m.blockLine)
+		m.blockLine = nl
+	}
+	line := strings.Count(b.String(), "\n")
 	for i, bl := range m.blocks {
+		// The jump mark lives outside renderOneBlock on purpose: it is a
+		// scroll anchor, not block content, and putting it in the cached
+		// string would fold it into blockKey's input for every other block.
+		if i == m.jumpBlock {
+			b.WriteString(toolStyle.Render(jumpMark) + "\n")
+			line++
+		}
+		// Hidden/skipped blocks render as "", so they record the line the
+		// next visible block will use and the table never drifts.
+		m.blockLine[i] = line
 		// Image-bearing transcript blocks are always rebuilt as safe squares.
 		// This purges any cache entry created by an older image-render path
 		// before scroll/repaint can re-emit Kitty/iTerm placement escapes.
@@ -122,6 +141,7 @@ func (m *Model) renderBlocks() string {
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
 		if m.renderCacheKey[i] == key {
 			b.WriteString(m.renderCache[i])
+			line += strings.Count(m.renderCache[i], "\n")
 			continue
 		}
 		s, skip := m.renderOneBlock(bl, cw)
@@ -131,6 +151,7 @@ func (m *Model) renderBlocks() string {
 		m.renderCacheKey[i] = key
 		m.renderCache[i] = s
 		b.WriteString(s)
+		line += strings.Count(s, "\n")
 	}
 	if m.thinking {
 		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
@@ -1393,6 +1414,9 @@ func (m Model) renderDialog() string {
 	}
 	if d.Kind == "tree" {
 		return m.renderTreeDialog(d)
+	}
+	if d.Kind == "treeAction" {
+		return m.renderTreeActionDialog(d)
 	}
 	if d.Kind == "sessions" {
 		return m.renderResumeDialog(d)

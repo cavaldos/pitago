@@ -30,6 +30,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"update":      confirmUpdate,
 		"trajectory":  confirmTrajectory,
 		"tree":        confirmTree,
+		"treeAction":  confirmTreeAction,
 		"fork":        confirmFork,
 		"subagents":   confirmSubagents,
 		"live":        confirmLive,
@@ -92,15 +93,105 @@ func confirmFork(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	if ri < 0 || ri >= len(d.Paths) {
 		return m, nil
 	}
-	entryID := d.Paths[ri]
 	m.Dialogs = m.Dialogs[1:]
+	return m, forkEntryCmd(m, d.Paths[ri])
+}
+
+// forkEntryCmd is the single fork pipeline behind /fork and the tree menu's
+// "Fork from here", so the two can never disagree on pi's fork contract: one
+// Fork(entryID) round-trip, the branch text handed back to the editor, and
+// session_before_switch vetoes surfaced as an error (Reload only when the
+// fork actually replaced the session).
+func forkEntryCmd(m *app.Model, entryID string) tea.Cmd {
 	m.Status = "forking session…"
 	m.Refresh()
-	return m, func() tea.Msg {
+	return func() tea.Msg {
 		res, err := m.Pi.Fork(entryID)
 		verr := res.VetoErr("fork", err)
 		return app.PiOpMsg{Op: "fork", Notice: "forked to a new session", Text: res.Text,
 			Err: verr, Reload: verr == nil}
+	}
+}
+
+// The "Tree action" menu rows. Exported so the builder (confirmTree) and the
+// dispatcher cannot drift apart on a label.
+const (
+	TreeActJump = "Jump to message"
+	TreeActView = "View entry"
+	TreeActCopy = "Copy entry"
+	TreeActFork = "Fork from here"
+	TreeActBack = "Back to tree"
+)
+
+// confirmTreeAction runs one row of the tree menu. "Back to tree" and
+// "Copy entry" pop only the menu so the tree stays open underneath (pi's
+// Esc re-opens the tree with the same row selected, and its onCopy hint
+// shows in the tree footer); the other arms leave the tree for the chat.
+func confirmTreeAction(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	if ri < 0 || ri >= len(d.Options) {
+		return m, nil
+	}
+	detail := d.Message
+	if len(d.Payload) > 0 {
+		detail = d.Payload[0]
+	}
+	detail = strings.TrimSpace(detail)
+	id := ""
+	if len(d.Paths) > 0 {
+		id = d.Paths[0]
+	}
+	ordinal := -1
+	if len(d.TreeJump) > 0 {
+		ordinal = d.TreeJump[0]
+	}
+	switch d.Options[ri] {
+	case TreeActJump:
+		m.CloseAllDialogs()
+		// Fallback: a row can carry an ordinal that the loaded transcript
+		// does not have (e.g. /tree before the messages landed). Scrolling
+		// nowhere is worse than showing the entry, so degrade to View entry.
+		if ordinal >= 0 && m.JumpToEntry(ordinal) {
+			return m, nil // JumpToEntry already repainted
+		}
+		return m, viewTreeEntry(m, detail)
+	case TreeActView:
+		m.CloseAllDialogs()
+		return m, viewTreeEntry(m, detail)
+	case TreeActCopy:
+		popActionMenu(m)
+		if detail == "" {
+			return m, nil
+		}
+		return m, m.CopyEntryText(detail)
+	case TreeActFork:
+		if id == "" {
+			return m, nil
+		}
+		m.CloseAllDialogs()
+		return m, forkEntryCmd(m, id)
+	case TreeActBack:
+		popActionMenu(m)
+		m.Refresh()
+	}
+	return m, nil
+}
+
+// viewTreeEntry prints a tree entry into the transcript — pitago's local
+// stand-in for the branch navigation pi would do over session.navigateTree.
+func viewTreeEntry(m *app.Model, detail string) tea.Cmd {
+	m.AddBlock(app.Block{Kind: "tree", Text: detail})
+	m.Refresh()
+	return nil
+}
+
+// popActionMenu drops the action menu and only the action menu, so the tree
+// underneath always survives: pi's Esc returns to the tree with the same row
+// selected, and popping blindly could empty the stack if the menu were ever
+// opened on its own. Dialogs[0] is the active dialog (see confirmTree), so
+// that is the one that has to be the menu.
+func popActionMenu(m *app.Model) {
+	if len(m.Dialogs) > 0 && m.Dialogs[0].Kind == "treeAction" {
+		m.Dialogs = m.Dialogs[1:]
 	}
 }
 

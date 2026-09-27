@@ -278,7 +278,8 @@ func TestAssistantTableRowsAligned(t *testing.T) {
 // through the flush-left gutter came out with the top border sticking 2
 // cells past the sides. Every rendered row must share one visual width.
 func TestUserBoxRowsAligned(t *testing.T) {
-	m := Model{blocks: []Block{{Kind: "user", Text: "hello"}}}
+	// jumpBlock: -1 = no "jumped here" mark; the zero value would mark block 0.
+	m := Model{blocks: []Block{{Kind: "user", Text: "hello"}}, jumpBlock: -1}
 	m.vp = viewport.New(100, 20)
 	rows := strings.Split(stripANSI(m.renderBlocks()), "\n")
 	var widths []int

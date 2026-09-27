@@ -33,7 +33,7 @@ func trajNodes() []pirpc.TreeNode {
 	tr.Message.ToolName = "read"
 	tr.Message.Content = json.RawMessage(`[{"type":"text","text":"file content here"}]`)
 	return []pirpc.TreeNode{{
-		Entry: msgEntry("u1", "", "user", `"hello"+`),
+		Entry: msgEntry("u1", "", "user", `"hello"`),
 		Children: []pirpc.TreeNode{
 			{Entry: msgEntry("a1", "u1", "assistant", asst), Children: []pirpc.TreeNode{
 				{Entry: tr},

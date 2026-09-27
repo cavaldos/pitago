@@ -19,13 +19,15 @@ type clearCopyHintMsg struct{ gen int }
 
 // dialogCopyable reports whether a dialog kind exposes a row to copy.
 //
-// Only the two browsing dialogs qualify. Every unmodified rune is consumed
+// Only the browsing dialogs qualify. Every unmodified rune is consumed
 // by their type-to-filter path, so the copy action cannot be a bare letter
 // anyway — Ctrl+Y is used, matching the app's existing yank vocabulary.
+// The tree joins them for pi's sake: its selector carries onCopy, and its
+// footer promises Ctrl+Y, so the key has to answer there too.
 // The other copyable kind, "yank", already copies on Enter and has no
 // Ctrl+Y of its own.
 func dialogCopyable(d *Dialog) bool {
-	return d.Kind == "trajectory" || d.Kind == "notification"
+	return d.Kind == "trajectory" || d.Kind == "notification" || d.Kind == "tree"
 }
 
 // copyDialogSelection copies the selected row's full text and returns the
@@ -36,6 +38,30 @@ func dialogCopyable(d *Dialog) bool {
 // user can keep browsing.
 func (m *Model) copyDialogSelection(d *Dialog) tea.Cmd {
 	text := trajSelected(d) // same resolver the detail pane renders from
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if err := clipWrite(text); err != nil {
+		m.copyGen++
+		m.copyHint = errStyle.Render("copy failed: " + err.Error())
+	} else {
+		m.copyGen++
+		m.copyHint = okStyle.Render(fmt.Sprintf("✓ copied %d chars to clipboard", len([]rune(text))))
+	}
+	m.applyPopupH()
+	m.Refresh()
+	gen := m.copyGen
+	return tea.Tick(copyHintTTL, func(time.Time) tea.Msg {
+		return clearCopyHintMsg{gen: gen}
+	})
+}
+
+// CopyEntryText writes caller-supplied text to the clipboard and raises the
+// same footer confirmation copyDialogSelection does. The tree action menu
+// owns the copy (it knows the full entry text, which no row of the tree
+// dialog carries) and must not have to fake a selection to reuse the copy
+// path.
+func (m *Model) CopyEntryText(text string) tea.Cmd {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}

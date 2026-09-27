@@ -48,13 +48,13 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 - `agent_settled` → refresh get_session_stats (tokens, cost, context %) into the sidebar
 - Enter: prompt (idle) / steer (streaming); Esc: dialog? close : clear_queue+abort+restore queued text into the input; Ctrl+N: new_session; Ctrl+C: quit + kill pi
 - Copy: Ctrl+Y is context-sensitive. In chat it yanks the last assistant answer; in the
-  `trajectory` and `notification` dialogs it copies the selected row's full text and leaves
-  the dialog open. Those two are the only copyable kinds — every unmodified rune is consumed
-  by their type-to-filter path, so the action cannot be a bare letter, and `yank` already
-  copies on Enter. Confirmation shows in the dialog footer, not as a toast: `View` returns
-  the dialog before `overlayToasts` runs, so a notice raised inside a modal would surface as
-  a stale popup after it closed. `notification` rows keep the full text in `Payload` because
-  `Options` is truncated to 180 cells for display.
+  `trajectory`, `notification` and `tree` dialogs it copies the selected row's full text and
+  leaves the dialog open. Those three are the only copyable kinds — every unmodified rune is
+  consumed by their type-to-filter path, so the action cannot be a bare letter, and `yank`
+  already copies on Enter. Confirmation shows in the dialog footer, not as a toast: `View`
+  returns the dialog before `overlayToasts` runs, so a notice raised inside a modal would
+  surface as a stale popup after it closed. `notification` rows keep the full text in `Payload`
+  because `Options` is truncated to 180 cells for display.
 - Model: pitago remembers the last model the user *explicitly* picked (`/model`, `/recent`,
   `Ctrl+P`) in `~/.config/pitago/prefs.json` (`currentModel`, single writer, user action only)
   and passes it to the pi child as `--provider/--model` at process start; explicit
@@ -71,14 +71,17 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 ## Native built-ins (pi built-ins don't run over RPC, so re-implemented)
 
 - `/model` filterable picker (all configured/scoped models) + Ctrl+P quick cycle
-- `/thinking` level picker, `/tree` session-tree view
+- `/thinking` level picker, `/tree` session-tree view + pi's per-row action menu (`Jump to message` / `View entry` / `Copy entry` / `Fork from here` / `Back to tree`)
 - `/settings` overlay: model, thinking, steering/follow-up modes, auto-compact, auto-retry
 - `/login` / `/logout`: API-key keystore (0600) + auto-respawn pi; OAuth guided via stock pi
 - `/reload` + 45s background poll + post-turn refresh → auto-detect new pi commands
 
 ## Out of scope (YAGNI)
 
-- Clipboard-paste / drag-drop images, setWidget custom rendering, fork/tree UI, manual compaction, multi-session tabs.
+- Clipboard-paste / drag-drop images, setWidget custom rendering, manual compaction, multi-session tabs.
+  Real session-tree navigation is out of reach too: pi's `navigateTree` (the `Summarize branch?`
+  prompt in its own TUI) is not in the RPC command surface, so `/tree` actions are local
+  (scroll the transcript, copy, fork) instead of moving pi's leaf.
 - `@image.png` vision IS in scope (components/image → RPC `images`, pi CLI parity).
   Dropped/pasted/Tab-completed image paths collapse into an input-tray
   (`[Image N]` chips, src/app/attach.go) so long escaped paths never clog

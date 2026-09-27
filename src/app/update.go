@@ -166,6 +166,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m.updateDialog(tea.KeyMsg{Type: t})
 			}
+			// Click-to-select on the tree and its action menu: one click on a
+			// tree row runs it (which opens the menu), and a click on a menu
+			// row selects it. Mouse is off by default (Alt+M), so this path
+			// stays a convenience over the keyboard, never a second code path
+			// with its own rules.
+			if mm.Action == tea.MouseActionPress && mm.Button == tea.MouseButtonLeft {
+				if d := m.Dialogs[0]; d.Kind == "tree" {
+					nm, cmd, _ := m.clickTreeDialog(d, mm)
+					return nm, cmd
+				}
+				if d := m.Dialogs[0]; d.Kind == "treeAction" {
+					nm, cmd, _ := m.clickTreeAction(d, mm)
+					return nm, cmd
+				}
+			}
 			return m, nil
 		}
 		if km, ok := msg.(tea.KeyMsg); ok {
@@ -331,6 +346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionFile = msg.state.SessionFile
 		m.refreshPiTasks() // store file covers /tasks-menu edits (no RPC)
 		m.blocks = nil
+		m.jumpBlock = -1 // a jump mark belongs to the transcript it was set in
 		m.tools = make(map[string]int)
 		m.progressByKey = make(map[string]int)
 		m.hist = nil
@@ -585,6 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.blocks = nil
+		m.jumpBlock = -1 // a jump mark belongs to the transcript it was set in
 		m.tools = make(map[string]int)
 		m.progressByKey = make(map[string]int)
 		m.curAsst, m.curThink = -1, -1
@@ -804,8 +821,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				mode = "default"
 			}
 			d := &Dialog{Kind: "tree", Title: "Tree (" + mode + ")",
-				Message: "session tree · ↑↓ move · Enter views the full entry · type filters",
+				Message: "session tree · ↑↓ move · Enter opens the action menu · type filters",
 				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload,
+				// The entry id rides in Paths, the field every picker that
+				// acts on a row already uses (sessions: file, /fork: entry).
+				Paths: msg.TreeIDs, TreeJump: msg.TreeJump, TreeRole: msg.TreeRole,
 				Scope: mode, Filter: msg.Filter}
 			d.Reindex()
 			if msg.Current >= 0 {
@@ -2639,6 +2659,22 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		return nm, cmd
 	}
 	return m, nil
+}
+
+// CloseAllDialogs drops the whole dialog stack — the action menu AND the tree
+// behind it, which no key can do: Esc is pi's "back to the tree with the same
+// row selected" and must keep popping one at a time. It is the "close" action
+// of the menu, and it still promotes a parked extension request, so an
+// extension blocked on our UI is not stranded.
+func (m *Model) CloseAllDialogs() {
+	if len(m.Dialogs) == 0 {
+		return
+	}
+	m.Dialogs = nil
+	m.jumpBlock = -1 // the marked block belonged to the transcript behind it
+	m.refreshPiTasks()
+	m.drainQueuedDialogs()
+	m.Refresh()
 }
 
 // answerInput replies to an extension free-text dialog (ui.input /

@@ -46,6 +46,8 @@ type Dialog struct {
 	Paths             []string          // sessions picker: parallel session file per option
 	Scope             string            // sessions picker: "current" | "all" (Tab toggles)
 	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
+	TreeJump          []int             // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
+	TreeRole          []string          // tree: role ("user"/"assistant") of a message row, "" for every other entry type
 	Current           string            // the value in use, marked in the grid/list (pet: "●" cell)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
@@ -230,6 +232,8 @@ type Model struct {
 	plugAt              time.Time // first press timestamp for the pending plugin op
 	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
+	blockLine           []int     // transcript line where each block starts (parallel to m.blocks; hidden/skip blocks share the next visible line)
+	jumpBlock           int       // block index carrying the "jumped here" mark (-1 = no mark; New sets it, a Model literal without it would mark block 0)
 	chatContent         string    // transcript string currently loaded into vp (setChatContent skips an unchanged re-measure)
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
 	sideCacheAt         time.Time // last sidebar rebuild
@@ -362,6 +366,9 @@ type SettingsMsg struct {
 type TreeMsg struct {
 	Mode                    string
 	Options, Descs, Payload []string
+	TreeIDs                 []string // tree: session entry id per row
+	TreeJump                []int    // row's user/assistant message ordinal in the transcript, -1 = none
+	TreeRole                []string // "user"/"assistant" for message rows, "" otherwise
 	Filter                  string
 	Current                 int
 	Err                     error
@@ -528,6 +535,7 @@ func New(pi *pirpc.Client, cwd string) Model {
 		progressByKey: make(map[string]int),
 		curAsst:       -1,
 		curThink:      -1,
+		jumpBlock:     -1, // no "jumped here" mark until JumpToEntry sets one
 		histIdx:       -1,
 		Status:        "connecting to pi…",
 		cwd:           cwd,
@@ -576,6 +584,11 @@ func (m *Model) AddBlock(b Block) int {
 	m.blocks = append(m.blocks, b)
 	return len(m.blocks) - 1
 }
+
+// BlockCount reports how many transcript blocks exist. It is a test seam:
+// src/builtin drives the app through its exported API only, so asserting
+// that a tree action posted a block needs a way to count them.
+func (m Model) BlockCount() int { return len(m.blocks) }
 
 // addChatNotice appends a notice that is intentionally part of the
 // conversation. Most notices use AddBlock and stay ephemeral; subagent

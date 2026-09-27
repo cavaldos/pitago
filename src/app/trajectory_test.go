@@ -297,7 +297,7 @@ func TestRenderTreeDialogUsesTreeLabelsAndPiRows(t *testing.T) {
 		Payload: []string{"• user: hi\nuser · id u1 · 10:00:01\n\nhi", "• assistant: ok\nassistant · id a1 · 10:00:02\n\nok"}}
 	d.Reindex()
 	got := stripANSI(m.renderTreeDialog(d))
-	for _, want := range []string{"Session Tree", "↑/↓ move", "←/→ page", "Type to search:", "• user: hi", "user: hi", "(1/2)"} {
+	for _, want := range []string{"Session Tree", "↑↓ move", "←/→ page", "Type to search:", "• user: hi", "user: hi", "(1/2)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tree tab missing %q in:\n%s", want, got)
 		}

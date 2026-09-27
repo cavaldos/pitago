@@ -37,7 +37,7 @@ func copyableDialog(kind string, payload ...string) *Dialog {
 }
 
 func TestDialogCopyableKinds(t *testing.T) {
-	for _, kind := range []string{"trajectory", "notification"} {
+	for _, kind := range []string{"trajectory", "notification", "tree"} {
 		if !dialogCopyable(copyableDialog(kind, "x")) {
 			t.Errorf("%s must be copyable", kind)
 		}

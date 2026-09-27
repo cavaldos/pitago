@@ -164,15 +164,21 @@ func TestRenderTreeFilters(t *testing.T) {
 }
 
 func TestBuildTreeRowsForNativeTab(t *testing.T) {
-	opts, descs, payload, current := buildTreeRows(trajNodes(), "t1", "all")
-	if len(opts) != 8 || len(descs) != 8 || len(payload) != 8 {
-		t.Fatalf("tree rows must stay parallel: opts=%d descs=%d payload=%d", len(opts), len(descs), len(payload))
+	rows := buildTreeRows(trajNodes(), "t1", "all")
+	if len(rows.opts) != 8 || len(rows.descs) != 8 || len(rows.payload) != 8 {
+		t.Fatalf("tree rows must stay parallel: opts=%d descs=%d payload=%d", len(rows.opts), len(rows.descs), len(rows.payload))
 	}
-	if current != 2 {
-		t.Fatalf("active leaf index = %d, want 2", current)
+	if len(rows.ids) != 8 || len(rows.jump) != 8 || len(rows.role) != 8 {
+		t.Fatalf("tree metadata must stay parallel: ids=%d jump=%d role=%d", len(rows.ids), len(rows.jump), len(rows.role))
+	}
+	if rows.current != 2 {
+		t.Fatalf("active leaf index = %d, want 2", rows.current)
+	}
+	if rows.ids[rows.current] != "t1" {
+		t.Errorf("row %d must be the leaf, got id %q", rows.current, rows.ids[rows.current])
 	}
 	want := []string{
-		"• user: ",
+		"• user: hello",
 		"• assistant: I'll read it",
 		"• [read: a.go]",
 		"[compaction: 12k tokens]",
@@ -182,34 +188,186 @@ func TestBuildTreeRowsForNativeTab(t *testing.T) {
 		"[title: demo]",
 	}
 	for i := range want {
-		if opts[i] != want[i] {
-			t.Errorf("row %d:\n got %q\nwant %q", i, opts[i], want[i])
+		if rows.opts[i] != want[i] {
+			t.Errorf("row %d:\n got %q\nwant %q", i, rows.opts[i], want[i])
 		}
 	}
-	if !strings.Contains(descs[0], "user") || !strings.Contains(descs[2], "tool") {
-		t.Errorf("descs should describe message kinds: %v", descs)
+	if !strings.Contains(rows.descs[0], "user") || !strings.Contains(rows.descs[2], "tool") {
+		t.Errorf("descs should describe message kinds: %v", rows.descs)
 	}
-	if !strings.Contains(payload[1], "user wants the file") || !strings.Contains(payload[1], `"path":"a.go"`) {
-		t.Errorf("assistant payload should include thinking and tool args: %q", payload[1])
+	if !strings.Contains(rows.payload[1], "user wants the file") || !strings.Contains(rows.payload[1], `"path":"a.go"`) {
+		t.Errorf("assistant payload should include thinking and tool args: %q", rows.payload[1])
 	}
-	if !strings.Contains(payload[2], "file content here") {
-		t.Errorf("tool payload should include result: %q", payload[2])
+	if !strings.Contains(rows.payload[2], "file content here") {
+		t.Errorf("tool payload should include result: %q", rows.payload[2])
+	}
+	// The active branch here is u1 → a1 → t1: only the user and the
+	// text-carrying assistant are transcript blocks; the toolResult and the
+	// settings/noise entries are not jump targets and carry no role.
+	wantIDs := []string{"u1", "a1", "t1", "c1", "m1", "h1", "l1", "s1"}
+	wantJump := []int{0, 1, -1, -1, -1, -1, -1, -1}
+	wantRole := []string{"user", "assistant", "", "", "", "", "", ""}
+	for i := range wantIDs {
+		if rows.ids[i] != wantIDs[i] || rows.jump[i] != wantJump[i] || rows.role[i] != wantRole[i] {
+			t.Errorf("row %d: id=%q jump=%d role=%q, want id=%q jump=%d role=%q",
+				i, rows.ids[i], rows.jump[i], rows.role[i], wantIDs[i], wantJump[i], wantRole[i])
+		}
 	}
 }
 
-func TestConfirmTreeClosesTabAndPostsEntry(t *testing.T) {
-	m := &app.Model{}
-	d := &app.Dialog{Kind: "tree", Options: []string{"• user: hi"},
-		Descs: []string{"user · —"}, Payload: []string{"• user: hi\nuser · id abc · —\n\nhi"}}
-	d.Reindex()
-	m.Dialogs = append(m.Dialogs, d)
-	if _, ok := Confirmers()["tree"]; !ok {
-		t.Fatal("tree missing from Confirmers")
+// Jump ordinals follow the active branch and the transcript, not the flat
+// list: an assistant turn that only issued a toolCall, its toolResult, a
+// compaction and a whole abandoned branch all lack a block to scroll to.
+func TestBuildTreeRowsJumpOrdinals(t *testing.T) {
+	toolOnly := msgEntry("a2", "a1", "assistant", `[{"type":"toolCall","id":"tc9","name":"read","arguments":{}}]`)
+	tr := pirpc.TreeEntry{Type: "message", ID: "tr1", ParentID: strptr("a2")}
+	tr.Message.Role = "toolResult"
+	tr.Message.ToolCallID = "tc9"
+	tr.Message.ToolName = "read"
+	nodes := []pirpc.TreeNode{{
+		Entry: msgEntry("u1", "", "user", `"first question"`),
+		Children: []pirpc.TreeNode{
+			{Entry: msgEntry("a1", "u1", "assistant", `[{"type":"text","text":"on it"}]`), Children: []pirpc.TreeNode{
+				{Entry: toolOnly, Children: []pirpc.TreeNode{{Entry: tr}}},
+			}},
+			{Entry: pirpc.TreeEntry{Type: "compaction", ID: "c1", TokensBefore: 900}},
+			{Entry: msgEntry("u2", "u1", "user", `"abandoned"`), Children: []pirpc.TreeNode{
+				{Entry: msgEntry("a9", "u2", "assistant", `[{"type":"text","text":"ghost"}]`)},
+			}},
+			{Entry: pirpc.TreeEntry{Type: "label", ID: "l1", Label: "wip"}},
+		},
+	}}
+	rows := buildTreeRows(nodes, "tr1", "all")
+	if rows.current != 3 || rows.ids[3] != "tr1" {
+		t.Fatalf("current = %d (id %q), want 3 (tr1)", rows.current, rows.ids[3])
 	}
-	if _, cmd := confirmTree(m, m.Dialogs[0], 0); cmd != nil {
-		t.Error("confirm tree should be synchronous")
+	wantJump := []int{0, 1, -1, -1, -1, -1, -1, -1}
+	wantRole := []string{"user", "assistant", "assistant", "", "", "user", "assistant", ""}
+	if len(rows.jump) != len(wantJump) {
+		t.Fatalf("jump rows = %v, want %d", rows.jump, len(wantJump))
 	}
-	if len(m.Dialogs) != 0 {
-		t.Fatalf("tree dialog should close, got %d", len(m.Dialogs))
+	for i := range wantJump {
+		if rows.jump[i] != wantJump[i] || rows.role[i] != wantRole[i] {
+			t.Errorf("row %d (%s): jump=%d role=%q, want jump=%d role=%q",
+				i, rows.ids[i], rows.jump[i], rows.role[i], wantJump[i], wantRole[i])
+		}
+	}
+}
+
+// A user message carrying only images still becomes a transcript block
+// (app.withImages renders "📷 1 image attached"), so it must keep an
+// ordinal. Skipping it would shift every later jump one message early.
+func TestBuildTreeRowsNumbersImageOnlyUserMessage(t *testing.T) {
+	imgOnly := msgEntry("u1", "", "user", `[{"type":"image","data":"AAAA","mimeType":"image/png"}]`)
+	nodes := []pirpc.TreeNode{{
+		Entry: imgOnly,
+		Children: []pirpc.TreeNode{
+			{Entry: msgEntry("a1", "u1", "assistant", `[{"type":"text","text":"a cat"}]`)},
+			{Entry: msgEntry("a2", "a1", "assistant", `[{"type":"text","text":"ok"}]`)},
+		},
+	}}
+	rows := buildTreeRows(nodes, "a2", "all")
+	want := []int{0, 1, 2}
+	if len(rows.jump) != len(want) {
+		t.Fatalf("jump rows = %v, want %v", rows.jump, want)
+	}
+	for i := range want {
+		if rows.jump[i] != want[i] {
+			t.Errorf("row %d (%s, role %q): jump = %d, want %d", i, rows.ids[i], rows.role[i], rows.jump[i], want[i])
+		}
+	}
+}
+
+// An assistant message with several text blocks becomes SEVERAL transcript
+// blocks (restore adds one per block), and a plain-string message is one
+// block with no content array at all. Both shapes have to consume exactly
+// as many ordinals as blocks, or every later jump lands early.
+func TestBuildTreeRowsNumbersEachTranscriptBlock(t *testing.T) {
+	twoText := msgEntry("a1", "u1", "assistant", `[{"type":"text","text":"first"},{"type":"text","text":"second"}]`)
+	plain := msgEntry("u2", "a1", "user", `"next question"`)
+	plainAsst := msgEntry("a2", "u2", "assistant", `"plain answer"`)
+	nodes := []pirpc.TreeNode{{
+		Entry: msgEntry("u1", "", "user", `"hi"`),
+		Children: []pirpc.TreeNode{
+			{Entry: twoText},
+			{Entry: plain, Children: []pirpc.TreeNode{{Entry: plainAsst}}},
+		},
+	}}
+	rows := buildTreeRows(nodes, "a2", "all")
+	// u1=0, a1=1 (its SECOND text block is ordinal 2), u2=3, a2=4.
+	want := []int{0, 1, 3, 4}
+	if len(rows.jump) != len(want) {
+		t.Fatalf("jump rows = %v, want %v", rows.jump, want)
+	}
+	for i := range want {
+		if rows.jump[i] != want[i] {
+			t.Errorf("row %d (%s, role %q): jump = %d, want %d", i, rows.ids[i], rows.role[i], rows.jump[i], want[i])
+		}
+	}
+}
+
+// Enter on a tree row must open the local action menu — pi answers a picked
+// row with a follow-up selector rather than printing the entry — and the row
+// set must follow what pi can actually do: fork only from a user message
+// (runtimeHost.fork rejects every other entry), jump only where a transcript
+// block exists.
+func TestConfirmTreeOpensActionMenu(t *testing.T) {
+	cases := []struct {
+		name              string
+		row, desc, detail string
+		id                string
+		jump              int
+		role              string
+		want              []string
+	}{
+		{"user", "• user: hi", "user · 10:00", "user · id abc · 10:00\n\nhi", "e1", 0, "user",
+			[]string{TreeActJump, TreeActCopy, TreeActFork, TreeActBack}},
+		{"assistant", "• assistant: ok", "assistant · 10:00", "assistant · id ab2 · 10:00\n\nok", "e2", 1, "assistant",
+			[]string{TreeActJump, TreeActCopy, TreeActBack}},
+		{"compaction", "[compaction: 12k tokens]", "compaction · 10:00", "compaction · id ab3 · 10:00", "e3", -1, "",
+			[]string{TreeActView, TreeActCopy, TreeActBack}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := &app.Model{}
+			tree := &app.Dialog{Kind: "tree", Options: []string{c.row}, Descs: []string{c.desc},
+				Payload: []string{c.detail}, Paths: []string{c.id},
+				TreeJump: []int{c.jump}, TreeRole: []string{c.role}}
+			tree.Reindex()
+			m.Dialogs = append(m.Dialogs, tree)
+			if _, ok := Confirmers()["tree"]; !ok {
+				t.Fatal("tree missing from Confirmers")
+			}
+			if _, cmd := confirmTree(m, m.Dialogs[0], 0); cmd != nil {
+				t.Error("confirm tree should be synchronous")
+			}
+			if len(m.Dialogs) != 2 {
+				t.Fatalf("the tree must stay open under the menu, got %d dialogs", len(m.Dialogs))
+			}
+			// Dialogs[0] is the active dialog everywhere in the app (View,
+			// updateDialog, dismissDialog), so the menu has to be in front —
+			// appended at the end it would be invisible and leak one dialog
+			// per Enter.
+			act := m.Dialogs[0]
+			if m.Dialogs[1].Kind != "tree" {
+				t.Fatalf("the tree must sit behind the menu, got %q", m.Dialogs[1].Kind)
+			}
+			if act.Kind != "treeAction" || act.Title != "Tree action" || act.Message != c.row {
+				t.Errorf("menu dialog = %+v", act)
+			}
+			if strings.Join(act.Options, "|") != strings.Join(c.want, "|") {
+				t.Errorf("labels = %v, want %v", act.Options, c.want)
+			}
+			if len(act.Descs) != len(act.Options) {
+				t.Errorf("every label needs a desc: %v vs %v", act.Descs, act.Options)
+			}
+			if act.Paths[0] != c.id || act.Payload[0] != c.detail || act.TreeJump[0] != c.jump {
+				t.Errorf("menu must carry id/detail/ordinal: paths=%q payload=%q jump=%d",
+					act.Paths[0], act.Payload[0], act.TreeJump[0])
+			}
+			if _, ok := Confirmers()["treeAction"]; !ok {
+				t.Fatal("treeAction missing from Confirmers")
+			}
+		})
 	}
 }

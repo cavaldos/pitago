@@ -845,6 +845,40 @@ func activePathIDs(nodes []pirpc.TreeNode, leaf string) map[string]bool {
 	return out
 }
 
+// activePathOrder is activePathIDs in order: the leaf's branch as an id
+// slice root → leaf. The tree rows need it because "jump to message"
+// numbers the transcript blocks, and that numbering follows the branch's
+// chronological order, not the DFS order of the flat list.
+func activePathOrder(nodes []pirpc.TreeNode, leaf string) []string {
+	if leaf == "" {
+		return nil
+	}
+	parent := map[string]string{}
+	var walk func([]pirpc.TreeNode)
+	walk = func(ns []pirpc.TreeNode) {
+		for _, n := range ns {
+			if n.Entry.ParentID != nil {
+				parent[n.Entry.ID] = *n.Entry.ParentID
+			}
+			walk(n.Children)
+		}
+	}
+	walk(nodes)
+	var rev []string
+	for id := leaf; ; {
+		rev = append(rev, id)
+		p, ok := parent[id]
+		if !ok || p == "" {
+			break
+		}
+		id = p
+	}
+	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+		rev[i], rev[j] = rev[j], rev[i]
+	}
+	return rev
+}
+
 // treeRow is one pi tree-list row: "• " when on the active path,
 // "[label] " bookmarks, then the entry text (pi's getEntryDisplayText,
 // plain — colors stay in pi's TUI).
@@ -1097,7 +1131,7 @@ func All() []app.Builtin {
 				return app.PickerMsg{Kind: "model", Options: opts, Descs: descs, Providers: provs, Models: models, Current: m.ModelLbl}
 			}
 		}),
-		pi("tree", "Pi-style session tree (Enter views an entry)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
+		pi("tree", "Pi-style session tree (Enter opens the action menu)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
 			m.Status = "loading session tree…"
 			m.Refresh()
 			return loadTree(m, arg)

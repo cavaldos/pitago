@@ -123,7 +123,7 @@ func TestRenderToolBodyWriteAlwaysDetailed(t *testing.T) {
 	}
 
 	// full block header carries pi's "+N lines" suffix
-	mFull := Model{blocks: []Block{bl}}
+	mFull := Model{blocks: []Block{bl}, jumpBlock: -1} // -1 = no "jumped here" mark
 	mFull.vp = viewport.New(120, 20)
 	full := stripANSI(mFull.renderBlocks())
 	if !strings.Contains(full, "write game.js +15") {
@@ -494,7 +494,7 @@ func TestToolBlockRestyle(t *testing.T) {
 	// tool — the frame is now the block's left edge, so no gutter bullet
 	// may push the border past its column.
 	for _, bl := range []Block{bash, read} {
-		m := Model{blocks: []Block{bl}}
+		m := Model{blocks: []Block{bl}, jumpBlock: -1}
 		m.vp = viewport.New(62, 20) // cw = 60
 		rows := strings.Split(strings.TrimRight(stripANSI(m.renderBlocks()), "\n"), "\n")
 		if !strings.HasPrefix(rows[0], "╭─") {
@@ -507,7 +507,7 @@ func TestToolBlockRestyle(t *testing.T) {
 
 	// A shell call frames command + output in one box, flush left, with no
 	// status bullet: the border color carries the status instead.
-	bm := Model{blocks: []Block{bash}, vp: viewport.New(62, 20)}
+	bm := Model{blocks: []Block{bash}, vp: viewport.New(62, 20), jumpBlock: -1}
 	plain := stripANSI(bm.renderBlocks())
 	if strings.HasPrefix(plain, "●") {
 		t.Fatalf("shell box must be flush left with no bullet: %q", plain)
@@ -537,7 +537,7 @@ func TestToolBlockRestyle(t *testing.T) {
 
 	// Every other tool is framed too, with the status bullet + bold name
 	// as the header row inside the box.
-	rm0 := Model{blocks: []Block{read}, vp: viewport.New(62, 20)}
+	rm0 := Model{blocks: []Block{read}, vp: viewport.New(62, 20), jumpBlock: -1}
 	plain = stripANSI(rm0.renderBlocks())
 	rows := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 	if !strings.HasPrefix(rows[0], "╭─") {
