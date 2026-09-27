@@ -92,6 +92,12 @@ func (m *Model) setTeamStatus(key, status string) bool {
 		return false
 	}
 	m.TeamStatus = status
+	// The status line paints as a 1-row panel (renderTeamWidget's statusOnly
+	// path) and m.vp already reserved the rows for the *widget* panel. Resync
+	// through the same chatVpHeight path so the status row is not paid for
+	// twice: it is taken from the chat here, not at paint time — where the
+	// shrink would silently cut the newest transcript line.
+	m.applyTeamPanelH()
 	return true
 }
 

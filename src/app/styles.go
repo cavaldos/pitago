@@ -88,6 +88,14 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(cBorder).
 			Padding(0, 1)
+	// teamPopStyle frames the live TEAM dashboard in the same rounded box as
+	// the /command popup, so the panel reads as a surface instead of loose
+	// text. The idiom is copied on purpose: identical border, colour and
+	// padding, so the two surfaces cannot drift apart.
+	teamPopStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(cBorder).
+			Padding(0, 1)
 	cmdHiStyle = lipgloss.NewStyle().
 			Background(cHiBg).
 			Foreground(cHiFg)
@@ -224,6 +232,12 @@ func ApplyTheme(raw theme.Theme) {
 	sideTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	sepStyle = lipgloss.NewStyle().Foreground(cBorder)
 	cmdPopStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(cBorder).
+		Padding(0, 1)
+	// teamPopStyle frames the live TEAM dashboard in the same rounded box as
+	// the /command popup (see the default palette above).
+	teamPopStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(cBorder).
 		Padding(0, 1)

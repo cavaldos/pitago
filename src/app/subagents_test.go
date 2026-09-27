@@ -100,13 +100,28 @@ func TestTeamWidgetRecognitionAndRender(t *testing.T) {
 		t.Fatal("unknown/team widget classified as another live progress widget")
 	}
 	raw := []string{"\x1b[1mPi Agents Team\x1b[0m · active=1 · relays=0", "▶ 1 running", "● Agents · active=1 · tracked=1", "├ ◯ fixer w1 · task", "│  └ status: running", "└ + 0 more · /team to view"}
-	m := Model{winW: 100, TeamWidgetLines: raw, TeamStatus: "\x1b[33mOrchestrator · Working...\x1b[0m", TeamWidgetVisible: true, TeamWidgetSeen: true}
+	// A real frame, not the winH==0 fallback: the popup-sized cap
+	// (teamPanelMaxRows = 10 = 8 content + 2 border rows) is the bound that
+	// must hold, and at that budget the whole hierarchy fits.
+	m := New(nil, t.TempDir())
+	m.ready, m.winW, m.winH = true, 100, 40
+	m.vp = viewport.New(98, 30)
+	m.TeamWidgetLines, m.TeamStatus, m.TeamWidgetVisible, m.TeamWidgetSeen = raw, "\x1b[33mOrchestrator · Working...\x1b[0m", true, true
 	m.setTeamWidget(raw, "aboveEditor")
 	panel := stripANSI(m.renderTeamWidget())
-	for _, want := range []string{"Pi Agents Team", "▶ 1 running", "├ ◯ fixer w1", "│  └ status: running", "└ + 0 more"} {
+	// The rounded frame's two rows come out of teamPanelMaxRows, not out of
+	// the content: a full worker block (2 rows) must still fit next to the
+	// status row, the title, the running line and the heading.
+	for _, want := range []string{"Pi Agents Team", "▶ 1 running", "● Agents", "├ ◯ fixer w1", "│  └ status: running", "└ + 0 more"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("team panel missing %q: %q", want, panel)
 		}
+	}
+	if h := lipgloss.Height(m.renderTeamWidget()); h > m.teamPanelHeightLimit() {
+		t.Fatalf("framed panel = %d rows, over the %d-row budget: %q", h, m.teamPanelHeightLimit(), panel)
+	}
+	if got := lipgloss.Height(stripANSI(m.View())); got != m.winH {
+		t.Fatalf("frame = %d rows, want exactly %d", got, m.winH)
 	}
 	if !strings.Contains(panel, "TEAM  Orchestrator · Working...") {
 		t.Fatalf("team widget must render the status row: %q", panel)
@@ -259,7 +274,10 @@ func TestTeamWidgetStatusOnlyBudgetAndWidth(t *testing.T) {
 func TestTeamWidgetStructuralOverflowAndBudgets(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.ready = true
-	m.winW, m.winH = 60, 16
+	// 20 rows leaves the full teamPanelMaxRows=10 panel (8 content + 2
+	// border rows); at 16 the frame reserve binds at 6 and the framed panel no
+	// longer fits at all, which is the degradation case below.
+	m.winW, m.winH = 60, 20
 	m.vp = viewport.New(58, 6)
 	m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
 	panel := stripANSI(m.renderTeamWidget())
@@ -590,5 +608,210 @@ func TestTeamPanelBackstopKeepsFrameWithinTerminal(t *testing.T) {
 	m.TeamWidgetLines, m.TeamWidgetVisible, m.TeamWidgetSeen = teamWidgetFixture(8), true, true
 	if got := lipgloss.Height(m.View()); got > m.winH {
 		t.Fatalf("unsynced panel state overflowed the frame: %d > %d", got, m.winH)
+	}
+}
+
+// lastLineMarker is the sentinel the paint-time regression tests hang at the
+// end of the transcript: if the frame cuts rows from the bottom instead of
+// pushing the transcript up, this line is the one that disappears.
+const lastLineMarker = "pi is running"
+
+// tailModel returns a live model whose transcript ends with lastLineMarker and
+// whose viewport is following the tail (the normal state after streaming).
+func tailModel(t *testing.T, winW, winH int) *Model {
+	t.Helper()
+	m := teamPanelModel(t, winW, winH)
+	lines := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		lines = append(lines, fmt.Sprintf("chat line %d", i))
+	}
+	lines = append(lines, lastLineMarker)
+	m.vp.SetContent(strings.Join(lines, "\n"))
+	m.vp.GotoBottom()
+	if !m.vp.AtBottom() {
+		t.Fatal("fixture must start at the transcript tail")
+	}
+	return m
+}
+
+// The paint-time panels (task widget, generic ext panels) shrink the chat
+// viewport on a local copy, which used to drop rows from the bottom of the
+// transcript and hide the newest chat line. Whatever the extra panel is, the
+// last content line must still be painted.
+func TestPaintTimePanelsKeepLastChatLine(t *testing.T) {
+	cases := []struct {
+		name  string
+		arm   func(t *testing.T, m *Model)
+		panel string
+	}{
+		{"team+task", func(t *testing.T, m *Model) {
+			m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+			m.Todos = []TodoItem{{ID: "1", Content: "Active", Status: TodoInProgress}}
+			m.syncTaskRuntime()
+		}, "task widget"},
+		{"team+ext", func(t *testing.T, m *Model) {
+			m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+			m.setExtWidget("plan-mode-plan", []string{"survey", "implement"}, "aboveEditor")
+		}, "[plan-mode-plan]"},
+		{"ext only", func(t *testing.T, m *Model) {
+			m.setExtWidget("plan-mode-plan", []string{"survey", "implement"}, "aboveEditor")
+		}, "[plan-mode-plan]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tailModel(t, 120, 30)
+			tc.arm(t, m)
+			view := stripANSI(m.View())
+			if !strings.Contains(view, lastLineMarker) {
+				t.Fatalf("paint-time panel %q hid the last chat line:\n%s", tc.panel, view)
+			}
+			if got := lipgloss.Height(view); got != m.winH {
+				t.Fatalf("frame = %d rows, want exactly %d", got, m.winH)
+			}
+		})
+	}
+}
+
+// setTeamStatus paints a 1-row status panel; it must take that row from the
+// chat through the same sync path, not at paint time (which cut the tail).
+func TestSetTeamStatusReservesChatRows(t *testing.T) {
+	m := tailModel(t, 120, 30)
+	before := m.vp.Height
+	if !m.setTeamStatus(agentTeamName, "3 workers active") {
+		t.Fatal("agent team status key must be accepted")
+	}
+	if m.vp.Height != before-1 {
+		t.Fatalf("status row not reserved: vp.Height = %d, want %d", m.vp.Height, before-1)
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, lastLineMarker) {
+		t.Fatalf("status panel hid the last chat line:\n%s", view)
+	}
+	if !strings.Contains(view, "3 workers active") {
+		t.Fatalf("status line missing:\n%s", view)
+	}
+}
+
+// The re-pin in View() must not yank a user who scrolled up reading history:
+// the offset they chose survives a paint-time-only panel.
+func TestPaintTimePanelsKeepUserScrollPosition(t *testing.T) {
+	m := tailModel(t, 120, 30)
+	m.vp.SetYOffset(5)
+	off := m.vp.YOffset
+	// paint-time-only panels: raw field writes that skip applyTeamPanelH.
+	m.TeamWidgetLines, m.TeamWidgetVisible, m.TeamWidgetSeen = teamWidgetFixture(8), true, true
+	m.Todos = []TodoItem{{ID: "1", Content: "Active", Status: TodoInProgress}}
+	m.syncTaskRuntime()
+	_ = m.View()
+	if m.vp.YOffset != off {
+		t.Fatalf("View yanked the reader back: offset = %d, want %d", m.vp.YOffset, off)
+	}
+	if m.vp.AtBottom() {
+		t.Fatal("fixture assumption broken: reader is at the bottom again")
+	}
+}
+
+// The live TEAM panel must be framed in the same rounded box as the /command
+// popup: same glyphs, same padding, and a content budget that pays for the two
+// border rows out of the panel's own popup-sized cap.
+func TestTeamPanelIsFramedLikeCommandPopup(t *testing.T) {
+	m := teamPanelModel(t, 120, 30)
+	m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+	panel := m.renderTeamWidget()
+	plain := stripANSI(panel)
+	for _, corner := range []string{"╭", "╮", "╰", "╯"} {
+		if !strings.Contains(plain, corner) {
+			t.Fatalf("framed team panel missing %q:\n%s", corner, plain)
+		}
+	}
+	if !strings.Contains(plain, "│ Pi Agents Team") {
+		t.Fatalf("panel content must sit inside the frame:\n%s", plain)
+	}
+	// Padding(0,1) means every row — border and content alike — shares one
+	// width: the chat column, never wider.
+	want := m.teamPanelPaintedWidth()
+	for _, line := range strings.Split(plain, "\n") {
+		if got := lipgloss.Width(line); got != want {
+			t.Fatalf("row width %d, want %d: %q", got, want, line)
+		}
+	}
+	// The frame is paid for out of the popup-sized cap, never on top of it.
+	if h := lipgloss.Height(panel); h > m.teamPanelHeightLimit() || h < 3 {
+		t.Fatalf("framed panel = %d rows, want 3..%d", h, m.teamPanelHeightLimit())
+	}
+	if h := lipgloss.Height(panel); h != teamPanelMaxRows {
+		t.Fatalf("panel = %d rows, want the full %d-row budget (8 content + 2 border)", h, teamPanelMaxRows)
+	}
+	// ...and because the border is inside the cap, the content is not paying
+	// for it: a whole worker block (2 rows) survives an 8-worker snapshot.
+	for _, want := range []string{"├ ◯ fixer w1 · worker 1", "│  └ status: running · task: worker 1", "worker blocks hidden"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("panel lost %q at the raised cap:\n%s", want, plain)
+		}
+	}
+	if got := lipgloss.Height(stripANSI(m.View())); got != m.winH {
+		t.Fatalf("frame = %d rows, want exactly %d", got, m.winH)
+	}
+}
+
+// The frame must not reintroduce the tail bug: with the border, a team panel
+// plus a task widget plus an ext panel are all reserving rows, and the newest
+// transcript line still has to be painted.
+func TestFramedTeamPanelKeepsLastChatLine(t *testing.T) {
+	m := tailModel(t, 120, 30)
+	m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+	m.Todos = []TodoItem{{ID: "1", Content: "Active", Status: TodoInProgress}}
+	m.syncTaskRuntime()
+	m.setExtWidget("plan-mode-plan", []string{"survey", "implement"}, "aboveEditor")
+	view := stripANSI(m.View())
+	if !strings.Contains(view, lastLineMarker) {
+		t.Fatalf("framed panel hid the last chat line:\n%s", view)
+	}
+	if !strings.Contains(view, "╭") {
+		t.Fatalf("team panel lost its border:\n%s", view)
+	}
+	if got := lipgloss.Height(view); got != m.winH {
+		t.Fatalf("frame = %d rows, want exactly %d", got, m.winH)
+	}
+}
+
+// Pre-colored TeamWidgetLines must be clipped by display cells, not by bytes:
+// ANSI escapes are zero-width, so a long colored line has to lose exactly the
+// same number of *painted* cells as an uncolored one and the box must still
+// line up.
+func TestFramedTeamPanelClipsColoredLinesByCellWidth(t *testing.T) {
+	for _, winW := range []int{40, 80, 120} {
+		m := teamPanelModel(t, winW, 30)
+		colored := "\x1b[1;35m" + strings.Repeat("wide ", 40) + "\x1b[0m"
+		m.setTeamWidget([]string{colored, "● Agents", "├ ◯ fixer w1", "│  └ status: running"}, "aboveEditor")
+		panel := stripANSI(m.renderTeamWidget())
+		want := m.teamPanelPaintedWidth()
+		for _, line := range strings.Split(panel, "\n") {
+			if got := lipgloss.Width(line); got != want {
+				t.Fatalf("winW=%d row width %d, want %d: %q", winW, got, want, line)
+			}
+		}
+		if !strings.Contains(panel, "╭") || !strings.Contains(panel, "╯") {
+			t.Fatalf("winW=%d lost the border:\n%s", winW, panel)
+		}
+	}
+}
+
+// A terminal too narrow for border + padding + one line must degrade, not
+// overflow: the panel either disappears or shrinks, and the frame stays inside
+// the terminal.
+func TestFramedTeamPanelDegradesOnNarrowTerminal(t *testing.T) {
+	for _, winW := range []int{6, 10, 20, 30} {
+		m := teamPanelModel(t, winW, 30)
+		m.setTeamWidget(teamWidgetFixture(8), "aboveEditor")
+		view := stripANSI(m.View())
+		if got := lipgloss.Height(view); got > m.winH {
+			t.Fatalf("winW=%d frame = %d rows, over %d", winW, got, m.winH)
+		}
+		for _, line := range strings.Split(stripANSI(m.renderTeamWidget()), "\n") {
+			if got := lipgloss.Width(line); got > winW {
+				t.Fatalf("winW=%d row width %d: %q", winW, got, line)
+			}
+		}
 	}
 }
