@@ -85,6 +85,7 @@ type SettingsState struct {
 	Theme                  string
 	Vals                   map[string]string // file-backed pi rows (dotted path → display)
 	HideThinking           bool              // pitago-local "Hide thinking" row
+	Tidy                   bool              // tidy mode: tool blocks render header-only (global pref, all projects)
 	AutocompleteMax        int               // pitago-local "Autocomplete max" row
 }
 
@@ -208,6 +209,7 @@ type Model struct {
 	histIdx             int               // -1 = live input, else index into hist while browsing
 	CmdShortcuts        map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
 	RecentCmds          []string          // last-run /command names, most recent first (top of the "/" popup, persisted in prefs)
+	Tidy                bool              // tidy mode: tool blocks render header-only (global pref, all projects)
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
 	themePath           string            // persisted theme ("" = don't persist)
 	PetName             string            // pinned sidebar ASCII pet (/pet, prefs.json)
@@ -1044,6 +1046,33 @@ func (m *Model) ToggleSide() {
 	m.Refresh()
 }
 
+// SetTidy turns tidy mode on/off and persists it to the global prefs
+// (~/.config/pitago/prefs.json), so the choice follows the user across
+// every project and restarts. Returns the new value.
+//
+// The render cache is dropped rather than re-keyed: blockKey already
+// folds Tidy in, but clearing is cheap and keeps the two paths honest.
+func (m *Model) SetTidy(on bool) bool {
+	m.Tidy = on
+	m.renderCache = nil
+	prefs := LoadPrefs(m.prefsPath)
+	prefs.Tidy = on
+	_ = SavePrefs(m.prefsPath, prefs)
+	m.Refresh()
+	return on
+}
+
+// ToggleTidy flips tidy mode and toasts the new state.
+func (m *Model) ToggleTidy() bool {
+	on := m.SetTidy(!m.Tidy)
+	state := "on"
+	if !on {
+		state = "off"
+	}
+	m.AddBlock(Block{Kind: "notice", Text: "tidy mode " + state + " — tool calls show just their header"})
+	return on
+}
+
 // TogglePlugins collapses/expands the sidebar PLUGINS list (click its
 // header or /plugins). When the section is hidden (Sidebar tab default)
 // the first toggle reveals it expanded instead of flipping blind state.
@@ -1271,6 +1300,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.prefsPath = PrefsPath()
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
+	m.Tidy = prefs.Tidy
 	m.CurAgent = prefs.CurrentSubagent
 	// Resolve, not raw read: a hand-edited or stale prefs.json must still
 	// yield a drawable pet, never an empty sidebar block.

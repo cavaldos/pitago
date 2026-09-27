@@ -181,7 +181,7 @@ func TestRenderBlocksPurgesOldImageEscapeCacheAndStaysStable(t *testing.T) {
 	// Simulate cache written by the old real-image path. The current key must
 	// not allow that placement escape to survive repaint/scroll.
 	m.renderCache = []string{"\x1b_Ga=T;OLD\x1b\\"}
-	m.renderCacheKey = []uint64{blockKey(m.blocks[0], m.vp.Width-2, false, false, "")}
+	m.renderCacheKey = []uint64{blockKey(m.blocks[0], m.vp.Width-2, false, false, "", false)}
 
 	first := m.renderBlocks()
 	if strings.Contains(first, "\x1b_G") || strings.Contains(first, "\x1b]1337") || !strings.Contains(first, "\n  □\n  □\n") {

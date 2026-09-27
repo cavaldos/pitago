@@ -327,6 +327,7 @@ func loadSettingsState(m *app.Model) (app.SettingsState, error) {
 		Theme:           app.OrDefault(m.ThemeName, "default"),
 		Vals:            fileSettingVals(cfg),
 		HideThinking:    m.HideThinking,
+		Tidy:            m.Tidy,
 		AutocompleteMax: palette.Win,
 	}
 	return sst, nil
@@ -406,6 +407,8 @@ var fileSettings = []fileSetting{
 		}},
 	{label: "Install telemetry", group: "Privacy", path: "enableInstallTelemetry", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
+	{label: "Tidy mode", group: "Pitago", path: "", vals: []string{"on", "off"}, local: true,
+		toVal: func(d string) any { return d == "on" }},
 	{label: "Autocomplete max", group: "Pitago", path: "", vals: []string{"3", "5", "7", "10", "15", "20"}, local: true,
 		toVal: func(d string) any { return atoiOr(d, 10) }},
 	{label: "Tree filter mode", group: "Pitago", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
@@ -482,6 +485,21 @@ func nextVal(vals []string, cur string) string {
 // liveSettingGroups parallels the 7 live rows: agent state first, theme last.
 var liveSettingGroups = []string{"Agent", "Agent", "Agent", "Agent", "Agent", "Agent", "Display"}
 
+// localSettingVal is the current display value of a pitago-local settings
+// row (one with no pi settings.json path). A single switch, so adding a
+// third local row cannot silently fall through to the wrong one.
+func localSettingVal(label string, st app.SettingsState) string {
+	switch label {
+	case "Hide thinking":
+		return onoff(st.HideThinking)
+	case "Tidy mode":
+		return onoff(st.Tidy)
+	case "Autocomplete max":
+		return itoa(st.AutocompleteMax)
+	}
+	return "—"
+}
+
 func settingsOptions(st app.SettingsState) ([]string, []string, []string) {
 	opts := []string{
 		"Model: " + st.Model,
@@ -505,11 +523,7 @@ func settingsOptions(st app.SettingsState) ([]string, []string, []string) {
 	for _, fr := range fileSettings {
 		disp := st.Vals[fr.path]
 		if fr.path == "" { // pitago-local rows
-			if fr.label == "Hide thinking" {
-				disp = onoff(st.HideThinking)
-			} else {
-				disp = itoa(st.AutocompleteMax)
-			}
+			disp = localSettingVal(fr.label, st)
 		}
 		foot := "Enter: toggle"
 		if len(fr.vals) > 2 {
@@ -627,11 +641,7 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 	fr := fileSettings[fi]
 	cur := st.Vals[fr.path]
 	if fr.path == "" {
-		if fr.label == "Hide thinking" {
-			cur = onoff(st.HideThinking)
-		} else {
-			cur = itoa(st.AutocompleteMax)
-		}
+		cur = localSettingVal(fr.label, st)
 	}
 	next := nextVal(fr.vals, cur)
 	if fr.local {
@@ -700,6 +710,11 @@ func applyLocalSetting(m *app.Model, fr fileSetting, next string) tea.Cmd {
 			_ = app.SavePrefs(prefsPath, prefs)
 			return nil
 		}
+	case "Tidy mode":
+		// SetTidy flips the live render and persists the global pref; the
+		// work is in-process only, so no Cmd and no settings.json write.
+		m.SetTidy(next == "on")
+		return nil
 	case "Tree filter mode":
 		return func() tea.Msg {
 			if err := pirpc.SetPiSetting(path, val); err != nil { // /tree reads it live
@@ -1253,6 +1268,21 @@ func All() []app.Builtin {
 				m.Status = "checking for updates…"
 				m.Refresh()
 				return m.CheckUpdatesCmd(false)
+			},
+		},
+		{
+			Name: "tidy", Desc: "Tidy mode: tool calls collapse to one header line (/tidy on|off)", Usage: "/tidy [on|off]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				switch strings.ToLower(strings.TrimSpace(arg)) {
+				case "on", "off":
+					on := m.SetTidy(arg == "on")
+					m.AddBlock(app.Block{Kind: "notice", Text: "tidy mode " + onoff(on) +
+						" — tool calls show just their header"})
+				default:
+					m.ToggleTidy()
+				}
+				return nil
 			},
 		},
 		{

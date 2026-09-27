@@ -111,6 +111,7 @@ func (m *Model) renderBlocks() string {
 		m.renderCache, m.renderCacheKey = nc, nk
 	}
 	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
+	tidy := m.Tidy
 	for i, bl := range m.blocks {
 		// Image-bearing transcript blocks are always rebuilt as safe squares.
 		// This purges any cache entry created by an older image-render path
@@ -118,7 +119,7 @@ func (m *Model) renderBlocks() string {
 		if len(bl.Images) > 0 {
 			m.renderCache[i], m.renderCacheKey[i] = "", 0
 		}
-		key := blockKey(bl, cw, hide, expand, theme)
+		key := blockKey(bl, cw, hide, expand, theme, tidy)
 		if m.renderCacheKey[i] == key {
 			b.WriteString(m.renderCache[i])
 			continue
@@ -139,7 +140,7 @@ func (m *Model) renderBlocks() string {
 
 // blockKey fingerprints one block's rendered output: every field
 // renderOneBlock reads, plus the width and global render flags.
-func blockKey(bl Block, cw int, hide, expand bool, theme string) uint64 {
+func blockKey(bl Block, cw int, hide, expand bool, theme string, tidy bool) uint64 {
 	h := fnv.New64a()
 	h.Write([]byte(bl.Kind))
 	h.Write([]byte{0})
@@ -165,7 +166,7 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string) uint64 {
 		h.Write([]byte{0})
 	}
 	fmt.Fprintf(h, "\x00images\x00%d", len(bl.Images))
-	fmt.Fprintf(h, "\x00%d\x00%v\x00%v\x00%s", cw, hide, expand, theme)
+	fmt.Fprintf(h, "\x00%d\x00%v\x00%v\x00%v\x00%s", cw, hide, expand, tidy, theme)
 	return h.Sum64()
 }
 
@@ -348,6 +349,12 @@ func (m Model) renderToolBlock(bl Block, w int) string {
 	}
 	inner := blockInner(w)
 	rows := []string{toolHeaderRow(bl, toolHead(bl), inner)}
+	// Tidy mode: the header IS the block. A tool call reads as
+	// "● edit src/app/view.go" with no args line and no result, diff or
+	// preview underneath — the whole point of the mode.
+	if m.Tidy {
+		return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
+	}
 	if d := toolDetail(bl); d != "" {
 		rows = append(rows, toolStyle.Render(d))
 	}
@@ -401,6 +408,11 @@ func toolHeaderRow(bl Block, head string, inner int) string {
 // long command does not pop into existence with its output.
 func (m Model) renderShellBlock(bl Block, w int) string {
 	rows := []string{shellCommandRow(bl)}
+	// Tidy mode keeps the command line (that IS the call) and drops the
+	// output section, so a long transcript of shell calls stays scannable.
+	if m.Tidy {
+		return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
+	}
 	inner := blockInner(w) // clamped to the same floor framedBlock uses
 	if out := m.shellOutput(bl); out != "" {
 		label := "Output"
