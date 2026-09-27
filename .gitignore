@@ -5,8 +5,9 @@
 # pi stderr log
 /tmp/pitago-pi-stderr.log
 
-# Raw screen-recording source (web-ready H.264 cut: resources/demo.web.mp4)
-resources/demo.mp4
+# Raw screen recordings — H.264 cuts live on GitHub's user-attachments CDN, not in git
+resources/*.mp4
+resources/demo-poster.jpg
 
 # IDE / editor
 .idea/

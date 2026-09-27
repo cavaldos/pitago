@@ -4,11 +4,9 @@
 
 <div align="center">
 
-<video src="resources/demo.web.mp4" poster="resources/demo-poster.jpg" width="880" autoplay muted loop playsinline controls>
-  <p>Your browser cannot play the demo video. <a href="resources/demo.web.mp4">Download the MP4</a> instead.</p>
-</video>
+https://github.com/user-attachments/assets/93bfcae4-b02e-429d-a302-d2df850f71a7
 
-<sub>88s walkthrough — click ▶ to play (nothing to install). Prefer something lighter? <a href="resources/demo.gif">GIF version</a> · <a href="resources/demo.web.mp4">download MP4</a></sub>
+<sub>▸ 88s walkthrough — plays right here, no download. Want the lightweight loop instead? <a href="resources/demo.gif">GIF version</a></sub>
 
 [![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/cavaldos/pitago/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/cavaldos/pitago/total?style=flat-square)](https://github.com/cavaldos/pitago/releases)
