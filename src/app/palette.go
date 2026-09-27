@@ -25,13 +25,16 @@ func (m *Model) refreshCmds() {
 	m.cmdItems = m.cmdItems[:0]
 	if p, ok := m.cmdPrefix(); ok {
 		names := make([]string, len(m.Cmds))
+		fallbacks := make([]string, len(m.Cmds))
 		for i := range m.Cmds {
-			// name + source + extension tag + description, so "/pi-subagents"
+			names[i] = m.Cmds[i].Name
+			// source + extension tag + description, so "/pi-subagents"
 			// also matches that extension's commands (like pi), and typing
-			// "pitago"/"builtin" narrows to that origin
-			names[i] = m.Cmds[i].Name + " " + m.Cmds[i].Source + " " + m.Cmds[i].SourceTag() + " " + m.Cmds[i].Description
+			// "pitago"/"builtin" narrows to that origin — but only as a
+			// fallback tier when no command NAME matches (see palette).
+			fallbacks[i] = m.Cmds[i].Source + " " + m.Cmds[i].SourceTag() + " " + m.Cmds[i].Description
 		}
-		m.cmdItems = append(m.cmdItems, palette.Match(p, names)...)
+		m.cmdItems = append(m.cmdItems, palette.MatchWithFallback(p, names, fallbacks)...)
 		// Recently used commands lead the list (still prefix-filtered).
 		m.floatRecentCmds()
 	}
