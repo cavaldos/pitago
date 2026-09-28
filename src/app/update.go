@@ -1397,6 +1397,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
+			// pi parity (app.clear): the first ^C clears a non-empty
+			// editor, and only an *empty* one arms the double-press quit.
+			// One stray ^C on a half-typed prompt can therefore never cost
+			// the text or quit the app.
+			if m.clearInput() {
+				return m, nil
+			}
 			// Double-press to quit within 3s: a stray Ctrl+C only arms
 			// (warning pinned to the sidebar corner) and auto-disarms.
 			// Esc is the double-press mid-turn cancel key (same window).

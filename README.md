@@ -177,7 +177,7 @@ script/release.sh v0.0.1
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `Enter`                                                     | Send (idle) / steer (while running)                                                                                           |
 | `Esc×2`                                                     | Cancel running turn (double-press within 3s — 1st press only arms)                                                            |
-| `Ctrl+C`                                                    | Quit (press twice within 3s — warning pins to the sidebar corner)                                                             |
+| `Ctrl+C`                                                    | Clear the input — text, a recalled message, and the image tray (pi parity, `app.clear`); on an empty input, quit (press twice within 3s — warning pins to the sidebar corner) |
 | `Ctrl+N`                                                    | New session                                                                                                                   |
 | `Ctrl+P`                                                    | Cycle model                                                                                                                   |
 | `Ctrl+R`                                                    | Recent-models picker                                                                                                          |

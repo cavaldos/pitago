@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/pirpc"
@@ -51,6 +52,122 @@ func TestDoubleCtrlCQuit(t *testing.T) {
 	um, _ = m2.Update(quitDisarmMsg{gen: m2.quitGen - 1}) // stale gen
 	if !um.(Model).quitArmed() {
 		t.Error("stale disarm gen must be ignored")
+	}
+}
+
+// draftModel is a Model with a live textarea: a bare Model{} has a zero
+// textarea whose viewport is nil, and SetValue/Reset panic on it.
+func draftModel(text string) Model {
+	var m Model
+	m.ta = textarea.New()
+	m.ta.Focus()
+	m.ta.SetWidth(80)
+	if text != "" {
+		m.ta.SetValue(text)
+	}
+	return m
+}
+
+// pi parity (app.clear): a non-empty editor is cleared by the first ^C and
+// never arms quit; the arm belongs to an *empty* editor, so ^C on a draft
+// can cost neither the text nor the session.
+func TestCtrlCClearsBeforeArmingQuit(t *testing.T) {
+	ctrlC := tea.KeyMsg{Type: tea.KeyCtrlC}
+	m := draftModel("half-typed prompt")
+	um, cmd := m.Update(ctrlC)
+	m = um.(Model)
+	if m.ta.Value() != "" {
+		t.Errorf("first ^C must clear the editor, got %q", m.ta.Value())
+	}
+	if cmd != nil {
+		t.Error("clearing must not return a command")
+	}
+	if m.quitArmed() {
+		t.Error("clearing must not arm quit — pi clears first, exits second")
+	}
+	// Editor now empty: the next ^C arms, and the one after that quits.
+	um, _ = m.Update(ctrlC)
+	m = um.(Model)
+	if !m.quitArmed() {
+		t.Fatal("^C on an empty editor must arm")
+	}
+	um, cmd = m.Update(ctrlC)
+	if cmd == nil {
+		t.Fatal("second ^C on an empty editor must quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("second ^C must return QuitMsg, got %T", cmd())
+	}
+}
+
+// The image tray belongs to the draft: clearing the editor must drop the
+// [Image N] chips too, or "cleared" leaves a half-send behind.
+func TestCtrlCClearsImageTray(t *testing.T) {
+	m := draftModel("")
+	m.imgAtts = []imgAttach{{label: 1, name: "a.png", path: "a.png"}, {label: 2, name: "b.png", path: "b.png"}}
+	um, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = um.(Model)
+	if len(m.imgAtts) != 0 {
+		t.Errorf("^C must drop the image tray, %d chips left", len(m.imgAtts))
+	}
+	if m.quitArmed() {
+		t.Error("tray-only draft must not arm quit")
+	}
+	um, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !um.(Model).quitArmed() {
+		t.Error("^C with nothing to clear must arm quit")
+	}
+}
+
+// A recalled message is a draft too: ^C drops the browse back to live
+// input, and it must not arm quit on the way.
+func TestCtrlCClearsHistoryRecall(t *testing.T) {
+	m := draftModel("older message")
+	m.hist = []string{"older message"}
+	m.histIdx = 0
+	m.setHist()
+	if !m.histBrowsing() {
+		t.Fatal("fixture should be browsing history")
+	}
+	um, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = um.(Model)
+	if m.histBrowsing() {
+		t.Error("^C must end the history browse")
+	}
+	if m.ta.Value() != "" {
+		t.Errorf("^C must empty the recalled text, got %q", m.ta.Value())
+	}
+	if m.quitArmed() {
+		t.Error("clearing a recalled message must not arm quit")
+	}
+}
+
+// A stale quit arm must not survive a clear: the press after a clear is
+// the *first* press on an empty editor, so it arms instead of quitting.
+func TestCtrlCClearDisarmsStaleQuitArm(t *testing.T) {
+	ctrlC := tea.KeyMsg{Type: tea.KeyCtrlC}
+	m := draftModel("")
+	um, _ := m.Update(ctrlC) // arm on the empty editor
+	m = um.(Model)
+	if !m.quitArmed() {
+		t.Fatal("fixture should be armed")
+	}
+	m.ta.SetValue("typed after the arm")
+	um, cmd := m.Update(ctrlC) // clears; the old arm is stale
+	m = um.(Model)
+	if cmd != nil || m.quitArmed() {
+		t.Fatal("clearing must not quit and must drop the stale arm")
+	}
+	um, cmd = m.Update(ctrlC) // first press on the now-empty editor
+	if !um.(Model).quitArmed() {
+		t.Error("the press after a clear must arm")
+	}
+	// The arm branch legitimately returns the disarm tick, so assert on what
+	// the command *is* rather than on nil: only the quit path yields QuitMsg.
+	if cmd != nil {
+		if _, isQuit := cmd().(tea.QuitMsg); isQuit {
+			t.Error("the press after a clear must arm, not quit")
+		}
 	}
 }
 

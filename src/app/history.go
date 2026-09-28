@@ -1,6 +1,9 @@
 package app
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Input history (shell-like ↑↓ recall when the input is empty).
 //
@@ -53,6 +56,32 @@ func (m *Model) clearHistInput() {
 	m.refreshCmds()
 	m.refreshAt()
 	m.Refresh()
+}
+
+// clearInput wipes everything a send would have carried: the text, a
+// history-recall browse, and the image tray (chips are attachments of the
+// same draft, so leaving them behind would make "cleared" a lie). It also
+// drops a live quit arm — a clear is a state change, and a stale arm from
+// an earlier ^C would let the *next* ^C quit straight past a fresh draft.
+//
+// Reports whether there was anything to clear, so Ctrl+C can fall through
+// to the quit arm on an empty editor (pi's app.clear: clear first, exit
+// second).
+func (m *Model) clearInput() bool {
+	if m.ta.Value() == "" && len(m.imgAtts) == 0 && !m.histBrowsing() {
+		return false
+	}
+	m.quitArm = time.Time{}
+	m.quitGen++
+	m.histIdx = -1
+	m.ta.Reset()
+	m.imgAtts = nil
+	m.trayFocus = false
+	m.refreshCmds()
+	m.refreshAt()
+	m.applyPopupH()
+	m.Refresh()
+	return true
 }
 
 // tryHistPrev handles ↑: older message. Returns true when consumed
