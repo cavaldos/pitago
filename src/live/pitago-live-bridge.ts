@@ -17,8 +17,23 @@ type Bridge = {
   ctx: ExtensionContext;
 };
 
-let bridge: Bridge | undefined;
-let starting: Promise<void> | undefined;
+// Bridges are keyed BY SESSION, not held in a single module-level slot.
+//
+// pi can run more than one session in a single process — an in-process
+// subagent, a fork — and every one of those sessions loads this same module
+// instance, because the extension loader caches module factories in a
+// process-global map keyed by cwd. A single slot therefore meant the second
+// session's startBridge() ran `stopBridge()` against the FIRST session's
+// bridge: it closed that bridge's server and unlinked its descriptor, and
+// rebound `ctx` to the new session. The parent's /live went dark the moment
+// a subagent started, and the stale captured ctx was what later threw
+// "extension ctx is stale" back through the shared ctx.ui tap.
+//
+// Keying by the session's own ExtensionContext (a WeakMap, so a torn-down
+// session's entry is collected with it) means a session only ever stops its
+// OWN bridge, and every session can be followed concurrently.
+const bridges = new WeakMap<ExtensionContext, Bridge>();
+const startingBridges = new WeakMap<ExtensionContext, Promise<void>>();
 
 function runtimeDir(): string {
   if (process.env.PITAGO_LIVE_DESCRIPTORS) return process.env.PITAGO_LIVE_DESCRIPTORS;
@@ -63,9 +78,9 @@ function snapshot(ctx: ExtensionContext, revision: number) {
   };
 }
 
-async function stopBridge(): Promise<void> {
-  const old = bridge;
-  bridge = undefined;
+async function stopBridge(ctx: ExtensionContext): Promise<void> {
+  const old = bridges.get(ctx);
+  bridges.delete(ctx);
   if (!old) return;
   for (const client of old.clients) client.end();
   old.clients.clear();
@@ -74,7 +89,9 @@ async function stopBridge(): Promise<void> {
 }
 
 async function startBridge(ctx: ExtensionContext): Promise<void> {
-  await stopBridge();
+  // Restart THIS session's bridge only. Another session's bridge in the same
+  // process is none of our business — see the WeakMap comment above.
+  await stopBridge(ctx);
   const dir = runtimeDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString("hex");
@@ -84,7 +101,7 @@ async function startBridge(ctx: ExtensionContext): Promise<void> {
     descriptorPath: join(dir, `session-${process.pid}-${Date.now()}.json`),
     clients: new Set(), revision: 0, token, ctx,
   };
-  bridge = state;
+  bridges.set(ctx, state);
   try {
   state.server = createServer((req, res) => {
     if (req.method !== "GET" || req.url?.split("?")[0] !== "/events" ||
@@ -104,7 +121,7 @@ async function startBridge(ctx: ExtensionContext): Promise<void> {
     sse(res, "snapshot", state.revision, snapshot(state.ctx, state.revision));
   });
   state.server.on("error", (error) => {
-    if (bridge === state) void ctx.ui.notify(`pitago live bridge: ${error.message}`, "error");
+    if (bridges.get(ctx) === state) void ctx.ui.notify(`pitago live bridge: ${error.message}`, "error");
   });
   await new Promise<void>((resolve, reject) => {
     state.server.once("error", reject);
@@ -144,7 +161,7 @@ async function startBridge(ctx: ExtensionContext): Promise<void> {
   }, 15_000);
   state.server.once("close", () => clearInterval(heartbeat));
   } catch (error) {
-    await stopBridge();
+    await stopBridge(ctx);
     throw error;
   }
 }
@@ -155,8 +172,11 @@ function forward(ctx: ExtensionContext, event: unknown): void {
   // only at session_start: a rebind mid-turn must not silently drop the next
   // subagent notice. ctx.ui is a getter, so this always sees the current one.
   tapUI(ctx);
-  const state = bridge;
-  if (!state || state.ctx.sessionManager.getSessionId() !== ctx.sessionManager.getSessionId()) return;
+  // SAFETY: a session forwards only to its OWN bridge. Keyed by the ctx the
+  // event arrived with, so a subagent's events land in the subagent's stream
+  // and never displace the parent's.
+  const state = bridges.get(ctx);
+  if (!state) return;
   state.revision++;
   const data = event as Record<string, unknown>;
   for (const client of state.clients) sse(client, "pi", state.revision, data);
@@ -222,14 +242,19 @@ function tapUI(ctx: ExtensionContext): void {
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     tapUI(ctx);
-    starting = startBridge(ctx);
+    const starting = startBridge(ctx);
+    startingBridges.set(ctx, starting);
     try { await starting; } catch (error: any) {
       await ctx.ui.notify(`pitago live bridge failed: ${error?.message ?? error}`, "error");
-    } finally { starting = undefined; }
+    } finally { startingBridges.delete(ctx); }
   });
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    // Stop only THIS session's bridge. A sibling session in the same process
+    // (an in-process subagent, a fork) shuts down independently, and tearing
+    // down "whatever bridge is current" took the parent's live export with it.
+    const starting = startingBridges.get(ctx);
     if (starting) await starting.catch(() => {});
-    await stopBridge();
+    await stopBridge(ctx);
   });
 
   pi.on("agent_start", (event, ctx) => { tapUI(ctx); forward(ctx, event); });
