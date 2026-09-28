@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -534,7 +535,10 @@ func (c *Client) Send(cmd Command, timeout time.Duration) (Response, error) {
 		c.mu.Lock()
 		delete(c.pending, cmd.ID)
 		c.mu.Unlock()
-		return Response{}, fmt.Errorf("pi: %s timed out", cmd.Type)
+		// Typed: a retry loop must branch on the cause, and pi's own refusal
+		// text can contain the words "timed out" (a commandError embeds it
+		// verbatim), which a string match cannot tell apart.
+		return Response{}, &TimeoutError{Command: cmd.Type, Wait: timeout}
 	case <-c.done:
 		return Response{}, fmt.Errorf("pi process exited")
 	}
@@ -595,9 +599,41 @@ func (c *Client) ClearQueue() (clearedSteer, clearedFollow []string, err error) 
 // NewSession lives in commands.go next to the other session-switching
 // wrappers, where the {cancelled:boolean} veto handling is documented.
 
-func (c *Client) GetState() (State, error) {
+// GetStateTimeout is the round-trip budget GetState gives pi, and the
+// ceiling the startup probe escalates its per-attempt window to (see
+// app's startup probe). It is only the answer window, never a readiness
+// signal: a cold pi start (extension load, big project index) can miss it,
+// which is why that probe retries instead of betting everything on one shot.
+const GetStateTimeout = 15 * time.Second
+
+// ErrTimeout matches a command pi never answered inside its window. It is a
+// distinct error from a refusal (success:false) and from a dead process, so
+// a retry loop can branch on the cause (IsTimeout) instead of guessing.
+var ErrTimeout = errors.New("pi did not answer in time")
+
+// TimeoutError reports a command whose answer window elapsed. It unwraps to
+// ErrTimeout; Wait is the window that expired, kept for diagnostics. The
+// message is the historical "pi: <cmd> timed out" text callers already show.
+type TimeoutError struct {
+	Command string
+	Wait    time.Duration
+}
+
+func (e *TimeoutError) Error() string { return fmt.Sprintf("pi: %s timed out", e.Command) }
+
+func (e *TimeoutError) Unwrap() error { return ErrTimeout }
+
+// IsTimeout reports whether err is a Send timeout (pi never answered in
+// time) as opposed to a real refusal or a dead process. The startup probe
+// retries only the former: a refused or dead pi will refuse again.
+func IsTimeout(err error) bool { return errors.Is(err, ErrTimeout) }
+
+// GetStateWithin is GetState with a caller-chosen answer window. Exposed so
+// a readiness probe can give a slow-starting pi a short window and try
+// again, instead of betting everything on one long round trip.
+func (c *Client) GetStateWithin(d time.Duration) (State, error) {
 	var s State
-	resp, err := c.Send(Command{Type: "get_state"}, 15*time.Second)
+	resp, err := c.Send(Command{Type: "get_state"}, d)
 	if err != nil {
 		return s, err
 	}
@@ -606,6 +642,9 @@ func (c *Client) GetState() (State, error) {
 	}
 	return s, err
 }
+
+// GetState keeps the fixed 15s window every existing caller expects.
+func (c *Client) GetState() (State, error) { return c.GetStateWithin(GetStateTimeout) }
 
 func (c *Client) GetMessages() ([]AgentMessage, error) {
 	resp, err := c.Send(Command{Type: "get_messages"}, 15*time.Second)

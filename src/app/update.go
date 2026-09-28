@@ -316,9 +316,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.followRemote {
 			return m, nil // an in-flight owned fetch must not replace remote history
 		}
+		// A fetch queued against an older pi (the self-heal re-arm outlives a
+		// respawn) must be dropped, not applied: its client is closed, so its
+		// error is about the old child and would paint a fake "cannot connect
+		// to pi" over a session that is already healthy.
+		if msg.client != nil && msg.client != m.Pi {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.connErr = msg.err.Error()
 			m.Status = "cannot connect to pi"
+			m.Refresh()
+			// A budget that ran out on a live-but-slow pi must not dead-end
+			// the TUI: keep polling in the background and let a later
+			// success clear the red line.
+			if msg.retry {
+				return m, m.fetchAllLater(m.probeOrDefault().RetryAfter)
+			}
 			return m, nil
 		}
 		m.ModelLbl = msg.state.Model.ID
@@ -357,6 +371,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.retrying = false
 		m.restore(msg.msgs)
 		m.Status = "ready"
+		m.connErr = "" // a later success clears the startup error line
+		m.connected = true
 		m.planOn = false // fresh connect: plan latch is live-only
 		m.clearTeamWidgetState()
 		m.RefreshFollow()

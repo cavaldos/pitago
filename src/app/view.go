@@ -92,9 +92,20 @@ func (m *Model) renderBlocks() string {
 	if cw < 10 {
 		cw = 10
 	}
-	if len(m.blocks) == 0 && m.connErr == "" {
-		// fresh chat: pi-style startup header (logo + resources + ready)
+	if len(m.blocks) == 0 && m.connErr == "" && !m.started {
+		// fresh chat: pi-style startup header (logo + resources + ready).
+		//
+		// The latch belongs HERE, next to the paint, not in the connect
+		// handler: a fast pi answers get_state within the first frames, so a
+		// handler-side latch means the header is suppressed before it was
+		// ever drawn. Pre-connect paints keep showing it (the user is
+		// watching "connecting to pi…"), and the first paint AFTER a connect
+		// has landed shows it once and latches — so a later connErr that
+		// clears can never bring the logo back mid-session.
 		b.WriteString(m.welcomeView(w))
+		if m.connected {
+			m.started = true
+		}
 	}
 	if m.connErr != "" {
 		b.WriteString(gutter(errStyle.Render("×"), errStyle.Render("! "+m.connErr)+"\n"))

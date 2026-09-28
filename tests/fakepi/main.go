@@ -18,6 +18,8 @@
 //	                          processing" refusal (success:false + its text).
 //	FAKEPI_VETO=<type[,type]> answer those session switches with
 //	                          data {"cancelled":true} (an extension veto).
+//	FAKEPI_DELAY=<type=1s[,...]> wait that long BEFORE answering those
+//	                          command types (a slow-starting pi).
 //
 // Protocol notes honoured on purpose (they are what pirpc.Client relies on):
 //   - responses carry the request id back: {"type":"response","id":...}
@@ -31,6 +33,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // fixtures answers each command type pitago sends with a fixed `data`
@@ -174,6 +177,22 @@ func main() {
 			busy[t] = true
 		}
 	}
+	// FAKEPI_DELAY answers those command types late, the way a pi still
+	// booting its extensions does. It is what makes the readiness probe
+	// testable: the client sees a real unanswered window, not a stub.
+	delay := map[string]time.Duration{}
+	for _, pair := range strings.Split(os.Getenv("FAKEPI_DELAY"), ",") {
+		typ, d, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || typ == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(strings.TrimSpace(d))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fakepi: bad FAKEPI_DELAY entry:", pair)
+			continue
+		}
+		delay[typ] = parsed
+	}
 
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -199,6 +218,12 @@ func main() {
 		// matching response goes out, so a test that waits for the response
 		// can always read the request.
 		logw.write(map[string]any{"kind": "request", "type": cmd.Type, "id": cmd.ID, "raw": line})
+
+		if d := delay[cmd.Type]; d > 0 {
+			// pi is not ready yet: hold the answer, exactly like a real
+			// child that is still loading before it speaks RPC.
+			time.Sleep(d)
+		}
 
 		if fail[cmd.Type] {
 			writeLine(out, map[string]any{

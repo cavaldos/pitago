@@ -172,6 +172,9 @@ type Model struct {
 	Side                map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
 	Dialogs             []*Dialog
 	connErr             string
+	probe               startupProbe            // startup readiness budget (zero = defaultProbe)
+	connected           bool                    // a connect landed: gates the welcome-header latch
+	started             bool                    // welcome header already painted post-connect
 	HideThinking        bool                    // /settings: skip thinking blocks in chat (pi parity, pitago-local)
 	ShowImages          bool                    // terminal.showImages
 	ImageWidthCells     int                     // terminal.imageWidthCells
@@ -286,6 +289,14 @@ type connectedMsg struct {
 	cmds    []pirpc.RepoCommand
 	entries []pirpc.SessionEntry // usage attribution for the COST breakdown
 	err     error
+	// client is the pi this fetch ran against. A result whose client is no
+	// longer m.Pi belongs to a respawned session and is dropped, so a queued
+	// self-heal re-arm cannot paint a stale error over a healthy session.
+	client *pirpc.Client
+	// retry marks an error the readiness probe can recover from (pi alive
+	// but not answering yet): the handler re-arms a slow fetchAll instead
+	// of leaving the session dead-ended.
+	retry bool
 }
 
 type piEventMsg struct{ pirpc.Event }
@@ -555,22 +566,6 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
-}
-
-// fetchAll loads state/messages/stats/commands after (re)connect.
-
-func (m Model) fetchAll() tea.Cmd {
-	return func() tea.Msg {
-		state, err := m.Pi.GetState()
-		if err != nil {
-			return connectedMsg{err: err}
-		}
-		msgs, _ := m.Pi.GetMessages()
-		stats, _ := m.Pi.GetStats()
-		cmds, _ := m.Pi.GetCommands()
-		entries, _ := m.Pi.GetEntries()
-		return connectedMsg{state: state, msgs: msgs, stats: stats, cmds: cmds, entries: entries}
-	}
 }
 
 func (m *Model) AddBlock(b Block) int {
