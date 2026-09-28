@@ -56,20 +56,26 @@ func spawnProbeFakePi(t *testing.T, env map[string]string) (*pirpc.Client, strin
 // it answers every command, appends every received line to
 // $PITAGO_TEST_PROBE_LOG, and answers get_state only after sleeping delay.
 // When swallowFirst is set, the FIRST get_state is swallowed entirely
-// (never answered) and every later one is answered immediately after the
-// delay — a pi that needs a second try.
+// (never answered) and every later one is answered immediately — a pi that
+// needs a second try. The counter has to START at 1 for that branch to run
+// at all: seeded at 0 the first get_state is answered straight away and the
+// client connects without ever retrying, which turns "the retry worked" into
+// "the runner was slow enough to need one".
 func probeStubBody(delay string, swallowFirst bool) string {
+	const state = `data='{"model":{"id":"stub-model","name":"Stub Model"},"thinkingLevel":"medium"}'`
 	first := `sleep ` + delay + `
-      data='{"model":{"id":"stub-model","name":"Stub Model"},"thinkingLevel":"medium"}'`
+      ` + state
+	seed := `first=0`
 	if swallowFirst {
+		seed = `first=1`
 		first = `if [ "$first" = 1 ]; then
         first=0
         sleep ` + delay + `
         continue
       fi
-      data='{"model":{"id":"stub-model","name":"Stub Model"},"thinkingLevel":"medium"}'`
+      ` + state
 	}
-	return `first=0
+	return seed + `
 while IFS= read -r line; do
   printf '%s\n' "$line" >>"$PITAGO_TEST_PROBE_LOG"
   case "$line" in
@@ -163,7 +169,12 @@ func TestFetchAllSurvivesSlowPi(t *testing.T) {
 func TestFetchAllRetriesPastFirstTimeout(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "probe.jsonl")
 	t.Setenv("PITAGO_TEST_PROBE_LOG", log)
-	c, err := pirpc.Spawn(pirpc.Options{Bin: scriptStub(t, probeStubBody("0.3", true)), Dir: t.TempDir()})
+	// The drop of the first answer is what makes the retry deterministic, so
+	// the stub's busy-sleep has to be OVER before the retry lands (it is sent
+	// at Timeout+Delays[0] = 200ms and answered inside attempt 1's 200ms
+	// window). Keep it far below that: a sleep long enough to still be running
+	// when the retry arrives would hand this test back to wall-clock luck.
+	c, err := pirpc.Spawn(pirpc.Options{Bin: scriptStub(t, probeStubBody("0.05", true)), Dir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("spawn stub: %v", err)
 	}
