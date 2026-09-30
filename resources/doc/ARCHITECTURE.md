@@ -16,7 +16,8 @@ src/app/          # MVC shell (Bubble Tea Elm): model.go=M (state+msgs),
                   # update.go=C (event router), view.go=V (render only),
                   # thin wrappers over components/ext/pitago (no pure logic)
 src/components/  # V primitives (pure, testable): chat, mention, image,
-                  # palette, pet, recent, yank, format, theme, markdown
+                  # palette, pet, recent, yank, format, theme, markdown,
+                  # clipboard (local + OSC 52)
 src/builtin/      # C: command controllers over RPC.
                   # Origin "pi" = pure pi (model/tree/thinking/settings/
                   # login/session/resume/reload); "pitago" = ours (delegate

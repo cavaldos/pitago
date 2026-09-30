@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/components/format"
@@ -123,14 +124,22 @@ func (m *Model) renderBlocks() string {
 	}
 	hide, expand, theme := m.HideThinking, m.expandTools, m.ThemeName
 	tidy := m.Tidy
-	// blockLine is rebuilt on every pass (JumpToEntry scrolls by it) but the
-	// per-block strings are not: they come from the render cache, so a clean
-	// history is only re-measured, never re-rendered.
+	// Two parallel start-line tables, same values for the same block:
+	//   m.blockRows — mouse hit-tests (right-click copy menu, drag selection)
+	//   m.blockLine — JumpToEntry scroll anchor
+	// Both are rebuilt on every pass but the per-block strings come from the
+	// render cache, so a clean history is only re-measured, never re-rendered.
+	if len(m.blockRows) != len(m.blocks) {
+		m.blockRows = make([]int, len(m.blocks))
+	}
 	if len(m.blockLine) != len(m.blocks) {
 		nl := make([]int, len(m.blocks))
 		copy(nl, m.blockLine)
 		m.blockLine = nl
 	}
+	// Use the same trailing-newline-aware line count for the preamble as
+	// for each rendered block, so hit-testing stays aligned with connErr.
+	cursor := ly(b.String())
 	line := strings.Count(b.String(), "\n")
 	for i, bl := range m.blocks {
 		// The jump mark lives outside renderOneBlock on purpose: it is a
@@ -138,10 +147,12 @@ func (m *Model) renderBlocks() string {
 		// string would fold it into blockKey's input for every other block.
 		if i == m.jumpBlock {
 			b.WriteString(toolStyle.Render(jumpMark) + "\n")
+			cursor++
 			line++
 		}
 		// Hidden/skipped blocks render as "", so they record the line the
 		// next visible block will use and the table never drifts.
+		m.blockRows[i] = cursor
 		m.blockLine[i] = line
 		// Image-bearing transcript blocks are always rebuilt as safe squares.
 		// This purges any cache entry created by an older image-render path
@@ -151,8 +162,10 @@ func (m *Model) renderBlocks() string {
 		}
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
 		if m.renderCacheKey[i] == key {
-			b.WriteString(m.renderCache[i])
-			line += strings.Count(m.renderCache[i], "\n")
+			s := m.renderCache[i]
+			b.WriteString(s)
+			cursor += ly(s)
+			line += strings.Count(s, "\n")
 			continue
 		}
 		s, skip := m.renderOneBlock(bl, cw)
@@ -162,12 +175,90 @@ func (m *Model) renderBlocks() string {
 		m.renderCacheKey[i] = key
 		m.renderCache[i] = s
 		b.WriteString(s)
+		cursor += ly(s)
 		line += strings.Count(s, "\n")
 	}
 	if m.thinking {
 		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
 	}
-	return b.String()
+	out := b.String()
+	m.chatLines = strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	// The gutter rides on the first line of every block ("● ") and on
+	// every line of a boxed block (blank 2-cell gutter on continuations).
+	// Track its width per line so selection (drag / double-click) can
+	// clamp past it instead of copying the glyph.
+	m.gutterCols = make([]int, len(m.chatLines))
+	for i, bl := range m.blocks {
+		s := m.renderCache[i]
+		if s == "" {
+			continue // skipped/streaming leftover: no lines rendered
+		}
+		start := m.blockRows[i]
+		boxed := bl.Kind == "user"
+		if bl.Kind == "assistant" {
+			boxed = startsPreformatted(bl.Text)
+		}
+		// Tool/bash frames are flush-left (no external gutter).
+		if bl.Kind == "tool" || bl.Kind == "bash" {
+			continue
+		}
+		first := true
+		for li, ln := range strings.Split(s, "\n") {
+			if strings.TrimSpace(stripSelectionANSI(ln)) == "" {
+				continue
+			}
+			if boxed || first {
+				if idx := start + li; idx < len(m.gutterCols) {
+					m.gutterCols[idx] = 2
+				}
+			}
+			first = false
+		}
+	}
+	return out
+}
+
+// ly counts rendered lines for a block string (trailing-newline aware).
+func ly(s string) int {
+	n := strings.Count(s, "\n")
+	if n == 0 {
+		if s == "" {
+			return 0
+		}
+		return 1
+	}
+	if strings.HasSuffix(s, "\n") {
+		return n
+	}
+	return n + 1
+}
+
+// chatRowToBlock maps a screen y (chat column, 0-indexed absolute row
+// AFTER the header) to the block index under it, or -1. y is the mouse row;
+// the header occupies row 0 (renderHeader), the viewport starts at row 1.
+//
+// The row is resolved against the painted chat frame, not m.vp: with a task
+// widget or plugin panel up the frame is a shrunk, re-pinned copy, so m.vp's
+// offset points at a different block than the one the user right-clicked.
+// The same reasoning gates the right-click itself — a row below the chat
+// frame is a panel, not a block.
+func (m *Model) chatRowToBlock(screenY int) int {
+	chatVp := m.chatViewport()
+	if screenY < 1 || screenY > chatVp.Height {
+		return -1
+	}
+	abs := chatVp.YOffset + (screenY - 1)
+	if abs < 0 {
+		return -1
+	}
+	idx := -1
+	for i, start := range m.blockRows {
+		if start > abs {
+			break
+		}
+		idx = i
+	}
+	return idx
 }
 
 // blockKey fingerprints one block's rendered output: every field
@@ -2517,6 +2608,46 @@ func (m Model) teamPanelActive() bool {
 	return len(m.TeamWidgetLines) > 0 && m.TeamWidgetSeen && m.TeamWidgetVisible
 }
 
+// chatFrameGeometry computes the viewport the chat body is actually painted
+// from, given the panels View() has already rendered. The painted geometry is
+// not always m.vp's: the task widget and the generic plugin panels are derived
+// at paint time, so the chat is drawn from a shrunk, possibly re-pinned copy.
+// Anything that maps a screen row to a transcript line must use this same
+// geometry — mapping against m.vp makes a press resolve to a different line
+// than the one that gets highlighted, and lets a press that lands on a panel
+// select an unrelated chat line.
+func (m Model) chatFrameGeometry(inlineUI bool, teamPanel, taskPanel, extAbove, extBelow string) viewport.Model {
+	// The team panel's rows are already reserved from m.vp by
+	// applyTeamPanelH (same path as the popups), so the local copy only gives
+	// up rows for the task widget and the generic plugin panels — the two
+	// surfaces that are derived at paint time. lipgloss reports an empty
+	// string as one row, so measure them with panelHeight.
+	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
+	chatVp := m.vp
+	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
+	// Shrinking Height without re-pinning drops rows from the BOTTOM of the
+	// transcript (viewport.View() renders lines[offset:offset+Height]), so the
+	// newest — most important — chat line would never be painted. Re-pin the
+	// copy when the copy is the shrunk one and the user was already following
+	// the tail; a user scrolled up reading history keeps their offset.
+	if chatVp.Height != m.vp.Height && m.vp.AtBottom() {
+		chatVp.GotoBottom()
+	}
+	return chatVp
+}
+
+// chatViewport is chatFrameGeometry for callers outside View(), which have no
+// rendered panels to hand it. The panel builders are pure string assembly over
+// small model state, so recomputing them per mouse event is cheaper than
+// caching geometry that could drift from what View() actually paints.
+func (m Model) chatViewport() viewport.Model {
+	teamPanel := m.renderTeamWidget()
+	extBudget := m.extPanelBudget(panelHeight(teamPanel))
+	extAbove := m.renderExtWidgets("aboveEditor", extBudget)
+	extBelow := m.renderExtWidgets("belowEditor", max(0, extBudget-panelHeight(extAbove)))
+	return m.chatFrameGeometry(m.isInlineUI(), teamPanel, m.renderTaskWidget(), extAbove, extBelow)
+}
+
 // chatFrameRows is the chat's share of the frame. Everything the frame paints
 // outside the chat — header, input, live panels, popups — is measured here so
 // the parts sum to exactly winH. alloc is what m.vp already holds after
@@ -2863,23 +2994,13 @@ func (m Model) View() string {
 	extBudget := m.extPanelBudget(panelHeight(teamPanel))
 	extAbove := m.renderExtWidgets("aboveEditor", extBudget)
 	extBelow := m.renderExtWidgets("belowEditor", max(0, extBudget-panelHeight(extAbove)))
-	chatVp := m.vp
-	// The team panel's rows are already reserved from m.vp by
-	// applyTeamPanelH (same path as the popups), so the local copy only gives
-	// up rows for the task widget and the generic plugin panels — the two
-	// surfaces that are derived at paint time. lipgloss reports an empty
-	// string as one row, so measure them with panelHeight.
-	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
-	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
-	// Shrinking Height without re-pinning drops rows from the BOTTOM of the
-	// transcript (viewport.View() renders lines[offset:offset+Height]), so the
-	// newest — most important — chat line would never be painted. Re-pin the
-	// copy when the copy is the shrunk one and the user was already following
-	// the tail; a user scrolled up reading history keeps their offset.
-	if chatVp.Height != m.vp.Height && m.vp.AtBottom() {
-		chatVp.GotoBottom()
+	chatVp := m.chatFrameGeometry(inlineUI, teamPanel, taskPanel, extAbove, extBelow)
+	// The selection overlay runs on this rendered viewport copy, not on m.vp:
+	// highlighting m.vp instead would highlight different pixels than the
+	// ones being drawn.
+	chatView := func() string {
+		return padToHeight(overlaySelection(chatVp.View(), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
 	}
-	chatView := func() string { return padToHeight(chatVp.View(), chatVp.Height) }
 	input := m.renderInput()
 	popupOpen := m.cmdOpen || m.atOpen || inlineUI || m.inputOpen()
 	// A popup replaces the body wholesale, so build exactly one of the two

@@ -537,6 +537,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case selectionTickMsg:
+		// 33 ms edge-scroll pulse while a drag is held at the viewport edge.
+		return m.updateSelectionTick()
+
 	case clearCopyHintMsg:
 		// A newer copy bumped the generation, so this timer is stale and
 		// the newer hint still owns the footer.
@@ -1180,6 +1184,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.RespawnPi()
 
 	case tea.MouseMsg:
+		// App-owned chat drag selection (left press/motion/release).
+		// Sidebar clicks/wheel/dialogs fall through untouched.
+		if m2, cmd, handled := m.updateSelection(msg); handled {
+			return m2, cmd
+		}
+		// Right-click on an assistant chat block → semantic copy menu.
+		// Chat-only: sidebars keep their own click handlers below. The
+		// bound is the painted chat frame, not m.vp — rows below it are the
+		// task widget or a plugin panel, not transcript blocks.
+		if m.Mouse && msg.Action == tea.MouseActionPress &&
+			msg.Button == tea.MouseButtonRight && !m.overSide(msg.X) &&
+			msg.Y >= 1 && msg.Y <= m.chatViewport().Height {
+			if idx := m.chatRowToBlock(msg.Y); idx >= 0 && m.blocks[idx].Kind == "assistant" {
+				if m.OpenBlockActions(idx) {
+					return m, nil
+				}
+			}
+		}
 		// Click (release) on the sidebar: PLUGINS header collapses/expands,
 		// a recent model switches to it. Terminals report release with
 		// Button None (SGR `m` / X10 code 3 carry no button), so match any

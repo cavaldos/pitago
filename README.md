@@ -193,14 +193,16 @@ script/release.sh v0.0.1
 | `Alt+↑↓ PgUp PgDn Home End` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll sidebar (keyboard, always works)                                                                                       |
 | `Mouse wheel`                                               | On by default: hover sidebar to scroll it, chat otherwise; `--mouse=false` disables                                           |
 
-### Copying text
+### Copying text and messages
 
-- With mouse on (default): hold `Option`/`Shift` (terminal-dependent) to select
-- Or toggle it at runtime with `/mouse` (`/mouse off` for plain highlight-to-copy), or start with `--mouse=false`
-- To copy only chat content (without sidebar): hide the sidebar with `/sidebar` or `Ctrl+E`, then select
-- Or use `Ctrl+Y` / `/yank` (`/copy`) to copy the last assistant answer directly to clipboard
-- Or press `Ctrl+O` to pick any message to copy — sidebar stays visible
-- With mouse on: hold `Option`/`Shift` (terminal-dependent) to select
+- **With mouse on (default):** drag inside the chat to select and copy. Selection is clamped to the chat pane, so the sidebar is never included; dragging to the top/bottom edge auto-scrolls.
+- **Double-click** a chat line to select the whole rendered line.
+- **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, or `Copy plain text` — the menu lists only what the block actually contains.
+- With mouse off, native terminal selection works normally; start with `pitago --mouse=false` or toggle at runtime with `/mouse off`.
+- `Ctrl+Y` / `/yank` / `/copy` copies the last assistant answer; `Ctrl+O` opens the message picker.
+- `/copy-md`, `/copy-tables`, and `/copy-code` copy semantic content from the last assistant message.
+- Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial drag selection copies ANSI/OSC-free visible text.
+- In hosted sessions (terminal multiplexers / remote panes), Pitago emits OSC 52 to the controlling terminal. Delivery depends on the terminal's OSC 52 support; if it is unavailable or the payload exceeds the safe cap, Pitago reports the copy failure instead of claiming success. Other sessions use the local system clipboard with platform fallbacks.
 
 ## Commands
 
@@ -213,6 +215,7 @@ Type `/` to open the command popup. Two kinds:
 - `/model` — change model
 - `/recent` — recent models picker
 - `/yank` / `/copy` — copy last answer to clipboard
+- `/copy-md` / `/copy-tables` / `/copy-code` — semantic copy from the last assistant message
 - `/sidebar` — hide/show sidebar
 - `/theme` — switch TUI theme (`/theme` opens picker, `/theme gruvbox` applies directly; or `pitago --theme one-dark`)
 - `/pet` — pick the sidebar pet. `/pet` opens a two-pane dialog in the `/model` shape: left = the entry list (18 animals plus the `ascii` and `classic` looks, `▸` cursor, `●` the one in use, type to filter, `↑↓` move, `Enter` applies, `Esc` cancels), right = a live demo of the highlighted entry. `/pet dragon`, `/pet ascii` and `/pet classic` apply directly. In the **ascii** look the sidebar block draws the animal (name inline, 5 rows) and the animals take turns every ~20s; in the **classic** look it draws the compact animated kaomoji face with the status label on one row (2 rows, no `PET` title) and nothing rotates

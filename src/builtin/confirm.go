@@ -14,26 +14,27 @@ import (
 // Wired into app via UseBuiltins; app's confirmDialog only dispatches.
 func Confirmers() map[string]app.ConfirmFunc {
 	return map[string]app.ConfirmFunc{
-		"model":       confirmModel,
-		"recent":      confirmRecent,
-		"sessions":    confirmSessions,
-		"thinking":    confirmThinking,
-		"pet":         confirmPet,
-		"settings":    confirmSettings,
-		"pconfig":     confirmPconfig,
-		"login":       confirmLogin,
-		"loginMethod": confirmLoginMethod,
-		"loginOAuth":  confirmLoginOAuth,
-		"logout":      confirmLogout,
-		"secret":      confirmSecret,
-		"yank":        confirmYank,
-		"update":      confirmUpdate,
-		"trajectory":  confirmTrajectory,
-		"tree":        confirmTree,
-		"treeAction":  confirmTreeAction,
-		"fork":        confirmFork,
-		"subagents":   confirmSubagents,
-		"live":        confirmLive,
+		"model":        confirmModel,
+		"recent":       confirmRecent,
+		"sessions":     confirmSessions,
+		"thinking":     confirmThinking,
+		"pet":          confirmPet,
+		"settings":     confirmSettings,
+		"pconfig":      confirmPconfig,
+		"login":        confirmLogin,
+		"loginMethod":  confirmLoginMethod,
+		"loginOAuth":   confirmLoginOAuth,
+		"logout":       confirmLogout,
+		"secret":       confirmSecret,
+		"yank":         confirmYank,
+		"update":       confirmUpdate,
+		"trajectory":   confirmTrajectory,
+		"blockactions": confirmBlockActions,
+		"tree":         confirmTree,
+		"treeAction":   confirmTreeAction,
+		"fork":         confirmFork,
+		"subagents":    confirmSubagents,
+		"live":         confirmLive,
 	}
 }
 
@@ -456,4 +457,12 @@ func confirmYank(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	}
 	m.YankText(text)
 	return m, nil
+}
+
+// confirmBlockActions dispatches the right-click copy menu: it pops the
+// dialog and hands the chosen entry to the app, which owns the clipboard
+// write (and the per-backend confirmation toast).
+func confirmBlockActions(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	m.Dialogs = m.Dialogs[1:]
+	return m, m.RunBlockAction(d, ri)
 }

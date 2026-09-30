@@ -48,6 +48,7 @@ type Dialog struct {
 	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
 	TreeJump          []int             // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
 	TreeRole          []string          // tree: role ("user"/"assistant") of a message row, "" for every other entry type
+	BlockIdx          int               // blockactions: target chat block index (for Payload kinds)
 	Current           string            // the value in use, marked in the grid/list (pet: "●" cell)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
@@ -236,6 +237,12 @@ type Model struct {
 	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
 	blockLine           []int     // transcript line where each block starts (parallel to m.blocks; hidden/skip blocks share the next visible line)
+	blockRows           []int     // rendered start line of each block (mouse hit-testing)
+	chatLines           []string  // absolute rendered chat content lines (selection source)
+	gutterCols          []int     // leading gutter cells per chat line (0 or 2), parallel to chatLines
+	sel                 Selection // chat-column drag selection state
+	LastPressAt         time.Time // last single-click timestamp (double-click detection)
+	LastPressLine       int       // line of last single-click
 	jumpBlock           int       // block index carrying the "jumped here" mark (-1 = no mark; New sets it, a Model literal without it would mark block 0)
 	chatContent         string    // transcript string currently loaded into vp (setChatContent skips an unchanged re-measure)
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
