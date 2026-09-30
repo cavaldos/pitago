@@ -251,6 +251,13 @@ func (m *Model) chatRowToBlock(screenY int) int {
 	if abs < 0 {
 		return -1
 	}
+	// Blank rows carry no block. Without this the loop below returns the last
+	// block that starts at or before abs, so right-clicking the empty space
+	// under a short transcript would open that block's copy menu — a menu for
+	// content the pointer was nowhere near.
+	if strings.TrimSpace(m.chatLine(abs)) == "" {
+		return -1
+	}
 	idx := -1
 	for i, start := range m.blockRows {
 		if start > abs {

@@ -148,6 +148,15 @@ func TestChatRowToBlock(t *testing.T) {
 	// A constructed model, not a bare literal: chatRowToBlock now resolves
 	// against the painted frame, which renders the header and input.
 	m := New(nil, t.TempDir())
+	// chatLines must match blockRows: a blank row resolves to no block, so a
+	// fixture whose lines came from a welcome view would not describe the
+	// block layout it claims to test.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	m.chatLines = lines
+	m.vp.SetContent(strings.Join(lines, "\n"))
 	m.blockRows = []int{0, 3, 9}
 	m.winW, m.winH = 100, 40
 	// A frame deep enough for row 8 yet shallow enough that the header and
@@ -176,6 +185,7 @@ func TestChatRowToBlockUsesPaintedFrame(t *testing.T) {
 	for i := range lines {
 		lines[i] = fmt.Sprintf("line %02d", i)
 	}
+	m.chatLines = lines
 	m.vp.SetContent(strings.Join(lines, "\n"))
 	m.vp.GotoBottom()
 	m.Todos = []TodoItem{{ID: "1", Content: "Finish design", Status: TodoInProgress}}
@@ -216,9 +226,16 @@ func TestChatRowToBlockUsesPaintedFrame(t *testing.T) {
 func TestRightClickOpensBlockActions(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.Mouse = true
+	m.winW, m.winH = 100, 40
+	m.vp.Width, m.vp.Height = 40, 5 // right-click requires an actual viewport row
 	m.blocks = []Block{{Kind: "assistant", Text: "# hello"}}
-	m.blockRows = []int{0}
-	m.vp.Height = 5 // right-click requires an actual viewport row
+	// Render for real: chatRowToBlock resolves blank rows to no block, so a
+	// fixture with hand-set blockRows but no chatLines describes nothing.
+	m.renderBlocks()
+	m.vp.SetContent(strings.Join(m.chatLines, "\n"))
+	if strings.TrimSpace(stripSelectionANSI(m.chatLine(0))) == "" {
+		t.Fatalf("precondition: row 0 must hold the block, chatLines=%q", m.chatLines)
+	}
 	tm, _ := m.Update(tea.MouseMsg{
 		X: 1, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonRight,
 	})
@@ -258,5 +275,65 @@ func TestRunBlockActionCopiesMarkdown(t *testing.T) {
 	m.RunBlockAction(d, mdRow)
 	if !strings.Contains(copied, "quick brown fox") {
 		t.Fatalf("markdown copy missing the block text: %q", copied)
+	}
+}
+
+// "Copy plain text" must hand over what the reader sees. A markdown link's
+// visible text is its label; leaving the [label](url) form in the result is
+// exactly what the action promises not to do.
+func TestToPlainTextStripsLinkSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"inline link", "see [pi docs](https://pi.dev) for more", "see pi docs for more"},
+		{"link with title", `[a](https://x.dev "T")`, "a"},
+		{"bold link", "**[bold link](https://x.dev)**", "bold link"},
+		{"autolink", "ping <https://example.com> now", "ping https://example.com now"},
+		{"mailto autolink", "mail <mailto:a@b.dev>", "mail mailto:a@b.dev"},
+		{"link next to emphasis", "*em* and [lbl](https://x.dev)", "em and lbl"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toPlainText(tc.in); got != tc.want {
+				t.Errorf("toPlainText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Right-clicking the empty space under a short transcript must not open the
+// last block's copy menu: chatRowToBlock resolved any row past a block's start
+// to that block, so clicking blank space offered to copy content the pointer
+// was nowhere near.
+func TestChatRowToBlockIgnoresBlankRows(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.ready = true
+	m.winW, m.winH = 100, 40
+	m.vp.Width, m.vp.Height = 40, 20
+	m.blocks = []Block{{Kind: "assistant", Text: "only one block"}}
+	m.renderBlocks()
+	m.vp.SetContent(strings.Join(m.chatLines, "\n"))
+	m.vp.GotoBottom()
+
+	// Find a blank chat row below the transcript's last block.
+	blank := -1
+	for i := len(m.chatLines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(stripSelectionANSI(m.chatLines[i])) == "" {
+			blank = i
+			break
+		}
+	}
+	if blank < 0 {
+		t.Skip("transcript has no blank row to test")
+	}
+	// chatRowToBlock takes a 1-based screen row: abs = YOffset + row - 1.
+	rel := blank - m.vp.YOffset + 1
+	if rel < 1 || rel > m.vp.Height {
+		t.Skipf("blank row %d is outside the visible frame (offset %d, height %d)",
+			blank, m.vp.YOffset, m.vp.Height)
+	}
+	if got := m.chatRowToBlock(rel); got != -1 {
+		t.Errorf("blank row %d resolved to block %d, want -1", rel, got)
 	}
 }
