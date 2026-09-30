@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	atottoclipboard "github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pitago/src/components/clipboard"
@@ -51,7 +50,13 @@ func (m *Model) YankText(text string) {
 // toast overlay (View returns the dialog before overlayToasts runs), so a
 // notice raised from inside one would surface as a stale popup long after
 // the copy. Dialog copies report through the dialog footer instead.
-var clipWrite = func(text string) error { return atottoclipboard.WriteAll(text) }
+//
+// It routes through the shared clipboard transport rather than the system
+// clipboard directly, so a dialog copy behaves like every other copy in the
+// app: OSC 52 in a hosted session — where the local clipboard belongs to the
+// machine showing the terminal, not the one running pi — and the platform CLI
+// fallbacks when the native clipboard is unavailable.
+var clipWrite = func(text string) error { return clipboard.Write(text).Err }
 
 // OpenYank shows the message picker: ↑↓ pick any chat message, Enter
 // copies its full text. The sidebar stays visible — copied text is
