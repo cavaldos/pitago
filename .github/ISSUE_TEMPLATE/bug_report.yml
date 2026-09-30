@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in pitago behaves differently from what it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce?
+      description: Shortest path from a fresh start.
+      placeholder: |
+        1. pitago
+        2. type /theme
+        3. press Ctrl+N
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: pitago version
+      description: Output of `pitago --version`
+      placeholder: v1.2.3
+    validations:
+      required: false
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, terminal, install method, Go version.
+      placeholder: macOS / Ghostty / release binary
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Most TUI bugs are diagnosable from the log. Reproduce it, then send the
+        log from the chat with `/log` and paste it here. Strip API keys first.
+    validations:
+      required: false
