@@ -121,37 +121,68 @@ func writeOsc52(text string) Status {
 	return status
 }
 
-// writeExternal runs a platform clipboard CLI as a fallback when atotto
-// fails. Mirrors the paste-path fallback style (src/app/paste.go).
-func writeExternal(text string) Status {
-	var cmd *exec.Cmd
+// externalHelper is one platform clipboard CLI fallback: the binary to look
+// for on PATH and the fixed arguments it needs.
+type externalHelper struct {
+	bin  string
+	args []string
+}
+
+// externalHelpers lists the clipboard CLIs to try, in order. It is a variable
+// so a test can exercise the multi-helper fallback chain on any platform.
+var externalHelpers = func() []externalHelper {
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("pbcopy")
+		return []externalHelper{{bin: "pbcopy"}}
 	case "linux":
-		for _, bin := range []string{"wl-copy", "xclip", "xsel"} {
-			if path, err := exec.LookPath(bin); err == nil {
-				args := []string(nil)
-				if bin == "xclip" {
-					args = []string{"-i", "-selection", "clipboard"}
-				} else if bin == "xsel" {
-					args = []string{"-i", "--clipboard"}
-				}
-				cmd = exec.Command(path, args...)
-				break
-			}
+		// wl-copy first for Wayland, then the X11 helpers.
+		return []externalHelper{
+			{bin: "wl-copy"},
+			{bin: "xclip", args: []string{"-i", "-selection", "clipboard"}},
+			{bin: "xsel", args: []string{"-i", "--clipboard"}},
 		}
 	case "windows":
-		cmd = exec.Command("clip")
+		return []externalHelper{{bin: "clip"}}
 	default:
-		cmd = nil
+		return nil
 	}
-	if cmd == nil {
+}
+
+// lookPath and runCommand are the two points writeExternal touches the
+// process, kept as variables so tests can drive the fallback chain without a
+// real clipboard helper on the machine.
+var (
+	lookPath   = exec.LookPath
+	runCommand = func(cmd *exec.Cmd) error { return cmd.Run() }
+)
+
+// writeExternal runs platform clipboard CLIs until one delivers, mirroring
+// the paste-path fallback style (src/app/paste.go).
+//
+// Every installed helper is tried, not just the first found: a Linux box can
+// have wl-copy present but unusable (no Wayland session) while xclip works, and
+// stopping at the first would report failure over a backend that would have
+// succeeded. The last error is kept so an all-failed chain still explains
+// itself.
+func writeExternal(text string) Status {
+	var lastErr error
+	installed := false
+	for _, h := range externalHelpers() {
+		path, err := lookPath(h.bin)
+		if err != nil {
+			continue // not installed; try the next one
+		}
+		installed = true
+		cmd := exec.Command(path, h.args...)
+		cmd.Stdin = bytes.NewReader([]byte(text))
+		if err := runCommand(cmd); err == nil {
+			return Status{Channel: Atoto, Bytes: len(text), Chars: len([]rune(text))}
+		} else {
+			lastErr = err
+		}
+	}
+	if !installed {
 		return Status{Channel: None}
 	}
-	cmd.Stdin = bytes.NewReader([]byte(text))
-	if err := cmd.Run(); err != nil {
-		return Status{Channel: None, Err: err}
-	}
-	return Status{Channel: Atoto, Bytes: len(text), Chars: len([]rune(text))}
+	return Status{Channel: None, Err: lastErr}
 }
