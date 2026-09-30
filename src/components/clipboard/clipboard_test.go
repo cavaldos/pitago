@@ -2,6 +2,9 @@ package clipboard
 
 import (
 	"bytes"
+	"errors"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,4 +122,87 @@ func captureOsc52(w *bytes.Buffer) func() {
 	prev := osc52Out
 	osc52Out = w
 	return func() { osc52Out = prev }
+}
+
+// stubExternal swaps the helper list, PATH lookup and command runner for the
+// duration of a test, so the fallback chain can be driven from any platform.
+func stubExternal(t *testing.T, helpers []externalHelper, installed map[string]bool, fails map[string]bool) *[]string {
+	t.Helper()
+	prevHelpers, prevLook, prevRun := externalHelpers, lookPath, runCommand
+	t.Cleanup(func() { externalHelpers, lookPath, runCommand = prevHelpers, prevLook, prevRun })
+
+	externalHelpers = func() []externalHelper { return helpers }
+	var tried []string
+	lookPath = func(bin string) (string, error) {
+		if installed[bin] {
+			return "/fake/" + bin, nil
+		}
+		return "", errors.New("not found")
+	}
+	runCommand = func(cmd *exec.Cmd) error {
+		bin := filepath.Base(cmd.Path)
+		tried = append(tried, bin)
+		if fails[bin] {
+			return errors.New("helper failed: " + bin)
+		}
+		return nil
+	}
+	return &tried
+}
+
+// A helper can be installed and still unusable — wl-copy on a box with no
+// Wayland session is the real case. Stopping at the first installed helper
+// would report failure over an xclip that would have worked.
+func TestWriteExternalTriesEveryInstalledHelper(t *testing.T) {
+	helpers := []externalHelper{
+		{bin: "wl-copy"},
+		{bin: "xclip", args: []string{"-i", "-selection", "clipboard"}},
+		{bin: "xsel", args: []string{"-i", "--clipboard"}},
+	}
+	tried := stubExternal(t, helpers,
+		map[string]bool{"wl-copy": true, "xclip": true, "xsel": true},
+		map[string]bool{"wl-copy": true})
+
+	st := writeExternal("hello")
+	if st.Channel != Atoto {
+		t.Fatalf("a later working helper must deliver, got %q (err %v)", st.Channel, st.Err)
+	}
+	if len(*tried) != 2 || (*tried)[0] != "wl-copy" || (*tried)[1] != "xclip" {
+		t.Errorf("expected to fall through wl-copy to xclip, tried %v", *tried)
+	}
+	if st.Chars != 5 || st.Bytes != 5 {
+		t.Errorf("expected 5 chars/5 bytes, got %d/%d", st.Chars, st.Bytes)
+	}
+}
+
+// Every helper failing must still explain itself rather than reporting a
+// bare failure.
+func TestWriteExternalReportsLastErrorWhenAllFail(t *testing.T) {
+	helpers := []externalHelper{{bin: "wl-copy"}, {bin: "xclip"}, {bin: "xsel"}}
+	tried := stubExternal(t, helpers,
+		map[string]bool{"wl-copy": true, "xclip": true, "xsel": true},
+		map[string]bool{"wl-copy": true, "xclip": true, "xsel": true})
+
+	st := writeExternal("hello")
+	if st.Channel != None {
+		t.Fatalf("all helpers failing must not report delivery, got %q", st.Channel)
+	}
+	if st.Err == nil || !strings.Contains(st.Err.Error(), "xsel") {
+		t.Errorf("want the last helper's error, got %v", st.Err)
+	}
+	if len(*tried) != 3 {
+		t.Errorf("expected all three helpers tried, got %v", *tried)
+	}
+}
+
+// Nothing installed is not an error: the caller reports "no backend", which is
+// a different message from "the backend failed".
+func TestWriteExternalNoHelperInstalledIsNotAnError(t *testing.T) {
+	helpers := []externalHelper{{bin: "wl-copy"}, {bin: "xclip"}}
+	stubExternal(t, helpers, map[string]bool{}, nil)
+
+	st := writeExternal("hello")
+	if st.Channel != None || st.Err != nil {
+		t.Fatalf("no installed helper must be None with no error, got %q / %v", st.Channel, st.Err)
+	}
 }
