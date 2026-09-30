@@ -374,9 +374,16 @@ func escapeAt(s string, i int) (int, string) {
 }
 
 // styledSegments splits a rendered line at the visible-column boundaries start
-// and end, returning the text before, inside and after the range. Every escape
-// sequence is preserved and attributed to the segment it precedes, so the
-// syntax colouring of a code fence or a table survives the split.
+// and end, returning the text before, inside and after the range.
+//
+// Escapes are preserved only OUTSIDE the range. Inside it they are dropped:
+// a full reset (ESC[0m) clears the reverse video the highlight just enabled, so
+// a reset inside the selection would end the highlight at that span, and an
+// explicit colour (ESC[38;5;Nm) can override the inverted foreground. Dropping
+// them renders the selection as uniform inverse text — the same look the
+// selection needs — while the unselected columns of the same line keep the
+// syntax colouring of a code fence or table. Every escape is otherwise
+// zero-width, so this never shifts a column.
 func styledSegments(line string, start, end int) (before, selected, after string) {
 	var b, s, a strings.Builder
 	col := 0
@@ -390,9 +397,16 @@ func styledSegments(line string, start, end int) (before, selected, after string
 			a.WriteString(text)
 		}
 	}
+	// An escape belongs to the segment it precedes, and only if that segment
+	// is outside the selection.
+	keep := func(seq string) bool {
+		return col < start || col >= end
+	}
 	for i := 0; i < len(line); {
 		if n, seq := escapeAt(line, i); n > 0 {
-			emit(col, seq)
+			if keep(seq) {
+				emit(col, seq)
+			}
 			i += n
 			continue
 		}
@@ -412,10 +426,9 @@ func styledSegments(line string, start, end int) (before, selected, after string
 	return b.String(), s.String(), a.String()
 }
 
-// highlightLine applies reverse video to the selected visible columns. Only
-// the selected range is re-wrapped: the unselected columns of the same line
-// keep their original styling, so dragging across a syntax-highlighted fence
-// or a coloured table does not drain the colour out of the whole line.
+// highlightLine applies reverse video to the selected visible columns. The
+// selected range is rendered as uniform inverse text — see styledSegments for
+// why its escapes are dropped — while the rest of the line keeps its styling.
 func highlightLine(line string, start, end int) string {
 	if end <= start {
 		return line
