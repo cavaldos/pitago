@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The selection highlight is rendered by overlaySelection from View(). A refactor
@@ -84,5 +85,81 @@ func TestViewWithoutSelectionHasNoHighlight(t *testing.T) {
 	m.vp.GotoTop()
 	if strings.Contains(m.View(), "\x1b[7m") {
 		t.Fatal("no selection should mean no reverse-video in the chat")
+	}
+}
+
+const demoBody = "## Result\n\n" +
+	"| Feature | Status | Notes |\n|---|---|---|\n" +
+	"| Tables | ✓ working | Header + separator + rows render aligned |\n" +
+	"| Code | ✓ working | Fenced blocks with language tags get syntax highlight |\n\n" +
+	"Here's a paragraph of ordinary text to check wrapping and line breaks. It should flow at the " +
+	"terminal width, respect hard wraps you insert, and keep the contrast legible against the theme.\n\n" +
+	"Some extra bits to stress it:\n\n" +
+	"- Lists (ordered and unordered) with nesting\n" +
+	"- Links like [pi docs](https://pi.dev) if rendering is on\n" +
+	"- Emoji / unicode: ✓ × · • — and a CJK line: 日本語のテキスト\n\n" +
+	"1. First item\n2. Second item\n   - nested bullet\n\n" +
+	"> Blockquoted text to verify left-rule and dimming.\n\n" +
+	"```ts\nexport function greet(name: string): string {\n  if (!name) throw new Error(\"name required\");\n  return `Hello, ${name}!`;\n}\n```\n\n" +
+	"Let me know which parts look off — alignment, colors, spacing, or wrapping.\n"
+
+func outsideInverse(s string) []string {
+	var out []string
+	inv := false
+	for i := 0; i < len(s); {
+		if n, seq := escapeAt(s, i); n > 0 {
+			switch {
+			case seq == "\x1b[7m":
+				inv = true
+			case seq == "\x1b[27m":
+				inv = false
+			}
+			i += n
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r != utf8.RuneError && r >= 0x20 && r != 0x7f && r != '\t' {
+			if !inv {
+				out = append(out, string(r))
+			}
+		}
+		i += size
+	}
+	return out
+}
+
+func TestViewSelectionHasNoGaps(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.ready = true
+	m.winW, m.winH = 100, 30
+	m.vp.Width, m.vp.Height = 100, 30
+	m.blocks = []Block{{Kind: "user", Text: "Doing some testing. Give me a table, a code snippet, some text please."}, {Kind: "assistant", Text: demoBody}}
+	m.renderBlocks()
+	m.vp.SetContent(strings.Join(m.chatLines, "\n"))
+	m.vp.GotoBottom()
+
+	painted := m.chatViewport()
+	m.sel = Selection{Active: true, HadDrag: true,
+		Anchor: Point{Line: painted.YOffset, Col: 0},
+		Focus:  Point{Line: painted.YOffset + painted.Height - 1, Col: 10_000}}
+
+	// The exact expression View() uses to paint the chat: no header, no
+	// input box, no sidebar — only the rendered transcript.
+	out := overlaySelection(painted.View(), painted.YOffset, m.sel, m.gutterCols)
+	bad := 0
+	for i, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(stripSelectionANSI(line)) == "" {
+			continue
+		}
+		o := outsideInverse(line)
+		if len(o) > 2 { // the 2-cell gutter is chrome
+			bad++
+			if bad <= 3 {
+				t.Errorf("row %d: %d un-highlighted %q in %q", i, len(o), strings.Join(o, ""), stripSelectionANSI(line))
+			}
+		}
+	}
+	if bad > 0 {
+		t.Fatalf("%d rendered rows have un-highlighted text", bad)
 	}
 }

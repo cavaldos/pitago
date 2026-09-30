@@ -145,12 +145,16 @@ func (m Model) updateSelection(msg tea.MouseMsg) (Model, tea.Cmd, bool) {
 				m.YankText(text)
 			}
 		}
-		// Clear the double-click window too: a drag-release followed by a
-		// click on the same line inside 450 ms would otherwise read as a
-		// double-click and select the whole line.
+		// Drop the double-click window after a drag, so a click that follows
+		// one inside the window is not read as a double-click. It must NOT be
+		// dropped on every release: a real double-click is press, release,
+		// press, and disarming on that release means the second press can
+		// never be detected.
+		if m.sel.HadDrag {
+			m.LastPressAt = time.Time{}
+			m.LastPressLine = -1
+		}
 		m.sel = Selection{}
-		m.LastPressAt = time.Time{}
-		m.LastPressLine = -1
 		return m, nil, true
 	}
 	return m, nil, false
