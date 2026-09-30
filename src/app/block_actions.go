@@ -61,8 +61,16 @@ func extractCodeBlocks(markdown string) []string {
 	return blocks
 }
 
-// extractTables pulls every markdown table (consecutive | rows incl. a
-// separator row), preserving the raw pipe syntax.
+// isTableRowLine reports whether a line is a table row in either GFM form:
+// with outer pipes ("| a | b |") or without ("a | b"). Both are valid and
+// both render as a table, so the copy menu must offer them alike.
+func isTableRowLine(l string) bool {
+	return strings.Contains(strings.TrimSpace(l), "|")
+}
+
+// extractTables pulls every markdown table (a cell row followed by a separator
+// row, then the remaining cell rows), preserving the raw pipe syntax so the
+// copied table is byte-for-byte what the author wrote — outer pipes or not.
 func extractTables(markdown string) []string {
 	var tables []string
 	lines := strings.Split(markdown, "\n")
@@ -70,19 +78,24 @@ func extractTables(markdown string) []string {
 	isSep := func(l string) bool {
 		return tableSepRe.MatchString(l) && strings.Contains(l, "-")
 	}
+	// A header is a cell row that a separator row follows. Recognising that
+	// pair is what separates a table from prose that happens to contain a
+	// pipe, and it stops one table's rows swallowing the next table's header.
+	startsTable := func(at int) bool {
+		return at+1 < len(lines) && isTableRowLine(lines[at]) && isSep(lines[at+1])
+	}
 	for i < len(lines) {
-		line := lines[i]
-		if strings.HasPrefix(strings.TrimSpace(line), "|") && i+1 < len(lines) && isSep(lines[i+1]) {
-			rows := []string{line, lines[i+1]}
-			i += 2
-			for i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
-				rows = append(rows, lines[i])
-				i++
-			}
-			tables = append(tables, strings.Join(rows, "\n"))
+		if !startsTable(i) {
+			i++
 			continue
 		}
-		i++
+		rows := []string{lines[i], lines[i+1]}
+		i += 2
+		for i < len(lines) && isTableRowLine(lines[i]) && !startsTable(i) {
+			rows = append(rows, lines[i])
+			i++
+		}
+		tables = append(tables, strings.Join(rows, "\n"))
 	}
 	return tables
 }
