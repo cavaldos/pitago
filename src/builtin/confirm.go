@@ -472,10 +472,9 @@ func confirmYank(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirmBlockActions runs the picked semantic copy action (markdown / tables /
-// code / plain) for a BlockActionsDialog. The app owns the work; this
-// only closes the dialog and dispatches, so the copy logic stays testable
-// without a picker.
+// confirmBlockActions dispatches the right-click copy menu: it pops the
+// dialog and hands the chosen entry to the app, which owns the clipboard
+// write (and the per-backend confirmation toast).
 func confirmBlockActions(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	m.Dialogs = m.Dialogs[1:]
 	return m, m.RunBlockAction(d, ri)

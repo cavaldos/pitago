@@ -1,11 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pitago/src/components/clipboard"
 )
 
 func TestSelectionTextSingleLine(t *testing.T) {
@@ -172,12 +175,22 @@ func TestLeftPressStartsSelection(t *testing.T) {
 func TestLeftPressOutsideViewportDoesNotStartSelection(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.Mouse = true
-	m.vp.Height = 10
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
 	if _, _, handled := m.updateSelection(tea.MouseMsg{X: 1, Y: 0, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); handled {
 		t.Fatal("header press must not start a selection")
 	}
-	if _, _, handled := m.updateSelection(tea.MouseMsg{X: 1, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); handled {
-		t.Fatal("input-row press must not start a selection")
+	// The painted chat frame occupies screen rows 1..Height inclusive: the
+	// header is row 0, so the bottom-most chat row is Height itself. The first
+	// row past it belongs to whatever is below the chat.
+	chatH := m.chatViewport().Height
+	if _, _, handled := m.updateSelection(tea.MouseMsg{X: 1, Y: chatH + 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); handled {
+		t.Fatalf("press below the chat frame (row %d, height %d) must not start a selection",
+			chatH+1, chatH)
+	}
+	// The bottom-most chat row is a real chat row and must be selectable.
+	if _, _, handled := m.updateSelection(tea.MouseMsg{X: 1, Y: chatH, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); !handled {
+		t.Fatalf("press on the bottom-most chat row (row %d) must start a selection", chatH)
 	}
 }
 
@@ -195,6 +208,15 @@ func TestActiveDragFinishesInsideSidebar(t *testing.T) {
 }
 
 func TestMotionExtendsAndReleaseCopies(t *testing.T) {
+	// Capture the copy instead of performing it: YankText reaches the system
+	// clipboard (or emits OSC 52 to this terminal), so an unstubbed release
+	// replaces whatever the developer had copied.
+	var copied string
+	defer stubClipboard(func(text string) clipboard.Status {
+		copied = text
+		return clipboard.Status{Channel: clipboard.Atoto, Bytes: len(text), Chars: len([]rune(text))}
+	})()
+
 	m := New(nil, t.TempDir())
 	m.Mouse = true
 	m.chatLines = []string{"alpha", "beta", "gamma"}
@@ -209,12 +231,20 @@ func TestMotionExtendsAndReleaseCopies(t *testing.T) {
 	if got.sel.Active {
 		t.Fatal("release must clear the selection")
 	}
-	// The last toast/notice block contains the yanked text size; the inline
-	// copy path is exercised by updateSelection, so just confirm no crash
-	// and that the selection cleared.
-	if len(got.toasts) == 0 && len(got.blocks) == 0 {
-		t.Fatal("expected copy feedback somewhere")
+	// The drag runs from line 0 col 0 to line 2 col 5 (row 3 of the chat
+	// frame), so the release must copy all three lines.
+	if want := "alpha\nbeta\ngamma"; copied != want {
+		t.Fatalf("release copied %q, want %q", copied, want)
 	}
+}
+
+// stubClipboard redirects the clipboard transport for the duration of a test
+// and returns a restore func. No test in this package may write to the real
+// system clipboard.
+func stubClipboard(fn func(string) clipboard.Status) func() {
+	prev := clipboard.Transport
+	clipboard.Transport = fn
+	return func() { clipboard.Transport = prev }
 }
 
 func TestDoubleClickSelectsLine(t *testing.T) {
@@ -285,5 +315,258 @@ func TestRenderBlocksBuildsGutterCols(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("assistant content not rendered: %q", m.chatLines)
+	}
+}
+
+// A press must resolve to the line View() actually paints under the cursor.
+// With a task widget or plugin panel up, the painted chat frame is a shrunk
+// copy of m.vp, so mapping against m.vp shifted every row by the panel height
+// and let a press on the panel itself select an unrelated chat line.
+func TestMousePointMatchesPaintedChatFrame(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = true
+	m.winW, m.winH = 100, 24
+	// Real content that overflows the frame, following the tail: this is the
+	// configuration where the painted copy is re-pinned and its YOffset drifts
+	// away from m.vp's, so a mousePoint built on m.vp addresses the wrong line.
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	m.vp.Width, m.vp.Height = 40, 10
+	m.vp.SetContent(strings.Join(lines, "\n"))
+	m.vp.GotoBottom()
+	m.chatLines = lines
+	m.Todos = []TodoItem{
+		{ID: "1", Content: "Finish design", Status: TodoInProgress},
+		{ID: "2", Content: "Ship it", Status: TodoPending},
+	}
+	if got := m.renderTaskWidget(); got == "" {
+		t.Fatal("precondition: task widget must render for this test to mean anything")
+	}
+
+	painted := m.chatViewport()
+	if painted.Height >= m.vp.Height {
+		t.Fatalf("precondition: panel must shrink the chat frame; painted=%d vp=%d",
+			painted.Height, m.vp.Height)
+	}
+	if painted.YOffset == m.vp.YOffset {
+		t.Fatalf("precondition: painted offset must differ from m.vp (%d) for this "+
+			"test to discriminate; re-pin did not happen", painted.YOffset)
+	}
+
+	// Every visible row must map to the transcript line painted at that row.
+	for row := 1; row <= painted.Height; row++ {
+		got := m.mousePoint(1, row)
+		want := painted.YOffset + row - 1
+		if got.Line != want {
+			t.Fatalf("screen row %d maps to line %d, but View() paints line %d there",
+				row, got.Line, want)
+		}
+	}
+}
+
+// A press that lands on the panel below the chat frame is not a chat press and
+// must not open a selection.
+func TestPressOnPanelDoesNotStartSelection(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = true
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
+	m.chatLines = []string{"alpha", "beta"}
+	m.Todos = []TodoItem{{ID: "1", Content: "Finish design", Status: TodoInProgress}}
+
+	painted := m.chatViewport()
+	panelRow := painted.Height + 1
+	if panelRow >= m.vp.Height {
+		t.Fatalf("precondition: need a row below the chat frame but inside m.vp; painted=%d vp=%d",
+			painted.Height, m.vp.Height)
+	}
+	got, _, handled := m.updateSelection(tea.MouseMsg{
+		X: 1, Y: panelRow, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if handled {
+		t.Error("a press on the task panel must not start a chat selection")
+	}
+	if got.sel.Active {
+		t.Error("selection opened from a press outside the chat frame")
+	}
+}
+
+// Dragging across a syntax-highlighted line must not drain the colour out of
+// the unselected columns. The old highlight rebuilt the whole line from
+// stripped plain text, so every SGR span outside the selection was lost.
+func TestHighlightKeepsStylingOutsideSelection(t *testing.T) {
+	const (
+		red   = "\x1b[31m"
+		blue  = "\x1b[34m"
+		reset = "\x1b[0m"
+	)
+	line := red + "aaa" + blue + "bbb" + reset
+
+	got := highlightLine(line, 4, 6)
+
+	if !strings.Contains(got, red) {
+		t.Errorf("colour of the columns before the selection was dropped: %q", got)
+	}
+	if !strings.Contains(got, blue) {
+		t.Errorf("colour of the selected range was dropped: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[7m") || !strings.Contains(got, "\x1b[27m") {
+		t.Errorf("selected range is not reverse-video: %q", got)
+	}
+	// The visible text must survive unchanged, escapes aside.
+	if plain := stripSelectionANSI(got); plain != "aaabbb" {
+		t.Errorf("visible text changed: got %q, want %q", plain, "aaabbb")
+	}
+}
+
+// Escape sequences are zero-width: they must not shift the column at which the
+// highlight lands, or the selection lands one word early.
+func TestHighlightIgnoresEscapeWidth(t *testing.T) {
+	// A hyperlink OSC 8 sequence wraps the first word but occupies no columns.
+	line := "\x1b]8;;https://example.com\x07one\x1b]8;;\x07 two three"
+	got := highlightLine(line, 4, 7)
+	if plain := stripSelectionANSI(got); plain != "one two three" {
+		t.Fatalf("visible text changed: %q", plain)
+	}
+	// Column 4..7 is "two"; the OSC-8 wrappers must sit outside the inverse span.
+	between := got[strings.Index(got, "\x1b[7m")+len("\x1b[7m"):]
+	selected := between[:strings.Index(between, "\x1b[27m")]
+	if selected != "two" {
+		t.Fatalf("reverse video covers %q, want %q", selected, "two")
+	}
+}
+
+// gutterCols is render-derived, so it can be empty or short. When it has no
+// entry for a line, selection must still not put the "● " glyph on the
+// clipboard.
+func TestSelectionSkipsGutterWhenTableIsStale(t *testing.T) {
+	lines := []string{"● first block", "plain continuation", "● second block"}
+
+	// Table missing entirely (no Refresh yet).
+	got := selectionText(lines, nil, Point{Line: 0, Col: 0}, Point{Line: 2, Col: 8})
+	if strings.Contains(got, "●") {
+		t.Errorf("gutter glyph copied when the gutter table is absent: %q", got)
+	}
+	if want := "first block\nplain continuation\nsecond"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// Table present but too short to cover every line.
+	short := []int{2}
+	got = selectionText(lines, short, Point{Line: 0, Col: 0}, Point{Line: 2, Col: 8})
+	if strings.Contains(got, "●") {
+		t.Errorf("gutter glyph copied when the gutter table is short: %q", got)
+	}
+
+	// The table records block gutters; a line outside the block loop has no
+	// entry, and the glyph it carries is what gives it one.
+	withZero := []int{0, 0, 0}
+	got = selectionText(lines, withZero, Point{Line: 1, Col: 0}, Point{Line: 1, Col: 5})
+	if got != "plain" {
+		t.Errorf("a line with no gutter glyph must not be clipped: got %q", got)
+	}
+}
+
+// Every line drawn through gutter() carries a 2-cell gutter, not just the
+// ones inside the block loop. The connection error, the status line and the
+// welcome logo all live outside it, so their glyphs ("×", "○", "●") used to
+// land on the clipboard — the leak this pins shut. Index arithmetic was tried
+// first and was wrong twice: the jump mark is emitted before blockRows[i], and
+// a chat with no blocks has no blockRows at all.
+func TestGutterCoversPreambleStatusAndLogo(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(m *Model)
+		icon  string
+	}{
+		{"conn-error", func(m *Model) {
+			m.connErr = "connection lost"
+			m.blocks = []Block{{Kind: "assistant", Text: "hello world"}}
+		}, "×"},
+		{"conn-error with no blocks", func(m *Model) {
+			m.connErr = "connection lost"
+		}, "×"},
+		{"conn-error behind a jump mark", func(m *Model) {
+			m.connErr = "connection lost"
+			m.jumpBlock = 0
+			m.blocks = []Block{{Kind: "assistant", Text: "hello world"}}
+		}, "×"},
+		{"status line", func(m *Model) {
+			m.thinking = true
+			m.Status = "thinking…"
+			m.blocks = []Block{{Kind: "assistant", Text: "hello world"}}
+		}, "○"},
+		{"welcome logo", func(m *Model) {}, "●"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(nil, t.TempDir())
+			m.vp.Width, m.vp.Height = 60, 40
+			tc.setup(&m)
+			m.renderBlocks()
+
+			found := -1
+			for i, ln := range m.chatLines {
+				if strings.HasPrefix(strings.TrimLeft(stripSelectionANSI(ln), " \t"), tc.icon+" ") {
+					found = i
+					break
+				}
+			}
+			if found < 0 {
+				t.Fatalf("precondition: no %q gutter line was rendered: %q", tc.icon, m.chatLines)
+			}
+			got := selectionText(m.chatLines, m.gutterCols, Point{found, 0}, Point{found, 3})
+			if strings.Contains(got, tc.icon) {
+				t.Errorf("%q glyph copied: %q", tc.icon, got)
+			}
+		})
+	}
+}
+
+// Edge auto-scroll must stop at the real bottom of the transcript. The painted
+// frame is shorter than m.vp when a panel is up, so a bound derived from the
+// painted height never reaches m.vp's maximum: the tick loop then spins
+// forever and walks the selection's focus past the transcript, which drops the
+// newest lines from the copy — exactly what dragging to the bottom is for.
+func TestEdgeScrollStopsAtTranscriptEnd(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	m.vp.SetContent(strings.Join(lines, "\n"))
+	m.chatLines = lines
+	m.Todos = []TodoItem{{ID: "1", Content: "Finish design", Status: TodoInProgress}}
+	m.vp.GotoBottom()
+	m.sel = Selection{Active: true, HadDrag: true}
+
+	painted := m.chatViewport()
+	if painted.Height >= m.vp.Height {
+		t.Fatalf("precondition: panel must shrink the frame; painted=%d vp=%d",
+			painted.Height, m.vp.Height)
+	}
+
+	// Hold the pointer on the bottom visible row and pulse until it settles.
+	focus := Point{Line: painted.YOffset + painted.Height - 1, Col: 0}
+	m.sel.Focus = focus
+	for i := 0; i < 200; i++ {
+		if cmd := m.edgeScrollCmd(m.sel.Focus); cmd == nil {
+			break
+		}
+		if i == 199 {
+			t.Fatal("edge scroll never settled: the 33ms tick loop would run forever")
+		}
+	}
+
+	if m.sel.Focus.Line > len(m.chatLines) {
+		t.Errorf("selection focus walked past the transcript: line %d of %d",
+			m.sel.Focus.Line, len(m.chatLines))
+	}
+	if got := m.vp.YOffset; got != m.vp.TotalLineCount()-m.vp.Height {
+		t.Errorf("did not settle at the real bottom: offset=%d want=%d",
+			got, m.vp.TotalLineCount()-m.vp.Height)
 	}
 }

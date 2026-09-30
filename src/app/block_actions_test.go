@@ -1,10 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pitago/src/components/clipboard"
 )
 
 const sampleMD = "## Result\n\n| Name | Status |\n|---|---|\n| Alice | OK |\n| Bob | Fail |\n\n" +
@@ -142,13 +145,71 @@ func TestNewBlockActionsDialog(t *testing.T) {
 }
 
 func TestChatRowToBlock(t *testing.T) {
-	m := &Model{blockRows: []int{0, 3, 9}}
+	// A constructed model, not a bare literal: chatRowToBlock now resolves
+	// against the painted frame, which renders the header and input.
+	m := New(nil, t.TempDir())
+	m.blockRows = []int{0, 3, 9}
+	m.winW, m.winH = 100, 40
+	// A frame deep enough for row 8 yet shallow enough that the header and
+	// input leave it intact, so the painted viewport is m.vp and this stays a
+	// pure offset-mapping test; TestChatRowToBlockUsesPaintedFrame covers the
+	// shrunken case.
+	m.vp.Width, m.vp.Height = 40, 10
 	m.vp.YOffset = 2
 	if got := m.chatRowToBlock(1); got != 0 {
 		t.Fatalf("screen y=1 abs=%d → block %d, want 0", 2+0, got)
 	}
 	if got := m.chatRowToBlock(8); got != 2 {
 		t.Fatalf("screen y=8 abs=%d → block %d, want 2", 2+7, got)
+	}
+}
+
+// Right-clicking resolves a block against the painted chat frame. With a task
+// widget up the frame is shrunk and re-pinned, so resolving against m.vp sent
+// the copy menu to a different block than the one under the pointer — and let a
+// right-click on the panel itself open a menu for an unrelated block.
+func TestChatRowToBlockUsesPaintedFrame(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	m.vp.SetContent(strings.Join(lines, "\n"))
+	m.vp.GotoBottom()
+	m.Todos = []TodoItem{{ID: "1", Content: "Finish design", Status: TodoInProgress}}
+
+	painted := m.chatViewport()
+	if painted.Height >= m.vp.Height {
+		t.Fatalf("precondition: panel must shrink the frame; painted=%d vp=%d",
+			painted.Height, m.vp.Height)
+	}
+
+	// Blocks spaced 5 lines apart, so an offset error shows up as a miss.
+	m.blockRows = []int{0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+
+	for row := 1; row <= painted.Height; row++ {
+		abs := painted.YOffset + row - 1
+		want := -1
+		for i, start := range m.blockRows {
+			if start > abs {
+				break
+			}
+			want = i
+		}
+		if got := m.chatRowToBlock(row); got != want {
+			t.Fatalf("row %d: chatRowToBlock=%d, but the painted frame has block %d there",
+				row, got, want)
+		}
+	}
+
+	// Every row below the chat frame is the task panel, not a block.
+	for row := painted.Height + 1; row < m.vp.Height; row++ {
+		if got := m.chatRowToBlock(row); got != -1 {
+			t.Fatalf("row %d is below the chat frame (painted=%d vp=%d) but resolved to block %d",
+				row, painted.Height, m.vp.Height, got)
+		}
 	}
 }
 
@@ -164,5 +225,38 @@ func TestRightClickOpensBlockActions(t *testing.T) {
 	got := tm.(Model)
 	if len(got.Dialogs) != 1 || got.Dialogs[0].Kind != "blockactions" {
 		t.Fatalf("right-click must open blockactions dialog, got %+v", got.Dialogs)
+	}
+}
+
+// Enter on a menu row must actually run the copy, not just pop the dialog. The
+// builtin test owns the dialog-pops wiring; what lands on the clipboard is this
+// package's contract, and a dialog with no Payload would return early here.
+func TestRunBlockActionCopiesMarkdown(t *testing.T) {
+	var copied string
+	defer stubClipboard(func(text string) clipboard.Status {
+		copied = text
+		return clipboard.Status{Channel: clipboard.Atoto, Bytes: len(text), Chars: len([]rune(text))}
+	})()
+
+	m := New(nil, t.TempDir())
+	idx := m.AddBlock(Block{Kind: "assistant", Text: "## Result\n\nthe quick brown fox\n"})
+	if !m.OpenBlockActions(idx) {
+		t.Fatal("an assistant block with text must open a copy menu")
+	}
+	d := m.Dialogs[0]
+
+	var mdRow = -1
+	for i, kind := range d.Payload {
+		if kind == "md" {
+			mdRow = i
+		}
+	}
+	if mdRow < 0 {
+		t.Fatalf("no markdown action offered: payload=%v", d.Payload)
+	}
+
+	m.RunBlockAction(d, mdRow)
+	if !strings.Contains(copied, "quick brown fox") {
+		t.Fatalf("markdown copy missing the block text: %q", copied)
 	}
 }

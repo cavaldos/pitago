@@ -7,6 +7,7 @@ package clipboard
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -45,6 +46,14 @@ func IsHostedSession() bool {
 	return os.Getenv("ORCA_WORKTREE_ID") != "" || os.Getenv("ORCA_PANE_KEY") != ""
 }
 
+// Transport is the clipboard write implementation.
+//
+// It is a variable so tests can capture what would be copied instead of
+// performing the copy: a drag-release test that reaches the real Write would
+// overwrite the clipboard of whoever is running `go test`, and an OSC 52
+// test would emit a live set sequence to their terminal.
+var Transport = writeClipboard
+
 // Write copies text to the clipboard with the best available channel:
 //
 //  1. Hosted session       → OSC 52 only (the local system clipboard
@@ -54,11 +63,19 @@ func IsHostedSession() bool {
 //
 // OSC 52 is fire-and-forget: a non-nil Err is reported only when the
 // terminal write itself fails, never as proof the clipboard changed.
-func Write(text string) Status {
+func Write(text string) Status { return Transport(text) }
+
+// clipboardWriteAll is the atotto entry point. It is a variable so a test can
+// assert what would be handed to the system clipboard without writing to it:
+// `go test` must not replace the clipboard of whoever is running it.
+var clipboardWriteAll = clipboard.WriteAll
+
+// writeClipboard is the real transport behind Write.
+func writeClipboard(text string) Status {
 	if IsHostedSession() {
 		return writeOsc52(text)
 	}
-	if err := clipboard.WriteAll(text); err == nil {
+	if err := clipboardWriteAll(text); err == nil {
 		return Status{Channel: Atoto, Bytes: len(text), Chars: len([]rune(text))}
 	}
 	if s := writeExternal(text); s.Channel != None {
@@ -77,6 +94,12 @@ func Osc52String(text string) string {
 	return osc52.New(text).String()
 }
 
+// osc52Out is where the OSC 52 sequence goes. Bubble Tea owns stdout and
+// paints there, so the sequence is written to stderr; it is a variable so
+// tests can capture the sequence rather than emit a live one that would
+// replace the clipboard of the terminal running `go test`.
+var osc52Out io.Writer = os.Stderr
+
 // writeOsc52 emits the OSC 52 sequence to stderr (the terminal-facing
 // stream in a Bubble Tea app). Returns Channel=Osc52 on success.
 func writeOsc52(text string) Status {
@@ -90,7 +113,7 @@ func writeOsc52(text string) Status {
 		status.Err = fmt.Errorf("terminal produced an empty OSC 52 sequence")
 		return status
 	}
-	if _, err := fmt.Fprint(os.Stderr, seq); err != nil {
+	if _, err := fmt.Fprint(osc52Out, seq); err != nil {
 		status.Err = err
 		return status
 	}

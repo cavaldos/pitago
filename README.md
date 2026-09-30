@@ -200,9 +200,9 @@ script/release.sh v0.0.1
 
 - **With mouse on (default):** drag inside the chat to select and copy. Selection is clamped to the chat pane, so the sidebar is never included; dragging to the top/bottom edge auto-scrolls.
 - **Double-click** a chat line to select the whole rendered line.
-- **Right-click** an assistant block for `Copy markdown`, `Copy tables`, `Copy code blocks`, or `Copy plain text`.
+- **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, or `Copy plain text` — the menu lists only what the block actually contains.
 - With mouse off, native terminal selection works normally; start with `pitago --mouse=false` or toggle at runtime with `/mouse off`.
-- `Ctrl+Y` / `/yank` / `/copy` copies the last assistant answer; `Ctrl+O` opens the message picker (sidebar stays visible).
+- `Ctrl+Y` / `/yank` / `/copy` copies the last assistant answer; `Ctrl+O` opens the message picker.
 - `/copy-md`, `/copy-tables`, and `/copy-code` copy semantic content from the last assistant message.
 - Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial drag selection copies ANSI/OSC-free visible text.
 - In hosted sessions (terminal multiplexers / remote panes), Pitago emits OSC 52 to the controlling terminal. Delivery depends on the terminal's OSC 52 support; if it is unavailable or the payload exceeds the safe cap, Pitago reports the copy failure instead of claiming success. Other sessions use the local system clipboard with platform fallbacks.

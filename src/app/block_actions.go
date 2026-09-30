@@ -182,6 +182,20 @@ func newBlockActionsDialog(blocks []Block, idx int) *Dialog {
 	return d
 }
 
+// OpenBlockActions opens the semantic copy menu for a block index. It reports
+// whether a menu was opened — false when the block has nothing copyable. The
+// right-click path and the tests both go through here so the menu is built the
+// same way for a real click and for a test.
+func (m *Model) OpenBlockActions(idx int) bool {
+	d := newBlockActionsDialog(m.blocks, idx)
+	if d == nil {
+		return false
+	}
+	m.Dialogs = append(m.Dialogs, d)
+	m.Refresh()
+	return true
+}
+
 // RunBlockAction executes the picked action for a BlockActionsDialog
 // (called from builtin confirmBlockActions on Enter).
 func (m *Model) RunBlockAction(d *Dialog, ri int) tea.Cmd {

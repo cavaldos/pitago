@@ -1266,14 +1266,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m2, cmd
 		}
 		// Right-click on an assistant chat block → semantic copy menu.
-		// Chat-only: sidebars keep their own click handlers below.
+		// Chat-only: sidebars keep their own click handlers below. The
+		// bound is the painted chat frame, not m.vp — rows below it are the
+		// task widget or a plugin panel, not transcript blocks.
 		if m.Mouse && msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonRight && !m.overSide(msg.X) &&
-			msg.Y >= 1 && msg.Y < m.vp.Height {
+			msg.Y >= 1 && msg.Y <= m.chatViewport().Height {
 			if idx := m.chatRowToBlock(msg.Y); idx >= 0 && m.blocks[idx].Kind == "assistant" {
-				if d := newBlockActionsDialog(m.blocks, idx); d != nil {
-					m.Dialogs = append(m.Dialogs, d)
-					m.Refresh()
+				if m.OpenBlockActions(idx) {
 					return m, nil
 				}
 			}

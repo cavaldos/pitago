@@ -70,11 +70,11 @@ var shortcutsDb = []ShortcutItem{
 
 	// Mouse (optional)
 	{"Alt+M", "Toggle mouse on/off (same as /mouse)", "Mouse"},
+	{"Mouse click (sidebar)", "Switch recent / toggle plugins", "Mouse"},
+	{"Mouse wheel (sidebar)", "Scroll sidebar", "Mouse"},
 	{"Drag (chat, mouse on)", "Select chat text and copy on release (sidebar excluded)", "Mouse"},
 	{"Double-click (chat)", "Select entire visible line", "Mouse"},
 	{"Right-click (assistant block)", "Copy menu: markdown · tables · code · plain", "Mouse"},
-	{"Mouse click (sidebar)", "Switch recent / toggle plugins", "Mouse"},
-	{"Mouse wheel (sidebar)", "Scroll sidebar", "Mouse"},
 	{"Hold Option/Shift", "Native terminal selection (mouse on, terminal-dependent)", "Mouse"},
 	{"/mouse off", "Native drag-selection mode (terminal handles it)", "Mouse"},
 }

@@ -234,12 +234,6 @@ type Model struct {
 	savedModel          *ModelRef         // last user-picked model this process wrote (in-memory mirror of prefs.currentModel)
 	hideTaskWidget      bool              // suppress the above-editor task widget (prefs.taskWidgetOff); zero = show, so a bare Model{} keeps upstream behaviour
 	taskDisplay         taskDisplay       // resolved tasks-config.json display settings, refreshed by loadTaskDisplay
-	blockRows           []int             // rendered start line of each block (mouse hit-testing)
-	chatLines           []string          // absolute rendered chat content lines (selection source)
-	gutterCols          []int             // leading gutter cells per chat line (0 or 2), parallel to chatLines
-	sel                 Selection         // chat-column drag selection state
-	LastPressAt         time.Time         // last single-click timestamp (double-click detection)
-	LastPressLine       int               // line of last single-click
 	builtins            []Builtin
 	confirm             map[string]ConfirmFunc
 	expandTools         bool      // Ctrl+G: expand every tool block (write/read/diff previews), pi-style
@@ -255,6 +249,12 @@ type Model struct {
 	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
 	blockLine           []int     // transcript line where each block starts (parallel to m.blocks; hidden/skip blocks share the next visible line)
+	blockRows           []int     // rendered start line of each block (mouse hit-testing)
+	chatLines           []string  // absolute rendered chat content lines (selection source)
+	gutterCols          []int     // leading gutter cells per chat line (0 or 2), parallel to chatLines
+	sel                 Selection // chat-column drag selection state
+	LastPressAt         time.Time // last single-click timestamp (double-click detection)
+	LastPressLine       int       // line of last single-click
 	jumpBlock           int       // block index carrying the "jumped here" mark (-1 = no mark; New sets it, a Model literal without it would mark block 0)
 	chatContent         string    // transcript string currently loaded into vp (setChatContent skips an unchanged re-measure)
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
