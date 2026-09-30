@@ -6,46 +6,97 @@ body:
     id: what-happened
     attributes:
       label: What happened?
-      description: What you saw, and what you expected instead.
-    validations:
-      required: true
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: How to reproduce?
-      description: Shortest path from a fresh start.
+      description: |
+        What you saw, what you expected, and how to reproduce.
+        If the log shows the problem, paste it at the end of this box:
+        reproduce the bug, then send the log from the chat with `/log`.
+        Strip API keys first.
       placeholder: |
+        Expected /theme to switch colours, but the sidebar stayed black.
         1. pitago
         2. type /theme
-        3. press Ctrl+N
+        3. pick Night
     validations:
       required: false
 
-  - type: input
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      multiple: true
+      options:
+        - Chat / streaming / input
+        - Sidebar (session, tokens, git status)
+        - Command palette / slash commands
+        - Model or provider management
+        - Themes
+        - File mentions (@file)
+        - Image send / paste
+        - Live sessions (/live)
+        - Extensions / marketplace
+        - Install / self-update
+        - Clipboard
+        - Other
+    validations:
+      required: false
+
+  - type: dropdown
     id: version
     attributes:
       label: pitago version
       description: Output of `pitago --version`
-      placeholder: v1.2.3
+      options:
+        - v0.0.26 (latest)
+        - v0.0.25
+        - v0.0.24
+        - v0.0.23
+        - v0.0.22
+        - v0.0.21
+        - v0.0.20
+        - v0.0.19
+        - v0.0.18
+        - v0.0.17
+        - v0.0.16
+        - v0.0.15 or older
+        - dev (built from source)
     validations:
       required: false
 
-  - type: input
-    id: env
+  - type: dropdown
+    id: install
     attributes:
-      label: Environment
-      description: OS, terminal, install method, Go version.
-      placeholder: macOS / Ghostty / release binary
+      label: How was it installed?
+      options:
+        - Release binary (install script)
+        - Release binary (manual download)
+        - Built from source (go build)
+        - go run ./src
     validations:
       required: false
 
-  - type: textarea
-    id: logs
+  - type: dropdown
+    id: os
     attributes:
-      label: Logs
-      description: |
-        Most TUI bugs are diagnosable from the log. Reproduce it, then send the
-        log from the chat with `/log` and paste it here. Strip API keys first.
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: false
+
+  - type: dropdown
+    id: extension
+    attributes:
+      label: Did an extension or plugin cause it?
+      description: Leave empty if pitago failed on its own.
+      multiple: true
+      options:
+        - No extension involved
+        - Extension failed to load
+        - Extension command not found
+        - Extension crashes or freezes the TUI
+        - Marketplace install/update failed
+        - Extension works, but the bug is still there
     validations:
       required: false
