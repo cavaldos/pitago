@@ -256,3 +256,181 @@ func TestSidebarHasMcpTodos(t *testing.T) {
 		}
 	}
 }
+
+// piTaskStoreFixture points the model at an isolated session store: the
+// agent dir is redirected so a real ~/.pi/agent can never win the lookup.
+func piTaskStoreFixture(t *testing.T) (*Model, string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(dir, "agent"))
+	t.Setenv("PI_AGENT_DIR", filepath.Join(dir, "agent"))
+	if err := os.MkdirAll(filepath.Join(dir, ".pi", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, dir)
+	m.cwd = dir
+	m.sessionFile = filepath.Join(dir, "2026-09-23T01-38-19-902Z_abc123.jsonl")
+	m.Side = map[string]bool{SideMCP: true} // hidden by default
+	m.ready, m.winW, m.winH = true, 100, 24
+	return &m, filepath.Join(dir, ".pi", "tasks", "tasks-abc123.json")
+}
+
+const piTaskStorePayload = `{"nextId":3,"tasks":[{"id":"1","subject":"Ship fix","status":"in_progress","activeForm":"Shipping"},{"id":"2","subject":"Write docs","status":"pending"}]}`
+
+// pi-tasks 'Clear all' unlinks the session store file instead of leaving an
+// empty one. Both renderers are pure functions of m.Todos, so a stale slice
+// kept them showing deleted tasks; the refresh must drop the slice itself.
+func TestPiTaskClearAllClearsTodosAndWidget(t *testing.T) {
+	m, store := piTaskStoreFixture(t)
+	if err := os.WriteFile(store, []byte(piTaskStorePayload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshPiTasks()
+	if len(m.Todos) != 2 {
+		t.Fatalf("store not adopted: %+v", m.Todos)
+	}
+	if !strings.Contains(stripANSI(m.renderTaskWidget()), "Write docs") {
+		t.Fatalf("widget missing task before clear-all: %q", m.renderTaskWidget())
+	}
+	if !strings.Contains(stripANSI(m.buildSidebarContent()), "Todos (0/2)") {
+		t.Fatal("sidebar missing todo rows before clear-all")
+	}
+
+	// 'Clear all' → store.clearAll() + deleteSessionFileIfEmpty() → unlink.
+	if err := os.Remove(store); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshPiTasks()
+	if len(m.Todos) != 0 {
+		t.Fatalf("stale todos after clear-all: %+v", m.Todos)
+	}
+	if m.task.activeID != "" {
+		t.Fatalf("runtime task state survived clear-all: %+v", m.task)
+	}
+	if w := stripANSI(m.renderTaskWidget()); w != "" {
+		t.Fatalf("widget survived clear-all: %q", w)
+	}
+	sidebar := stripANSI(m.buildSidebarContent())
+	if strings.Contains(sidebar, "Ship fix") || !strings.Contains(sidebar, "Todos (0/0)") {
+		t.Fatalf("sidebar survived clear-all: %q", sidebar)
+	}
+	view := stripANSI(m.View())
+	if strings.Contains(view, "Ship fix") {
+		t.Fatalf("view still shows the cleared task:\n%s", view)
+	}
+}
+
+// The seen flag is the safety rail: a session that never had a store file
+// (extension absent/unloaded, PI_TASKS=off, memory scope) keeps its
+// RPC-tracked todos, and a store seen in ANOTHER session does not arm it.
+func TestPiTaskMissingStoreKeepsTodosWhenNeverSeen(t *testing.T) {
+	seed := []TodoItem{{ID: "1", Content: "RPC task", Status: TodoInProgress}}
+
+	t.Run("no store file at all", func(t *testing.T) {
+		m, _ := piTaskStoreFixture(t)
+		m.Todos = seed
+		m.syncTaskRuntime()
+		m.refreshPiTasks()
+		if len(m.Todos) != 1 || m.Todos[0].Content != "RPC task" {
+			t.Fatalf("todos dropped without a store: %+v", m.Todos)
+		}
+	})
+
+	t.Run("PI_TASKS=off", func(t *testing.T) {
+		m, store := piTaskStoreFixture(t)
+		if err := os.WriteFile(store, []byte(piTaskStorePayload), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PI_TASKS", "off")
+		m.Todos = seed
+		m.syncTaskRuntime()
+		m.refreshPiTasks()
+		if len(m.Todos) != 1 || m.Todos[0].Content != "RPC task" {
+			t.Fatalf("PI_TASKS=off wiped RPC todos: %+v", m.Todos)
+		}
+	})
+
+	t.Run("memory scope", func(t *testing.T) {
+		m, _ := piTaskStoreFixture(t)
+		cfg := filepath.Join(m.cwd, ".pi", "tasks-config.json")
+		if err := os.WriteFile(cfg, []byte(`{"taskScope":"memory"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m.Todos = seed
+		m.syncTaskRuntime()
+		m.refreshPiTasks()
+		if len(m.Todos) != 1 || m.Todos[0].Content != "RPC task" {
+			t.Fatalf("memory scope wiped RPC todos: %+v", m.Todos)
+		}
+	})
+
+	t.Run("store seen in another session", func(t *testing.T) {
+		m, store := piTaskStoreFixture(t)
+		if err := os.WriteFile(store, []byte(piTaskStorePayload), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m.refreshPiTasks() // arms the flag for THIS session
+		if len(m.Todos) != 2 {
+			t.Fatalf("store not adopted: %+v", m.Todos)
+		}
+		if err := os.Remove(store); err != nil {
+			t.Fatal(err)
+		}
+		m.sessionFile = filepath.Join(m.cwd, "2026-09-23T01-38-19-902Z_other99.jsonl")
+		m.Todos = seed
+		m.syncTaskRuntime()
+		m.refreshPiTasks()
+		if len(m.Todos) != 1 || m.Todos[0].Content != "RPC task" {
+			t.Fatalf("session switch inherited the seen flag: %+v", m.Todos)
+		}
+	})
+}
+
+// Project scope leaves an EMPTY file behind on clear-all; that path already
+// worked and must not regress with the session-file unlink case.
+func TestPiTaskProjectScopeEmptyStoreStillClears(t *testing.T) {
+	m, _ := piTaskStoreFixture(t)
+	project := filepath.Join(m.cwd, ".pi", "tasks", "tasks.json")
+	if err := os.WriteFile(project, []byte(piTaskStorePayload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.sessionFile = "" // project scope has no per-session file
+	m.refreshPiTasks()
+	if len(m.Todos) != 2 {
+		t.Fatalf("project store not adopted: %+v", m.Todos)
+	}
+	if err := os.WriteFile(project, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshPiTasks()
+	if len(m.Todos) != 0 {
+		t.Fatalf("empty project store must clear todos: %+v", m.Todos)
+	}
+	if w := stripANSI(m.renderTaskWidget()); w != "" {
+		t.Fatalf("widget survived project clear-all: %q", w)
+	}
+}
+
+// The extension menu answers through answerDialog, which used to skip the
+// refresh entirely — the store write was the only signal of a clear-all.
+func TestPiTaskAnswerDialogRefreshesAfterClearAll(t *testing.T) {
+	m, store := piTaskStoreFixture(t)
+	if err := os.WriteFile(store, []byte(piTaskStorePayload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshPiTasks()
+	if len(m.Todos) != 2 {
+		t.Fatalf("store not adopted: %+v", m.Todos)
+	}
+	if err := os.Remove(store); err != nil {
+		t.Fatal(err)
+	}
+	m.Dialogs = []*Dialog{{ID: "d1", Kind: "ui", Method: "menu", Options: []string{"Clear all"}}}
+	m.answerDialog(m.Dialogs[0], 0)
+	if len(m.Todos) != 0 {
+		t.Fatalf("answerDialog left stale todos: %+v", m.Todos)
+	}
+	if len(m.Dialogs) != 0 {
+		t.Fatalf("dialog not popped: %+v", m.Dialogs)
+	}
+}

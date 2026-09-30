@@ -261,6 +261,13 @@ type Model struct {
 	sideCacheAt         time.Time // last sidebar rebuild
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
 	pendingPaint        bool      // a coalesced paint is waiting on its flush tick
+
+	// piTaskSeen records that a real pi-tasks store file was read for
+	// piTaskSeenFor. refreshPiTasks uses it to tell "no store configured"
+	// (extension absent, PI_TASKS=off, memory scope) from "the store we read
+	// was unlinked by 'Clear all'", which is an authoritative empty list.
+	piTaskSeen    bool
+	piTaskSeenFor string // session file the flag was armed for; a switch invalidates it
 }
 
 // quitArmWindow is the double-press window for Ctrl+C quit.

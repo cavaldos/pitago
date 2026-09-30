@@ -725,10 +725,12 @@ func loadPiTaskFile(path string) ([]TodoItem, bool) {
 	return out, true
 }
 
-// readPiTasks loads the pi-tasks store for this session. ok=false when no
-// store file exists (memory scope / extension absent) — callers keep the
-// RPC-tracked list then. An existing file is authoritative, even when empty.
-func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
+// piTaskStoreFiles lists the pi-tasks store candidates for this session,
+// highest precedence first, keeping only the ones that EXIST right now.
+// enabled=false means the configuration has no store by design (PI_TASKS=off,
+// memory scope); an empty list with enabled=true means a store is configured
+// but nothing is on disk (extension never ran, or it unlinked the file).
+func piTaskStoreFiles(cwd, sessionFile string) (paths []string, enabled bool) {
 	if v := strings.TrimSpace(os.Getenv("PI_TASKS")); v == "off" {
 		return nil, false
 	}
@@ -738,9 +740,9 @@ func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
 		return nil, false
 	case "project":
 		if cwd != "" {
-			return loadPiTaskFile(filepath.Join(cwd, ".pi", "tasks", "tasks.json"))
+			paths = append(paths, filepath.Join(cwd, ".pi", "tasks", "tasks.json"))
 		}
-		return nil, false
+		return existingFiles(paths), true
 	}
 	var cands []string
 	if v := strings.TrimSpace(os.Getenv("PI_TASKS")); v != "" {
@@ -770,7 +772,31 @@ func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
 	if cwd != "" {
 		cands = append(cands, filepath.Join(cwd, ".pi", "tasks", "tasks.json"))
 	}
+	return existingFiles(cands), true
+}
+
+// existingFiles keeps the candidates that are present on disk. A candidate
+// that vanished is dropped instead of being parsed, so callers can tell
+// "store file was unlinked" from "file exists but is unreadable".
+func existingFiles(cands []string) []string {
+	var out []string
 	for _, p := range cands {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// readPiTasks loads the pi-tasks store for this session. ok=false when no
+// store file exists (memory scope / extension absent) — callers keep the
+// RPC-tracked list then. An existing file is authoritative, even when empty.
+func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
+	paths, enabled := piTaskStoreFiles(cwd, sessionFile)
+	if !enabled {
+		return nil, false
+	}
+	for _, p := range paths {
 		if t, ok := loadPiTaskFile(p); ok {
 			return t, true
 		}
@@ -778,13 +804,37 @@ func readPiTasks(cwd, sessionFile string) ([]TodoItem, bool) {
 	return nil, false
 }
 
-// refreshPiTasks syncs the sidebar from the pi-tasks store file (covers
-// /tasks-menu edits that emit no RPC). No file → keeps live RPC state.
+// refreshPiTasks syncs the task list from the pi-tasks store file (covers
+// /tasks-menu edits that emit no RPC). Three outcomes:
+//   - no store configured (PI_TASKS=off, memory scope): keep live RPC state
+//   - a store file parses: adopt it and arm m.piTaskSeen for this session
+//   - a store we already read vanished: authoritative empty (see below)
 func (m *Model) refreshPiTasks() {
-	if t, ok := readPiTasks(m.cwd, m.sessionFile); ok {
-		m.Todos = t
-		m.syncTaskRuntime()
+	paths, enabled := piTaskStoreFiles(m.cwd, m.sessionFile)
+	if !enabled {
+		return // no store by design (PI_TASKS=off, memory scope): keep RPC state
 	}
+	for _, p := range paths {
+		if t, ok := loadPiTaskFile(p); ok {
+			m.Todos = t
+			m.piTaskSeen, m.piTaskSeenFor = true, m.sessionFile
+			m.syncTaskRuntime()
+			return
+		}
+	}
+	// Nothing left on disk. pi-tasks 'Clear all' unlinks the session store
+	// (clearAll then deleteSessionFileIfEmpty), so a store we HAVE already
+	// read for THIS session disappearing IS an authoritative empty list —
+	// without this, both renderers (sidebar Todos panel and the above-editor
+	// widget) keep showing the deleted tasks forever. Deliberately gated on
+	// the seen flag: a session that never had a store file (extension absent
+	// or unloaded, PI_TASKS=off, memory scope) must keep its RPC-tracked
+	// todos, and a session switch (different store file) must not inherit it.
+	if !m.piTaskSeen || m.piTaskSeenFor != m.sessionFile {
+		return
+	}
+	m.Todos = nil
+	m.syncTaskRuntime()
 }
 
 // MCP servers ---------------------------------------------------------------

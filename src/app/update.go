@@ -2885,6 +2885,10 @@ func (m *Model) answerDialog(d *Dialog, choice int) {
 	}
 	m.Dialogs = m.Dialogs[1:]
 	m.fireUI(extension.Response(d.ID, d.Method, choice, d.Options))
+	// 'Clear all' in the extension menu answers this very dialog and emits
+	// no tool result, so the store file is the only signal. Re-sync here or
+	// the sidebar Todos panel and the above-editor widget keep the old list.
+	m.refreshPiTasks()
 	m.applyPopupH()
 	m.drainQueuedDialogs()
 	m.Refresh()

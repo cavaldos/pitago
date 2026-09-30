@@ -28,3 +28,4 @@ coverage.html
 coverage.txt
 .pi/
 .env
+.mcp.json
