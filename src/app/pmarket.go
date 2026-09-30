@@ -198,6 +198,11 @@ func (m Model) piBin() string {
 	return "pi"
 }
 
+// PiBin is piBin for src/builtin, whose /mcp rows need to run
+// `pi mcp list --json` themselves (the row building is pi-parity code
+// and cannot live in app, which may not import pirpc's callers).
+func (m Model) PiBin() string { return m.piBin() }
+
 // validPluginAction reports whether action is a known pi package op.
 func validPluginAction(action string) bool {
 	return action == "install" || action == "remove"

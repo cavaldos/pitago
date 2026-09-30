@@ -34,6 +34,10 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"fork":        confirmFork,
 		"subagents":   confirmSubagents,
 		"live":        confirmLive,
+		"mcp":         confirmMcp,
+		"mcpAction":   confirmMcpAction,
+		"mcpExposure": confirmMcpExposure,
+		"mcpTools":    confirmMcpBack,
 	}
 }
 

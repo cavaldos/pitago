@@ -151,9 +151,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Trace windows: wheel over the left list moves the selection,
 			// wheel over the detail scrolls it (chat/sidebar stay behind).
-			if d := m.Dialogs[0]; (d.Kind == "trajectory" || d.Kind == "tree") &&
+			if d := m.Dialogs[0]; (d.Kind == "trajectory" || d.Kind == "tree" || d.Kind == "mcp") &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				if d.Kind == "tree" {
+					return m.updateTreeWheel(d, mm)
+				}
+				if d.Kind == "mcp" {
+					// The /mcp list is a plain row list with no detail
+					// pane, so the wheel moves the selection exactly as
+					// it does on the tree.
 					return m.updateTreeWheel(d, mm)
 				}
 				return m.updateTrajWheel(d, mm)
@@ -235,7 +241,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg,
 			LoginSyncedMsg, LoginReloadMsg, OAuthGoneMsg, SettingWrittenMsg,
 			LoginSwitchMsg, LoginDeleteMsg, LoginRenameOpenMsg, LogoutDoneMsg,
-			LogoutListMsg:
+			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg:
 		default:
 			return m, nil
 		}
@@ -856,6 +862,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.Refresh()
 		return m, nil
+
+	case McpMsg:
+		m.openMcpListMsg(msg)
+		return m, nil
+
+	case McpActionMsg:
+		// A sign-in/out changes what the server reports (needs-auth or
+		// not), so the list is re-read: `pi mcp list` is also what
+		// connects, so this doubles as the reconnect.
+		m.Status = "ready"
+		if msg.Err != nil {
+			m.AddBlock(Block{Kind: "notice", Text: "mcp " + msg.Action + " failed: " + msg.Err.Error(), Err: true})
+			m.Refresh()
+			return m, nil
+		}
+		notice := msg.Done()
+		if msg.Notice != "" {
+			notice += " — " + msg.Notice
+		}
+		m.AddBlock(Block{Kind: "notice", Text: notice})
+		m.PopMcpMenu()
+		return m, m.RunBuiltin(BuiltinMcpList, "")
+
+	case McpConfigMsg:
+		m.Status = "ready"
+		if msg.Err != nil {
+			m.AddBlock(Block{Kind: "notice", Text: "mcp: " + msg.Err.Error(), Err: true})
+			m.Refresh()
+			return m, nil
+		}
+		if msg.Notice != "" {
+			m.AddBlock(Block{Kind: "notice", Text: msg.Notice})
+		}
+		m.PopMcpMenu()
+		return m, m.RunBuiltin(BuiltinMcpList, "")
 
 	case TrajectoryMsg:
 		m.Status = "ready"

@@ -1131,6 +1131,17 @@ func All() []app.Builtin {
 				return app.PickerMsg{Kind: "model", Options: opts, Descs: descs, Providers: provs, Models: models, Current: m.ModelLbl}
 			}
 		}),
+		pi("mcp", "MCP servers: state, tools, exposure, sign-in (Enter manages the picked server)", "/mcp [login|logout|reconnect] [server]", func(m *app.Model, arg string) tea.Cmd {
+			return openMcp(m, arg)
+		}),
+		{
+			// Hidden continuation of /mcp: the `pi mcp list --json` run
+			// plus the row builder. app re-enters this after every action
+			// that changes a server, because the rows are pi-parity
+			// wording that lives in src/builtin, not src/app.
+			Name: app.BuiltinMcpList, Hidden: true,
+			Run: func(m *app.Model, _ string) tea.Cmd { return loadMcp(m) },
+		},
 		pi("tree", "Pi-style session tree (Enter opens the action menu)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
 			m.Status = "loading session tree…"
 			m.Refresh()

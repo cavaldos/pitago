@@ -304,6 +304,22 @@ func (o *orderedObject) set(key string, val json.RawMessage) {
 	o.vals[key] = val
 }
 
+// del removes a key, keeping the order of the rest. Used where a
+// default value is expressed as an absent key (mcp.json's `enabled`
+// and default `exposure`).
+func (o *orderedObject) del(key string) {
+	if _, ok := o.vals[key]; !ok {
+		return
+	}
+	delete(o.vals, key)
+	for i, k := range o.keys {
+		if k == key {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
+}
+
 // setObject stores a nested object under key (encoding it first).
 func (o *orderedObject) setObject(key string, val *orderedObject) error {
 	raw, err := val.MarshalJSON()

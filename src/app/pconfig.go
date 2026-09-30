@@ -340,21 +340,25 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = append(payload, "marketmore")
 		}
 	case PsecMCP:
-		msg = "Enter on a connected server fills /mcp · disabled ones change via mcp.json + /reload · Esc closes"
+		// /mcp is a real command now, so every server row is runnable:
+		// the manager is where exposure, sign-in and enable/disable
+		// live, and a disabled server is listed there precisely so it
+		// can be enabled again.
+		msg = "Enter fills /mcp, the server manager (state · tools · exposure · sign-in · enable/disable) · Esc closes"
 		for _, s := range m.MCP {
 			switch {
 			case s.Disabled:
 				opts = append(opts, s.Name)
-				descs = append(descs, "disabled in mcp.json")
-				payload = append(payload, "")
+				descs = append(descs, "disabled in mcp.json · /mcp can enable it")
+				payload = append(payload, "mcp")
 			case s.Connected:
 				opts = append(opts, s.Name)
 				descs = append(descs, fmt.Sprintf("● %d/%d direct · ~%s tok", s.Direct, s.Total, fmtComma(s.Tokens)))
 				payload = append(payload, "mcp")
 			default:
 				opts = append(opts, s.Name)
-				descs = append(descs, "○ not connected")
-				payload = append(payload, "")
+				descs = append(descs, "○ not connected · /mcp shows why")
+				payload = append(payload, "mcp")
 			}
 		}
 		if len(opts) == 0 {
@@ -812,7 +816,7 @@ func (m *Model) FillCommand(name string) {
 // updateDialog path).
 func isFilterKind(kind string) bool {
 	switch kind {
-	case "model", "thinking", "sessions", "login", "logout", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet":
+	case "model", "thinking", "sessions", "login", "logout", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet", "mcp":
 		return true
 	}
 	return false

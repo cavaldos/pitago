@@ -72,6 +72,7 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 
 - `/model` filterable picker (all configured/scoped models) + Ctrl+P quick cycle
 - `/thinking` level picker, `/tree` session-tree view + pi's per-row action menu (`Jump to message` / `View entry` / `Copy entry` / `Fork from here` / `Back to tree`)
+- `/mcp` MCP server manager + pi's per-server action menu (`Sign in` / `Tools` / `Reconnect` / `Sign out` / `Exposure` / `Disable`, or `Enable` for a disabled server), plus the `/mcp login|logout|reconnect <server>` subcommands
 - `/settings` overlay: model, thinking, steering/follow-up modes, auto-compact, auto-retry
 - `/login` / `/logout`: API-key keystore (0600) + auto-respawn pi; OAuth guided via stock pi
 - `/reload` + 45s background poll + post-turn refresh → auto-detect new pi commands

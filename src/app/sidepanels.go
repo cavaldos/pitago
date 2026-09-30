@@ -875,7 +875,18 @@ func readMcpServers(dir string) []McpServer {
 		if def == nil {
 			def = map[string]any{}
 		}
+		// pi's mcp.json keeps an entry without connecting it via
+		// `"enabled": false` (docs/mcp.md, and updateMcpServerConfig in
+		// dist/extensions/mcp/config.js, which DELETES the key for the
+		// default `true`). The old check read a `disabled` key, which
+		// pi never writes, so every server /mcp had just disabled showed
+		// up here as "not connected". `disabled` is still honoured for a
+		// hand-edited file that uses the older spelling.
 		if dis, ok := def["disabled"].(bool); ok && dis {
+			out = append(out, McpServer{Name: n, Disabled: true})
+			continue
+		}
+		if en, ok := def["enabled"].(bool); ok && !en {
 			out = append(out, McpServer{Name: n, Disabled: true})
 			continue
 		}

@@ -36,19 +36,21 @@ type Dialog struct {
 	Message           string
 	Options           []string
 	Descs             []string
-	Providers         []string          // model picker: parallel provider per option
-	Models            []pirpc.ModelInfo // model picker: full specs parallel to Options
-	Provs             []string          // model picker: left pane (unique providers, [0]="All")
-	ProvConn          map[string]bool   // model picker: connected providers (green dot)
-	ProvCursor        int               // model picker: left-pane cursor
-	ProvFocus         bool              // model picker: true = providers focused
-	PsecIDs           []string          // pitago-setting: section id parallel to Provs (left pane)
-	Paths             []string          // sessions picker: parallel session file per option
-	Scope             string            // sessions picker: "current" | "all" (Tab toggles)
-	Payload           []string          // yank picker: full text per option; login: raw keys ("" for action rows)
-	TreeJump          []int             // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
-	TreeRole          []string          // tree: role ("user"/"assistant") of a message row, "" for every other entry type
-	Current           string            // the value in use, marked in the grid/list (pet: "●" cell)
+	Providers         []string              // model picker: parallel provider per option
+	Models            []pirpc.ModelInfo     // model picker: full specs parallel to Options
+	Provs             []string              // model picker: left pane (unique providers, [0]="All")
+	ProvConn          map[string]bool       // model picker: connected providers (green dot)
+	ProvCursor        int                   // model picker: left-pane cursor
+	ProvFocus         bool                  // model picker: true = providers focused
+	PsecIDs           []string              // pitago-setting: section id parallel to Provs (left pane)
+	Paths             []string              // sessions picker: parallel session file per option
+	Scope             string                // sessions picker: "current" | "all" (Tab toggles)
+	Payload           []string              // yank picker: full text per option; login: raw keys ("" for action rows)
+	TreeJump          []int                 // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
+	TreeRole          []string              // tree: role ("user"/"assistant") of a message row, "" for every other entry type
+	McpServers        []pirpc.McpServerInfo // mcp: full server record per list row (transport, source, state, tools)
+	McpServer         pirpc.McpServerInfo   // mcp: the server an action/exposure dialog belongs to
+	Current           string                // the value in use, marked in the grid/list (pet: "●" cell)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
 	Placeholder       string // free-text dialog: dim hint shown while the buffer is empty
@@ -584,6 +586,25 @@ func (m *Model) AddBlock(b Block) int {
 // src/builtin drives the app through its exported API only, so asserting
 // that a tree action posted a block needs a way to count them.
 func (m Model) BlockCount() int { return len(m.blocks) }
+
+// LastNotice is the text of the most recent notice, which AddBlock
+// routes to the toast stack rather than the transcript. Same reason as
+// BlockCount: src/builtin drives the app through its exported API, and
+// the /mcp refusals (an unknown action, a name pi would not accept) are
+// only observable as notices.
+func (m Model) LastNotice() string {
+	if n := len(m.toasts); n > 0 {
+		return m.toasts[n-1].Text
+	}
+	if n := len(m.notificationHistory); n > 0 {
+		return m.notificationHistory[n-1].Text
+	}
+	return ""
+}
+
+// NoticeCount is how many notices have been emitted. Test seam, same
+// reason as BlockCount.
+func (m Model) NoticeCount() int { return len(m.toasts) + len(m.notificationHistory) }
 
 // addChatNotice appends a notice that is intentionally part of the
 // conversation. Most notices use AddBlock and stay ephemeral; subagent
@@ -1280,6 +1301,13 @@ type Builtin struct {
 // (LoginSyncedMsg) has landed. app re-enters it via RunBuiltin, so the
 // picker logic stays in src/builtin.
 const BuiltinLoginDialog = "login-dialog"
+
+// BuiltinMcpList is the hidden continuation of the /mcp builtin: the
+// `pi mcp list --json` run plus the row builder. app re-enters it via
+// RunBuiltin after every action that changes a server (sign-in,
+// sign-out, exposure, enable, disable, reconnect), because the rows
+// are pi-parity wording that belongs in src/builtin, not here.
+const BuiltinMcpList = "mcp-list"
 
 // ConfirmFunc runs the Enter action of a picker dialog kind.
 // Implementations live in src/builtin (see Confirmers).

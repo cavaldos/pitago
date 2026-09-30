@@ -151,6 +151,37 @@ func TestReadMcpServers(t *testing.T) {
 	}
 }
 
+// pi's mcp.json keeps an entry without connecting it via
+// `"enabled": false` — that is what /mcp writes when a server is
+// disabled, and what updateMcpServerConfig deletes again on enable. The
+// panel used to check a `disabled` key pi never writes, so every server
+// the user disabled through /mcp showed up as "not connected" here.
+func TestReadMcpServersHonoursEnabledFalse(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"mcpServers":{
+		"off":{"command":"x","enabled":false},
+		"on":{"command":"y"},
+		"explicit":{"command":"z","enabled":true}
+	}}`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := readMcpServers(dir)
+	if len(got) != 3 {
+		t.Fatalf("servers = %+v", got)
+	}
+	// sorted by name: explicit, off, on
+	if got[0].Name != "explicit" || got[0].Disabled {
+		t.Errorf("enabled:true is the default and must not read as disabled: %+v", got[0])
+	}
+	if got[1].Name != "off" || !got[1].Disabled {
+		t.Errorf(`"enabled": false must read as disabled: %+v`, got[1])
+	}
+	if got[2].Name != "on" || got[2].Disabled {
+		t.Errorf("a plain entry must not read as disabled: %+v", got[2])
+	}
+}
+
 func TestReadPlugins(t *testing.T) {
 	dir := t.TempDir()
 	cfg := `{"packages":["npm:pi-lens","npm:@narumitw/pi-plan-mode","git:github.com/sting8k/pi-themes"]}`
