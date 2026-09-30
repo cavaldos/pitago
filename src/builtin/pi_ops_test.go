@@ -29,7 +29,9 @@ for line in sys.stdin:
     log.write(json.dumps(cmd) + "\n")
     cid, typ = cmd.get("id", ""), cmd.get("type", "")
     resp = {"id": cid, "type": "response", "command": typ, "success": True}
-    if typ == "get_fork_messages":
+    if os.environ.get("FAKE_PI_FAIL") == typ:
+        resp["success"], resp["error"] = False, "fake pi failure: " + typ
+    elif typ == "get_fork_messages":
         resp["data"] = {"messages": [
             {"entryId": "e1", "text": "first question\nwith a second line"},
             {"entryId": "e2", "text": "second question"}]}
@@ -152,12 +154,37 @@ func TestCompactRunsAndReportsItsResult(t *testing.T) {
 	if !op.Reload {
 		t.Error("compaction rewrote the transcript, so the chat must be re-read")
 	}
+	// pi's answer rides along so the billing line can be appended after the
+	// reload; the compaction block itself arrives through that reload.
+	if op.Compact == nil {
+		t.Fatal("compact must carry pi's CompactionResult")
+	}
+	if op.Compact.Summary != "s" || op.Compact.TokensBefore != 12000 {
+		t.Errorf("compaction result = %+v, want pi's summary and token count", op.Compact)
+	}
 	cmds := log()
 	if len(cmds) != 1 || cmds[0]["type"] != "compact" {
 		t.Fatalf("commands = %v, want one compact", cmds)
 	}
 	if cmds[0]["customInstructions"] != "keep the test plan" {
 		t.Errorf("customInstructions = %v, want the /compact argument passed through", cmds[0]["customInstructions"])
+	}
+}
+
+// A failed compaction reports the error and carries no result: nothing was
+// compacted, so there is nothing to bill or to render.
+func TestCompactFailureCarriesNoResult(t *testing.T) {
+	m, _ := opsModel(t, map[string]string{"FAKE_PI_FAIL": "compact"})
+	msg := compactSession(m, "")()
+	op, ok := msg.(app.PiOpMsg)
+	if !ok {
+		t.Fatalf("compact must report a PiOpMsg, got %T", msg)
+	}
+	if op.Err == nil {
+		t.Fatal("the failed RPC must be reported")
+	}
+	if op.Reload || op.Compact != nil {
+		t.Errorf("a failed compact must not reload or carry a result: %+v", op)
 	}
 }
 

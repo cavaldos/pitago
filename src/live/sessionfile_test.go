@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,6 +301,199 @@ func TestActiveBranchFollowsTheNewestBranch(t *testing.T) {
 	if got := string(rows[2]); got != `{"role":"assistant","content":["on branch"]}` {
 		t.Fatalf("third row = %s, want the forked branch's answer", got)
 	}
+}
+
+// pi rewrites a compaction / branch_summary entry into a pseudo-message when
+// it builds the context (dist/core/session-manager.js:180-191), so the file
+// tail must emit the identical row or a followed session loses the summary
+// block an in-process one shows.
+func TestTranscriptRowMapsSummaryEntriesLikePi(t *testing.T) {
+	lines := []struct {
+		entry string
+		role  string
+		check func(t *testing.T, row summaryRow)
+	}{
+		{
+			entry: `{"type":"compaction","id":"c1","parentId":"m2","timestamp":"2026-01-02T10:00:05.000Z",` +
+				`"summary":"we were porting the parser","tokensBefore":12345,"firstKeptEntryId":"m3"}`,
+			role: "compactionSummary",
+			check: func(t *testing.T, row summaryRow) {
+				if row.TokensBefore != 12345 {
+					t.Errorf("tokensBefore = %d, want 12345", row.TokensBefore)
+				}
+				if row.FromID != "" {
+					t.Errorf("fromId = %q, want none on a compaction", row.FromID)
+				}
+			},
+		},
+		{
+			entry: `{"type":"branch_summary","id":"b1","parentId":"m2","timestamp":"2026-01-02T10:00:06.000Z",` +
+				`"summary":"the tree experiment","fromId":"m1"}`,
+			role: "branchSummary",
+			check: func(t *testing.T, row summaryRow) {
+				if row.FromID != "m1" {
+					t.Errorf("fromId = %q, want m1", row.FromID)
+				}
+				if row.TokensBefore != 0 {
+					t.Errorf("tokensBefore = %d, want none on a branch summary", row.TokensBefore)
+				}
+			},
+		},
+	}
+	for _, tc := range lines {
+		var e sessionEntry
+		if err := json.Unmarshal([]byte(tc.entry), &e); err != nil {
+			t.Fatal(err)
+		}
+		row, ok := transcriptRow(&e)
+		if !ok {
+			t.Fatalf("%s must produce a transcript row", e.Type)
+		}
+		var got summaryRow
+		if err := json.Unmarshal(row, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Role != tc.role || got.Summary == "" {
+			t.Fatalf("%s row = %s, want role %q with the summary", e.Type, row, tc.role)
+		}
+		if got.Timestamp == 0 {
+			t.Errorf("%s row must carry the entry timestamp", e.Type)
+		}
+		tc.check(t, got)
+	}
+}
+
+// pi's buildContextEntries (dist/core/session-manager.js:194-230) drops
+// everything before the newest compaction's firstKeptEntryId and hoists the
+// compaction itself to the front. get_branch() does NOT, so without the
+// projection a followed or resumed session re-renders history pi deleted.
+func TestActiveBranchProjectsTheCompactionContext(t *testing.T) {
+	entries := sessionEntries(t,
+		`{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"first"}}`,
+		`{"type":"message","id":"m2","parentId":"m1","message":{"role":"assistant","content":["second"]}}`,
+		// c1 summarized m1+m2 and kept nothing of them.
+		`{"type":"compaction","id":"c1","parentId":"m2","summary":"two messages in","tokensBefore":900,"firstKeptEntryId":"m3"}`,
+		`{"type":"message","id":"m3","parentId":"c1","message":{"role":"user","content":"third"}}`,
+		`{"type":"message","id":"m4","parentId":"m3","message":{"role":"assistant","content":["fourth"]}}`,
+		// c2 kept m3 and m4 and dropped everything older.
+		`{"type":"compaction","id":"c2","parentId":"m4","summary":"four messages in","tokensBefore":1800,"firstKeptEntryId":"m3"}`,
+		`{"type":"message","id":"m5","parentId":"c2","message":{"role":"user","content":"fifth"}}`,
+	)
+	rows, leaf := activeBranch(entries)
+	if leaf != "m5" {
+		t.Fatalf("leaf = %q, want m5", leaf)
+	}
+	got := make([]string, 0, len(rows))
+	for _, r := range rows {
+		got = append(got, string(r))
+	}
+	// pi keeps exactly [newest compaction, kept range, everything after]:
+	// the older compaction and everything it summarized are gone.
+	want := []string{
+		`{"role":"compactionSummary","summary":"four messages in","tokensBefore":1800}`,
+		`{"role":"user","content":"third"}`,
+		`{"role":"assistant","content":["fourth"]}`,
+		`{"role":"user","content":"fifth"}`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %d:\n%s\nwant %d:\n%s", len(got), strings.Join(got, "\n"), len(want), strings.Join(want, "\n"))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+	for i, r := range rows {
+		if strings.Contains(string(r), "first") || strings.Contains(string(r), "two messages in") {
+			t.Errorf("row %d = %s, want the entries pi summarized away dropped", i, r)
+		}
+	}
+}
+
+// A compaction as the newest entry in the file (nothing happened after it
+// yet) is still the leaf, and its own kept range still renders.
+func TestActiveBranchKeepsCompactionAsLeaf(t *testing.T) {
+	entries := sessionEntries(t,
+		`{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"first"}}`,
+		`{"type":"compaction","id":"c1","parentId":"m1","summary":"one message in","tokensBefore":900,"firstKeptEntryId":"m1"}`,
+	)
+	rows, leaf := activeBranch(entries)
+	if leaf != "c1" || len(rows) != 2 {
+		t.Fatalf("branch = leaf %q with %d rows, want leaf c1 and 2 rows", leaf, len(rows))
+	}
+	if !strings.Contains(string(rows[0]), `"role":"compactionSummary"`) ||
+		!strings.Contains(string(rows[1]), "first") {
+		t.Fatalf("rows = %s / %s", rows[0], rows[1])
+	}
+}
+
+// Without a compaction on the path the walk is untouched: still every entry
+// on the newest branch, root-first, with abandoned forks dropped.
+func TestActiveBranchWithoutCompactionIsUnchanged(t *testing.T) {
+	entries := sessionEntries(t,
+		`{"type":"message","id":"a","parentId":null,"message":{"role":"user","content":"first"}}`,
+		`{"type":"message","id":"b","parentId":"a","message":{"role":"assistant","content":["second"]}}`,
+		`{"type":"message","id":"a2","parentId":"a","message":{"role":"user","content":"branch"}}`,
+		`{"type":"message","id":"b2","parentId":"a2","message":{"role":"assistant","content":["on branch"]}}`,
+	)
+	rows, leaf := activeBranch(entries)
+	if leaf != "b2" || len(rows) != 3 {
+		t.Fatalf("branch = leaf %q with %d rows, want leaf b2 and 3 rows", leaf, len(rows))
+	}
+	if !strings.Contains(string(rows[1]), "branch") {
+		t.Fatalf("rows = %s, want the fork's messages root-first", rows[1])
+	}
+}
+
+// A compaction whose firstKeptEntryId is not on the path (truncated file, old
+// format) must keep the pre-compaction range rather than delete it on a guess.
+func TestActiveBranchKeepsHistoryWhenFirstKeptIsMissing(t *testing.T) {
+	entries := sessionEntries(t,
+		`{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"first"}}`,
+		`{"type":"message","id":"m2","parentId":"m1","message":{"role":"assistant","content":["second"]}}`,
+		`{"type":"compaction","id":"c1","parentId":"m2","summary":"s","tokensBefore":900,"firstKeptEntryId":"gone"}`,
+	)
+	rows, _ := activeBranch(entries)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d (%v), want the whole path kept", len(rows), rows)
+	}
+}
+
+// The billing line must survive the file round-trip: pi derives it from the
+// usage persisted on the summary entry, so a followed session re-shows it.
+func TestTranscriptRowCarriesThePersistedUsage(t *testing.T) {
+	entries := sessionEntries(t,
+		`{"type":"compaction","id":"c1","parentId":null,"summary":"s","tokensBefore":900,`+
+			`"usage":{"input":8000,"output":900,"cacheRead":3000,"cacheWrite":445,`+
+			`"cost":{"total":0.0312}}}`,
+	)
+	row, ok := transcriptRow(&entries[0])
+	if !ok {
+		t.Fatal("a compaction entry must produce a transcript row")
+	}
+	var got pirpc.AgentMessage
+	if err := json.Unmarshal(row, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != "compactionSummary" || got.Usage == nil {
+		t.Fatalf("row = %s, want a compactionSummary carrying usage", row)
+	}
+	if got.Usage.Input != 8000 || got.Usage.CacheWrite != 445 || got.Usage.Cost.Total != 0.0312 {
+		t.Errorf("usage = %+v, want pi's persisted billing", got.Usage)
+	}
+}
+
+func sessionEntries(t *testing.T, lines ...string) []sessionEntry {
+	t.Helper()
+	var entries []sessionEntry
+	for _, l := range lines {
+		var e sessionEntry
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, e)
+	}
+	return entries
 }
 
 // A session file with no message entries yet must still yield an explicit

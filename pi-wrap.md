@@ -49,6 +49,34 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 - `extension_ui_request` select/confirm → centered modal dialog (↑↓, Enter, Esc);
   input/editor → free-text dialog (Enter submits, Esc cancels); notify/setStatus/set_editor_text → shown/applied accordingly
 - `agent_settled` → refresh get_session_stats (tokens, cost, context %) into the sidebar
+- `compaction_start` / `compaction_end` → pi's compaction status INDICATOR, not a chat line:
+  `showStatusIndicator` embeds `CompactionStatusIndicator` in the input editor's TOP BORDER
+  (setEditorWorkingStatusIndicator, interactive-mode.js:2888) — the `─ ⠿ Compacting context...
+  (escape to cancel) ─────` bar. pitago splices the same thing into the input box: cGreen border,
+  `spinFrame(m.pet.tick)` + one of pi's three labels verbatim (`compactionLabel`,
+  status-indicator.js:44-51), taking precedence over the `m.thinking` branch because a mid-turn
+  auto-compaction has both true and never over `inputStatus()`, whose pet-timed label would hide
+  the wording. The chat status row is suppressed while compacting (pi shows the indicator in the
+  border only), and `m.compacting` keeps `petLooping()` true so a manual `/compact` issued while
+  idle still animates. The `(escape to cancel)` hint is HONEST: pi replaces the editor's Esc handler with
+  `session.abortCompaction()` for the duration (interactive-mode.js:2883-2887), and pitago does
+  the same with ONE press — `m.compacting` is the first Esc branch, above bash, auto-retry and the
+  double-press turn cancel. There is no compaction-only RPC, so `abortCompactionCmd` sends pi's
+  generic `abort` (rpc-mode.js:327-329 → session.abort(), agent-session.js:1841-1852) without
+  `ClearQueue`. That leaves one difference, stated plainly: during an AUTOMATIC compaction pi
+  cancels only the compaction, while this abort also stops the agent run (session.abort() calls
+  agent.abort() too); a manual `/compact` behaves identically. `compactAborted` suppresses the
+  `compact` command's rethrown error (agent-session.js:2223) so one cancellation is one report.
+  pi also queues input during a compaction; pitago cannot, so no such promise is rendered. The latch and its
+  reason are reconciled against `get_state.isCompacting` so a dropped event cannot freeze it. pi's own manual path
+  (`chatContainer.clear(); renderSessionEntries(entries.slice(1)); addMessageToChat(...)`,
+  interactive-mode.js:2913-2918) puts the summary block at the BOTTOM of the transcript even though
+  `get_messages` hoists the compaction pseudo-message to the front, so `restore()` collects
+  `compactionSummary`/`branchSummary` rows and appends them after the other roles — rendering them in
+  place leaves the block far above the fold in a bottom-pinned chat. Mid-turn auto-compaction appends
+  the block in place instead of rebuilding, because a rebuild would drop the in-flight tool blocks.
+  A followed session (file tail) additionally projects the branch through pi's `buildContextEntries`
+  (`firstKeptEntryId`), so a resumed compacted session shows the same surviving entries pi does.
 - Enter: prompt (idle) / steer (streaming); Esc: dialog? close : clear_queue+abort+restore queued text into the input; Ctrl+N: new_session; Ctrl+C: quit + kill pi
 - Copy: Ctrl+Y is context-sensitive. In chat it yanks the last assistant answer; in the
   `trajectory`, `notification` and `tree` dialogs it copies the selected row's full text and

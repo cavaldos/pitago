@@ -243,6 +243,10 @@ type CompactionResult struct {
 	FirstKeptEntryID     string `json:"firstKeptEntryId"`
 	TokensBefore         int    `json:"tokensBefore"`
 	EstimatedTokensAfter int    `json:"estimatedTokensAfter"`
+	// Usage is the billing of the summarizing call itself. pi appends it as
+	// a "Compaction: N tokens billed" notice, but only when its
+	// showCacheMissNotices setting is on (default off).
+	Usage *EntryUsage `json:"usage,omitempty"`
 }
 
 // Compact summarizes the conversation now (pi: compact{customInstructions?}).

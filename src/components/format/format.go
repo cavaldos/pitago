@@ -87,6 +87,20 @@ func truncWidth(s string, n int) string {
 	return b.String() + "…"
 }
 
+// Truncate cuts s to at most n display cells with a trailing "…", rune-safe.
+//
+// It is truncWidth with Short's newline flattening left out — multi-line text
+// (a compaction summary, a diff) must keep its line breaks to render as
+// markdown — but Short's width short-circuit kept: truncWidth ends in an
+// unconditional "…", so calling it on text that already fits would mark every
+// such string as cut.
+func Truncate(s string, n int) string {
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	return truncWidth(s, n)
+}
+
 // Fit clamps s to exactly w display cells: truncates with "…" when too wide,
 // pads with spaces when narrow. s must be unstyled (style after fitting) so
 // no ANSI sequence can be cut in half. Guarantees rows never wrap and break

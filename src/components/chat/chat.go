@@ -39,4 +39,9 @@ type Block struct {
 	ToolCallID string
 	Err        bool
 	Images     []Image
+	// TokensBefore is the pre-compaction context size a compaction block
+	// reports ("Compacted from 12,345 tokens"); Text carries the summary
+	// markdown itself. Zero means unknown, and the block then shows the
+	// summary alone.
+	TokensBefore int
 }

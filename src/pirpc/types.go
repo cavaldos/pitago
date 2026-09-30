@@ -109,6 +109,17 @@ type AgentMessage struct {
 	StopReason   string          `json:"stopReason,omitempty"`   // assistant
 	ErrorMessage string          `json:"errorMessage,omitempty"` // assistant
 	Usage        *EntryUsage     `json:"usage,omitempty"`        // final assistant usage (message_end)
+	// Summary/TokensBefore/FromID are the payload of the two context
+	// pseudo-messages pi keeps in get_messages instead of as ordinary
+	// messages (createCompactionSummaryMessage / createBranchSummaryMessage,
+	// dist/core/messages.js:40-55):
+	//   compactionSummary -> {summary, tokensBefore, timestamp}
+	//   branchSummary     -> {summary, fromId, timestamp}
+	// They are ordinary context entries in pi, so they must render as
+	// blocks here too instead of being dropped by role.
+	Summary      string `json:"summary,omitempty"`
+	TokensBefore int    `json:"tokensBefore,omitempty"`
+	FromID       string `json:"fromId,omitempty"` // branchSummary: the entry the branch was summarized from
 }
 
 // TextOf joins all {"type":"text"} blocks; plain-string content also works.
@@ -161,8 +172,12 @@ type State struct {
 		Provider      string `json:"provider"`
 		ContextWindow int    `json:"contextWindow"`
 	} `json:"model"`
-	ThinkingLevel  string `json:"thinkingLevel"`
-	IsStreaming    bool   `json:"isStreaming"`
+	ThinkingLevel string `json:"thinkingLevel"`
+	IsStreaming   bool   `json:"isStreaming"`
+	// IsCompacting is pi's own compaction latch in get_state
+	// (dist/modes/rpc/rpc-types.d.ts:152). pitago reconciles its status line
+	// from it so a compaction_end that never arrives cannot wedge it.
+	IsCompacting   bool   `json:"isCompacting"`
 	SteeringMode   string `json:"steeringMode"`
 	FollowUpMode   string `json:"followUpMode"`
 	AutoCompaction bool   `json:"autoCompactionEnabled"`

@@ -36,8 +36,15 @@ func compactSession(m *app.Model, arg string) tea.Cmd {
 			notice = fmt.Sprintf("context compacted · from %s tokens", format.FmtComma(res.TokensBefore))
 		}
 		// Compaction rewrote the transcript in pi, so the chat, the stats
-		// and the context gauge have to be re-read (Reload).
-		return app.PiOpMsg{Op: "compact", Notice: notice, Err: err, Reload: err == nil}
+		// and the context gauge have to be re-read (Reload). The compaction
+		// block itself arrives through that reload (pi stores it as a
+		// compactionSummary context entry); res rides along only for the
+		// billing notice pi appends below it.
+		msg := app.PiOpMsg{Op: "compact", Notice: notice, Err: err, Reload: err == nil}
+		if err == nil {
+			msg.Compact = &res
+		}
+		return msg
 	}
 }
 

@@ -357,6 +357,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.thinkLvl = msg.state.ThinkingLevel
 		m.autoCompact = msg.state.AutoCompaction
+		m.reconcileCompacting(msg.state)
 		m.ctxWindow = msg.state.Model.ContextWindow
 		m.sessStart = time.Now()
 		m.pushRecent(msg.state.Model.Provider, m.ModelLbl, m.ModelLbl)
@@ -389,6 +390,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.retrying = false
 		m.restore(msg.msgs)
 		m.Status = "ready"
+		// The latch itself was reconciled from get_state above; only the
+		// status line is re-stated here, because the connect arm owns it.
+		if m.compacting {
+			m.Status = "compacting context…"
+		}
 		m.connErr = "" // a later success clears the startup error line
 		m.connected = true
 		m.planOn = false // fresh connect: plan latch is live-only
@@ -443,6 +449,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.thinkLvl = msg.state.ThinkingLevel
 			m.autoCompact = msg.state.AutoCompaction
+			m.reconcileCompacting(msg.state)
 			if msg.state.Model.ContextWindow > 0 {
 				m.ctxWindow = msg.state.Model.ContextWindow
 			}
@@ -978,6 +985,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Notice != "" {
 				m.AddBlock(Block{Kind: "notice", Text: msg.Notice})
 			}
+			if msg.CostNotice != "" {
+				m.AddBlock(Block{Kind: "costnotice", Text: msg.CostNotice})
+			}
 		}
 		m.Status = "ready"
 		m.Refresh()
@@ -1509,6 +1519,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.escArm = time.Time{}
 				return m, nil
 			}
+			// A compaction owns the whole Esc gesture: pi REPLACES the
+			// editor's Esc handler with session.abortCompaction() at
+			// compaction_start (interactive-mode.js:2883-2887) and restores it
+			// at compaction_end, so it outranks bash, auto-retry and the
+			// double-press turn cancel below. One press, no arm — pi does not
+			// arm here either.
+			if m.compacting {
+				return m, m.abortCompactionCmd()
+			}
 			// A running !cmd is cancelled with one Esc (pi: onEscape →
 			// isBashRunning → session.abortBash(),
 			// interactive-mode.js:2336-2338). No turn is streaming then,
@@ -1732,9 +1751,87 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	case "queue_update":
 		m.queue = pirpc.ParseQueue(ev.Raw)
 	case "compaction_start":
-		m.AddBlock(Block{Kind: "notice", Text: "compacting context…"})
+		// pi shows CompactionStatusIndicator in the editor's top border, not
+		// a chat line, and swaps Esc for session.abortCompaction() for the
+		// duration. pitago has no abort_compaction RPC command, so Esc keeps
+		// its normal meaning and only the indicator is mirrored; the reason
+		// picks the label (see compactionLabel).
+		var cp struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(ev.Raw, &cp)
+		m.compacting = true
+		m.compactReason = cp.Reason
+		m.compactAborted = false // a fresh run may be cancelled again
+		m.Status = "compacting context…"
+		m.Refresh()
 	case "compaction_end":
-		m.AddBlock(Block{Kind: "notice", Text: "context compacted"})
+		// pi's compaction_end (dist/core/agent-session.d.ts:72-77) carries
+		// {reason, result?, aborted, willRetry, errorMessage?}.
+		var p struct {
+			Reason       string `json:"reason"`
+			Aborted      bool   `json:"aborted"`
+			WillRetry    bool   `json:"willRetry"`
+			ErrorMessage string `json:"errorMessage"`
+			Result       *struct {
+				Summary      string            `json:"summary"`
+				TokensBefore int               `json:"tokensBefore"`
+				Usage        *pirpc.EntryUsage `json:"usage"`
+			} `json:"result"`
+		}
+		_ = json.Unmarshal(ev.Raw, &p)
+		m.compacting = false
+		m.compactReason = "" // the indicator goes with the latch
+		if p.Reason != "manual" {
+			m.compactAborted = false // only a cancelled /compact leaves it set
+		}
+		// The status line the indicator replaced is restored: a turn that
+		// survived an auto-compaction is still running, an idle one is ready
+		// again (pi's clearStatusIndicator does the same).
+		if m.thinking {
+			m.Status = "pi is running…"
+		} else {
+			m.Status = "ready"
+		}
+		switch {
+		case p.Aborted:
+			// pi: showError("Compaction cancelled") for a manual abort,
+			// a status line for an auto-compaction one. compactAborted marks
+			// the manual case so the compact command's rethrown error
+			// (agent-session.js:2223) is suppressed in handlePiOp — one
+			// cancellation, one report.
+			if p.Reason == "manual" {
+				m.compactAborted = true
+				m.AddBlock(Block{Kind: "notice", Text: "Compaction cancelled", Err: true})
+			} else {
+				m.AddBlock(Block{Kind: "notice", Text: "Auto-compaction cancelled"})
+			}
+		case p.Result != nil && m.thinking:
+			// Auto-compaction fired mid-turn: the summarizing call ends the
+			// turn's context, so the block has to land here. Rebuilding the
+			// transcript from get_messages instead would drop the in-flight
+			// tool blocks pi is still going to append to.
+			m.AddBlock(Block{Kind: "compaction", Text: p.Result.Summary,
+				TokensBefore: p.Result.TokensBefore})
+			m.addCompactionCostNotice("Compaction", p.Result.Usage)
+		case p.Result != nil:
+			// Idle (the /compact path): the reload that follows rebuilds the
+			// transcript from get_messages, and the compactionSummary entry
+			// arrives through restore(). Adding it here too would show it
+			// twice.
+		case p.ErrorMessage != "":
+			// pi's compact() emits compaction_end{reason:"manual",
+			// errorMessage} and then rethrows, so the event ALWAYS precedes
+			// the RPC error pitago reports through PiOpMsg.Err. Toasting both
+			// would show the same failure twice, so the manual case is left to
+			// handlePiOp, which owns the single report. An automatic
+			// compaction has no rethrown error behind it and renders here,
+			// in pi's error colour (interactive-mode.js:2925-2932).
+			if p.Reason != "manual" {
+				m.AddBlock(Block{Kind: "notice", Text: p.ErrorMessage, Err: true})
+			}
+		}
+		m.Refresh()
 	case "auto_retry_start":
 		m.retrying = true // Esc now aborts the retry (pi parity)
 		m.AddBlock(Block{Kind: "notice", Text: "provider error, retrying… (Esc to stop)"})
@@ -1758,6 +1855,9 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.escArm = time.Time{}
 		m.bashRunning = false
 		m.retrying = false
+		m.compacting = false
+		m.compactReason = ""
+		m.compactAborted = false
 		m.pet = petState{}
 		m.clearTeamWidgetState()
 		if m.respawning {
@@ -1954,13 +2054,51 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 			out = out[:2000] + "…"
 		}
 		m.AddBlock(Block{Kind: "bash", Text: "$ " + msg.Command + "\n" + out})
+	case "compactionSummary", "branchSummary":
+		// A followed session (src/live/tail.go) turns every transcript row
+		// into a message_end event, so the two summary pseudo-messages reach
+		// this switch too. Without this case they would fall through a switch
+		// with no default and vanish — the file tail showing no summary block
+		// while an in-process /compact shows one.
+		m.addSummaryBlock(msg)
 	}
 	return nil
+}
+
+// reconcileCompacting re-derives the compaction latch from pi's own get_state
+// (dist/modes/rpc/rpc-types.d.ts:152), the way IsStreaming heals m.thinking.
+// compaction_end is the normal signal; this is the backstop that keeps a
+// dropped or late compaction_end from wedging the status line on
+// "compacting context…" forever.
+//
+// The status line is only rewritten when the latch actually flipped, so a
+// periodic get_state cannot stomp the "pi is running…" of a live turn.
+func (m *Model) reconcileCompacting(st pirpc.State) {
+	if st.IsCompacting == m.compacting {
+		return
+	}
+	m.compacting = st.IsCompacting
+	if !st.IsCompacting {
+		// The reason only means something while a compaction runs; clearing
+		// it with the latch keeps the indicator label from outliving it.
+		m.compactReason = ""
+		m.compactAborted = false
+		if m.Status == "compacting context…" {
+			if m.thinking {
+				m.Status = "pi is running…"
+			} else {
+				m.Status = "ready"
+			}
+		}
+	}
 }
 
 // restore converts get_messages into blocks (two-pass via m.tools map).
 
 func (m *Model) restore(msgs []pirpc.AgentMessage) {
+	// Summary pseudo-messages are collected, not rendered where the loop
+	// finds them (see the case below); every other role renders in place.
+	var summaries []pirpc.AgentMessage
 	for _, msg := range msgs {
 		switch msg.Role {
 		case "user":
@@ -2011,10 +2149,48 @@ func (m *Model) restore(msgs []pirpc.AgentMessage) {
 			}
 		case "bashExecution":
 			m.AddBlock(Block{Kind: "bash", Text: "$ " + msg.Command})
+		case "compactionSummary", "branchSummary":
+			// The two context pseudo-messages pi keeps in get_messages
+			// (createCompactionSummaryMessage / createBranchSummaryMessage,
+			// dist/core/messages.js:40-55). They are context entries, so
+			// dropping them by role is what left /compact showing nothing
+			// but a text notice.
+			//
+			// They are collected instead of appended here: pi's get_messages
+			// hoists the compaction to the FRONT of the array
+			// (buildContextEntries, dist/core/session-manager.js:194-230),
+			// while pi's own manual /compact puts its summary block at the
+			// BOTTOM, next to the notice
+			// (chatContainer.clear(); renderSessionEntries(entries.slice(1));
+			// addMessageToChat(...), interactive-mode.js:2913-2918). Rendering
+			// them where get_messages lists them would leave the block far
+			// above the fold in a bottom-pinned transcript — the user runs
+			// /compact and sees nothing new. So they are appended after the
+			// loop, in the order get_messages listed them.
+			summaries = append(summaries, msg)
 		}
+	}
+	for _, msg := range summaries {
+		m.addSummaryBlock(msg)
 	}
 	m.curAsst, m.curThink = -1, -1
 	m.asstDelta, m.thinkDelta = false, false
+}
+
+// addSummaryBlock turns one compaction/branch pseudo-message into the block
+// pi renders for it, followed by pi's billing line when the entry carried the
+// usage pi persisted on it. Both callers (restore and the live tail's
+// message_end projection) use it, so the two paths cannot drift apart.
+func (m *Model) addSummaryBlock(msg pirpc.AgentMessage) {
+	kind, label := "compaction", "Compaction"
+	if msg.Role == "branchSummary" {
+		kind, label = "branch", "Branch summary"
+	}
+	m.AddBlock(Block{Kind: kind, Text: msg.Summary, TokensBefore: msg.TokensBefore})
+	// The usage is persisted on pi's summary entry, so this reappears on
+	// every re-render exactly like pi's, which derives the line from the
+	// entry too (interactive-mode.js:2919-2924).
+	m.addCompactionCostNotice(label, msg.Usage)
 }
 
 func joinText(blocks []pirpc.ContentBlock) string {

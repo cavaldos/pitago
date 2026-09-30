@@ -178,7 +178,9 @@ func (m *Model) renderBlocks() string {
 		cursor += ly(s)
 		line += strings.Count(s, "\n")
 	}
-	if m.thinking {
+	// pi renders the compaction indicator in the input border only, so a
+	// mid-turn auto-compaction must not also paint a status row in the chat.
+	if m.thinking && !m.compacting {
 		b.WriteString(gutter(statusBarStyle.Render("○"), statusBarStyle.Render(m.Status)+"\n"))
 	}
 	out := b.String()
@@ -290,6 +292,8 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string, tidy bool) uint
 	h.Write([]byte{0})
 	h.Write([]byte(bl.ToolCallID))
 	h.Write([]byte{0})
+	fmt.Fprintf(h, "\x00tokensBefore\x00%d", bl.TokensBefore)
+	h.Write([]byte{0})
 	if bl.Err {
 		h.Write([]byte{1})
 	} else {
@@ -362,6 +366,20 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		}
 		rows := strings.Split(markdown.Highlight("bash", Short(bl.Text, 400)), "\n")
 		return framedBlock(rows, cw, blockThemeFor(class)) + "\n\n", false
+	case "compaction", "branch":
+		// pi's compaction/branch summary component: a bold label, a blank
+		// row and either the one-line collapsed count or the summary
+		// markdown, all inside the custom-message box (a left click there
+		// toggles it; pitago expands with its ctrl+g, like every other
+		// collapsible block).
+		return m.renderSummaryBlock(bl, cw) + "\n\n", false
+	case "costnotice":
+		// pi's compaction billing line: a bare warning-coloured row in the
+		// chat, no box and no status glyph (interactive-mode.js:3245-3256).
+		// It bypasses gutter() on purpose — gutter prefixes the icon plus a
+		// space on the first line, which would indent the line pi draws
+		// flush-left and leave every continuation row unindented anyway.
+		return warnStyle.Render(bl.Text) + "\n\n", false
 	case "tree":
 		icon = statusBarStyle.Render("●")
 		body = codeStyle.Render(shortTree(bl.Text, 3000)) + "\n\n"
@@ -385,6 +403,66 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 	}
 	return gutter(icon, body), false
 }
+
+// renderSummaryBlock renders a compaction or branch summary block.
+//
+// pi's components (dist/modes/interactive/components/compaction-summary-message.js
+// and branch-summary-message.js) put a bold label, a blank row and then
+// either the collapsed one-liner or the summary as markdown inside one box
+// filled with the custom-message background. pitago draws the same rows in
+// the shared neutral frame and toggles them with ctrl+g like every other
+// collapsible block, so the hint row names that key instead of pi's ctrl+r.
+//
+// A summary can be tens of kilobytes; it is capped so one compaction cannot
+// blow the transcript out of memory, and the cut is marked.
+func (m Model) renderSummaryBlock(bl Block, cw int) string {
+	// pi's headers (compaction-summary-message.js:28-30,
+	// branch-summary-message.js:29-32): bold, and separated from the summary
+	// markdown by a blank line. The bare word would run straight into the
+	// summary text once glamour strips the markdown.
+	label, header := "[branch]", "**Branch Summary**\n\n"
+	if bl.Kind == "compaction" {
+		label = "[compaction]"
+		header = "**Compacted from " + format.FmtComma(bl.TokensBefore) + " tokens**\n\n"
+		if bl.TokensBefore <= 0 {
+			// pi prints the count unconditionally, but a summary without one
+			// would read "Compacted from 0 tokens"; the collapsed line below
+			// drops it in the same case, so both states agree.
+			header = ""
+		}
+	}
+	inner := blockInner(cw)
+	rows := []string{toolNameStyle.Render(label), ""}
+	if m.expandTools {
+		// truncWidth is rune/cell safe: a byte slice would split a multi-byte
+		// rune and hand markdown.Render invalid UTF-8.
+		summary := format.Truncate(bl.Text, maxSummaryChars)
+		body := renderMarkdown(&m, header+summary, inner)
+		rows = append(rows, strings.Split(strings.TrimSuffix(body, "\n"), "\n")...)
+		rows = append(rows, "", toolStyle.Render("("+collapseHint+")"))
+	} else {
+		// pi's collapsed line names the pre-compaction size; a compaction
+		// without one keeps the plain word, and a branch summary has no
+		// count at all (BranchSummaryMessageComponent). The key hint is
+		// dim, the rest of the line is body text — the same split pi's
+		// component makes.
+		text := "Branch summary ("
+		if bl.Kind == "compaction" {
+			text = "Compacted ("
+			if bl.TokensBefore > 0 {
+				text = fmt.Sprintf("Compacted from %s tokens (", format.FmtComma(bl.TokensBefore))
+			}
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(cText).Render(text)+
+			toolStyle.Render(expandHint)+")")
+	}
+	return framedBlock(rows, cw, blockThemeFor(format.StatusNeutral))
+}
+
+// maxSummaryChars bounds one rendered summary. pi streams the whole summary
+// into a Markdown component; pitago renders it into the chat transcript,
+// where a multi-megabyte summary would be paid for on every repaint.
+const maxSummaryChars = 8000
 
 // renderMarkdown renders assistant output with the Go renderer (Glamour
 // tables/lists/bold, Chroma fenced code) wrapped to the chat width. Plain text comes back unchanged from markdown.Render and keeps the
@@ -1382,6 +1460,31 @@ func (m Model) renderInput() string {
 			border = cGreen
 			title = "EXTERNAL · " + spinFrame(m.pet.tick) + " " + m.inputStatus()
 		}
+	} else if m.compacting {
+		// pi puts the compaction indicator in the editor's TOP BORDER
+		// (setEditorWorkingStatusIndicator, interactive-mode.js:2888), not in
+		// the chat. This branch takes precedence over the m.thinking one
+		// because a mid-turn auto-compaction has both true and pi shows only
+		// the compaction wording.
+		//
+		// The label deliberately does NOT go through inputStatus(): that
+		// prefers the pet's timed label ("Working... 7s"), which would hide
+		// the compaction text. cGreen is the same live-work border a running
+		// turn uses.
+		border = cGreen
+		title = spinFrame(m.pet.tick) + " " + compactionLabel(m.compactReason) + agentTag
+		// pi keeps the editor active during a compaction and QUEUES what is
+		// typed; pitago has no queue for that, so the running-turn hints are
+		// kept when a turn is live and the idle hints are left untouched
+		// otherwise — no promise the UI cannot keep. One Esc press cancels
+		// the compaction (abortCompactionCmd), as the hint says.
+		if m.thinking {
+			if m.escArmed() {
+				left = "press Esc again to cancel"
+			} else {
+				left = "↵ steer · ⌥↵ follow-up · Esc×2 cancel"
+			}
+		}
 	} else if m.thinking {
 		if plan {
 			border = cPlan
@@ -1448,6 +1551,38 @@ func (m Model) inputStatus() string {
 		return m.petLabel()
 	}
 	return m.Status
+}
+
+// compactionLabel is pi's CompactionStatusIndicator text for one
+// compaction_start reason (dist/modes/interactive/components/status-indicator.js:44-51):
+// a manual /compact, a context-window overflow, or the auto-compaction
+// threshold. An unknown or missing reason falls back to the threshold label,
+// which is what pi's own ternary does.
+//
+// The "(escape to cancel)" hint is pi's wording and comes from
+// keyText("app.interrupt"), whose default key string is literally "escape"
+// (dist/core/keybindings.js:28). In pi it is TRUE: interactive-mode.js:2883-2887
+// REPLACES the editor's Esc handler with session.abortCompaction() for the
+// duration, so Esc is the highest-precedence gesture in the editor. pitago
+// honours it too, with one press: Esc sends pi's generic `abort` command
+// (rpc-mode.js:327-329), which reaches abortCompaction() through
+// session.abort() (dist/core/agent-session.js:1841-1852).
+//
+// The one remaining difference: there is no compaction-ONLY abort over RPC, so
+// when an AUTOMATIC compaction lands mid-turn pitago's Esc also stops the
+// agent run (session.abort() calls agent.abort() too), where pi would cancel
+// only the compaction. For a manual /compact — the case this hint is aimed at
+// — the two behave identically.
+func compactionLabel(reason string) string {
+	const cancelHint = "(escape to cancel)"
+	switch reason {
+	case "manual":
+		return "Compacting context... " + cancelHint
+	case "overflow":
+		return "Context overflow detected, Auto-compacting... " + cancelHint
+	default: // threshold, and anything pi adds later
+		return "Auto-compacting... " + cancelHint
+	}
 }
 
 // quitArmed reports a live quit arm: one Ctrl+C landed within

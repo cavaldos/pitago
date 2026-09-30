@@ -1,11 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"pitago/src/components/format"
 	"pitago/src/pirpc"
 )
 
@@ -22,6 +25,10 @@ type PiOpMsg struct {
 	Op     string // "compact" | "fork" | "clone" | "name" | "export" | "bash"
 	Notice string // ready-made chat line ("" → nothing but the error)
 	Err    error
+	// Compact is pi's compaction answer, kept so the billing notice can be
+	// appended after the reload rebuilt the transcript. It is also the only
+	// source of the summary pi rendered as a compaction block.
+	Compact *pirpc.CompactionResult
 	// Text is pi's own text for the new branch (fork): pi puts it back in
 	// the editor after forking, so the user can keep going from there.
 	Text string
@@ -35,6 +42,43 @@ type PiOpMsg struct {
 	// clone, compact): the transcript, stats and session identity have to
 	// be re-read instead of guessed.
 	Reload bool
+}
+
+// addCompactionCostNotice appends pi's billing line for a compaction or a
+// branch summary.
+//
+// pi only shows it when its own showCacheMissNotices setting is on, and that
+// setting defaults to false (dist/core/settings-manager.js:702), so the
+// default pitago run stays silent exactly like pi. The wording is pi's
+// (interactive-mode.js:3242-3256): "<label>: N tokens billed (~$X.XX)", the
+// label being "Compaction" or "Branch summary" and the cost dropped below a
+// cent.
+//
+// It is a chat row, not a toast: pi puts it in the chat container, where it
+// stays with the summary it explains.
+func (m *Model) addCompactionCostNotice(label string, u *pirpc.EntryUsage) {
+	text := CompactionCostNotice(label, u)
+	if text == "" {
+		return
+	}
+	m.AddBlock(Block{Kind: "costnotice", Text: text})
+}
+
+// CompactionCostNotice is the notice text addCompactionCostNotice renders;
+// "" means pi would show nothing (nil usage, or the notice setting is off).
+func CompactionCostNotice(label string, u *pirpc.EntryUsage) string {
+	if u == nil {
+		return ""
+	}
+	if !pirpc.PiBool(pirpc.ReadPiSettings(), "showCacheMissNotices", false) {
+		return ""
+	}
+	tokens := u.Input + u.Output + u.CacheRead + u.CacheWrite
+	cost := ""
+	if u.Cost.Total >= 0.01 {
+		cost = fmt.Sprintf(" (~$%.2f)", u.Cost.Total)
+	}
+	return fmt.Sprintf("%s: %s tokens billed%s", label, format.FmtComma(tokens), cost)
 }
 
 // runBashCmd runs a "!cmd" through pi's bash RPC. pi refuses a second
@@ -85,6 +129,14 @@ func (m Model) handlePiOp(msg PiOpMsg) (tea.Model, tea.Cmd) {
 			m.retrying = false
 		}
 	}
+	if msg.Op == "compact" && m.compactAborted && msg.Err != nil {
+		// Esc on "(escape to cancel)" makes pi's abort land first:
+		// compaction_end{reason:"manual",aborted:true} already reported "Compaction
+		// cancelled", and then compact() rethrows (agent-session.js:2223), so this
+		// command answers with an error too. Two surfaces for one cancellation
+		// would look like two failures, so pi's own single report stands.
+		msg.Err = nil
+	}
 	if msg.Bash != nil {
 		m.addBashBlock(msg)
 	}
@@ -103,10 +155,16 @@ func (m Model) handlePiOp(msg PiOpMsg) (tea.Model, tea.Cmd) {
 		// The session changed inside pi (fork/clone/compact): re-read state,
 		// transcript and stats instead of keeping the old ones. The
 		// connectedMsg arm clears the blocks, so the notice has to land
-		// after it — tea.Sequence keeps that order.
+		// after it — tea.Sequence keeps that order. The compaction billing
+		// line rides along in the same trailing message, for the same
+		// reason.
 		notice := msg.Notice
+		cost := ""
+		if msg.Compact != nil {
+			cost = CompactionCostNotice("Compaction", msg.Compact.Usage)
+		}
 		return m, tea.Sequence(m.fetchAll(), func() tea.Msg {
-			return SettingsRefreshMsg{Notice: notice}
+			return SettingsRefreshMsg{Notice: notice, CostNotice: cost}
 		})
 	}
 	if msg.Notice != "" {
@@ -158,6 +216,37 @@ func (m *Model) abortBashCmd() tea.Cmd {
 	m.Refresh()
 	return func() tea.Msg {
 		return PiOpMsg{Op: "bash", Notice: "bash cancelled", Err: m.Pi.AbortBash()}
+	}
+}
+
+// abortCompactionCmd cancels an in-flight compaction with ONE Esc press,
+// which is what the input-border indicator promises ("… (escape to cancel)").
+//
+// pi REPLACES the editor's Esc handler for the duration of a compaction
+// (interactive-mode.js:2883-2887), so this is the highest-precedence Esc in
+// the editor — above bash, auto-retry and the double-press turn cancel.
+//
+// There is no compaction-only RPC: pi's generic `abort` is the door
+// (rpc-mode.js:327-329 → session.abort(), dist/core/agent-session.js:1841-1852),
+// and that method also calls abortRetry/abortBranchSummary and agent.abort().
+// pitago sends that same command, so the one remaining difference from pi is
+// stated plainly: during an AUTOMATIC compaction pi would cancel only the
+// compaction, while this abort also stops the agent run. For a manual
+// /compact (the case the hint is aimed at) the two are identical.
+//
+// ClearQueue is deliberately NOT called: pi's compaction Esc aborts the
+// compaction and never pulls queued steer/follow-up back into the editor,
+// unlike the turn cancel below.
+func (m *Model) abortCompactionCmd() tea.Cmd {
+	m.escArm = time.Time{} // no double-press arm during a compaction
+	m.Status = "cancelling compaction…"
+	m.Refresh()
+	return func() tea.Msg {
+		// pi answers compaction_end{reason:"manual",aborted:true} on its own
+		// event stream (agent-session.js:2205-2222); this command only has to
+		// make the abort happen, so it reports nothing of its own.
+		_, err := m.Pi.Abort()
+		return PiOpMsg{Op: "abort-compaction", Err: err}
 	}
 }
 

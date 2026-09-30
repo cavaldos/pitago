@@ -158,7 +158,8 @@ func sessionModel(path string) string {
 
 // sessionEntry is one line of a pi session file. The vocabulary is pi's own
 // (session / message / custom / model_change / thinking_level_change /
-// session_info), so unknown types simply fall through every switch below.
+// session_info / compaction / branch_summary), so unknown types simply fall
+// through every switch below.
 type sessionEntry struct {
 	Type          string          `json:"type"`
 	ID            string          `json:"id"`
@@ -173,6 +174,20 @@ type sessionEntry struct {
 	Display       bool            `json:"display"`
 	Details       json.RawMessage `json:"details"`
 	Message       json.RawMessage `json:"message"`
+	// Summary/TokensBefore/FromID are the payload of the two context
+	// entries pi rewrites into pseudo-messages (dist/core/session-manager.js:180-191):
+	// compaction {summary, tokensBefore} and branch_summary {summary, fromId}.
+	Summary      string `json:"summary"`
+	TokensBefore int    `json:"tokensBefore"`
+	FromID       string `json:"fromId"`
+	// FirstKeptEntryID is pi's compaction pointer: the first entry after the
+	// compaction that survived it. Everything older is out of the context and
+	// must not be re-rendered (dist/core/session-manager.js:194-230).
+	FirstKeptEntryID string `json:"firstKeptEntryId"`
+	// Usage is the billing pi persisted on the entry. pi derives its
+	// "Compaction: N tokens billed" line from here, not from a live event, so
+	// a followed or resumed session shows the line again on re-render.
+	Usage *pirpc.EntryUsage `json:"usage,omitempty"`
 }
 
 // customRow is the row the bridge snapshot builds for a custom_message
@@ -185,6 +200,23 @@ type customRow struct {
 	Content    json.RawMessage `json:"content,omitempty"`
 	Display    bool            `json:"display,omitempty"`
 	Details    json.RawMessage `json:"details,omitempty"`
+}
+
+// summaryRow is the row a compaction / branch_summary entry becomes. It is
+// exactly what pi's createCompactionSummaryMessage / createBranchSummaryMessage
+// produce, so the file tail renders the same block a bridged or in-process
+// session does (dist/core/messages.js:40-55).
+type summaryRow struct {
+	Role         string `json:"role"`
+	Summary      string `json:"summary"`
+	TokensBefore int    `json:"tokensBefore,omitempty"`
+	FromID       string `json:"fromId,omitempty"`
+	// Usage is the billing pi persisted on the entry. pi derives its
+	// "Compaction: N tokens billed" line from the stored entry, not from the
+	// live compaction_end event, so the line reappears on every re-render of
+	// a followed or resumed session.
+	Usage     *pirpc.EntryUsage `json:"usage,omitempty"`
+	Timestamp int64             `json:"timestamp,omitempty"`
 }
 
 // transcriptRow converts one session entry into the row shape the app
@@ -221,6 +253,27 @@ func transcriptRow(e *sessionEntry) (json.RawMessage, bool) {
 			return nil, false
 		}
 		return raw, true
+	case "compaction", "branch_summary":
+		// pi rewrites both into a pseudo-message when it builds the context
+		// (session-manager.js:180-191), so the file tail must do the same
+		// instead of dropping the summary on the floor.
+		row := summaryRow{
+			Summary:   e.Summary,
+			Usage:     e.Usage,
+			Timestamp: timestampMillis(e.Timestamp),
+		}
+		if e.Type == "compaction" {
+			row.Role = "compactionSummary"
+			row.TokensBefore = e.TokensBefore
+		} else {
+			row.Role = "branchSummary"
+			row.FromID = e.FromID
+		}
+		raw, err := json.Marshal(row)
+		if err != nil {
+			return nil, false
+		}
+		return raw, true
 	}
 	return nil, false
 }
@@ -235,19 +288,32 @@ func timestampMillis(ts string) int64 {
 	return t.UnixMilli()
 }
 
-// activeBranch returns the transcript rows of the session's newest branch, in
-// root-first order, plus the id of its leaf entry.
+// activeBranch returns the transcript rows the app should render for the
+// session's newest branch, plus the id of its leaf entry.
 //
 // A session file is a tree: every entry names its parent, and the newest
 // entry on disk is the leaf the user is looking at. Walking up from that leaf
-// and reversing reproduces exactly what pi's own get_branch() would hand the
-// bridge, so a fork or a compaction-rewound session renders the same lines.
+// and reversing reproduces what pi's own get_branch() would hand the bridge,
+// so a fork renders the same lines.
+//
+// compaction/branch_summary entries take part in the walk: they are children
+// of the entries they summarize and parents of what came after, so they must
+// both stay linkable as a parent and count as a leaf on their own (right
+// after a compaction the newest entry in the file IS the compaction).
+//
+// The path is then projected through pi's buildContextEntries
+// (dist/core/session-manager.js:194-230): with a compaction on it, every
+// entry before the newest compaction's firstKeptEntryId is GONE from pi's
+// context, so rendering them would show the user a history pi deleted. The
+// projection is the compaction itself, then the kept range, then everything
+// after it — get_branch() alone does not do this, so it has to happen here.
+// Without a compaction on the path the walk result is returned untouched.
 func activeBranch(entries []sessionEntry) ([]json.RawMessage, string) {
 	byID := make(map[string]int, len(entries))
 	leaf := -1
 	for i, e := range entries {
 		switch e.Type {
-		case "message", "custom_message", "custom":
+		case "message", "custom_message", "custom", "compaction", "branch_summary":
 			if e.ID != "" {
 				byID[e.ID] = i
 			}
@@ -257,13 +323,11 @@ func activeBranch(entries []sessionEntry) ([]json.RawMessage, string) {
 	if leaf < 0 {
 		return []json.RawMessage{}, ""
 	}
-	var chain []json.RawMessage
-	// Bounded by the entry count, so a corrupt parent cycle terminates.
+	// The path as entry indices, root-first. Bounded by the entry count, so
+	// a corrupt parent cycle terminates.
+	var path []int
 	for i, steps := leaf, 0; i >= 0 && steps <= len(entries); steps++ {
-		row, ok := transcriptRow(&entries[i])
-		if ok {
-			chain = append(chain, row)
-		}
+		path = append(path, i)
 		parent := entries[i].ParentID
 		if parent == nil || *parent == "" {
 			break
@@ -274,11 +338,63 @@ func activeBranch(entries []sessionEntry) ([]json.RawMessage, string) {
 		}
 		i = idx
 	}
-	rows := make([]json.RawMessage, 0, len(chain))
-	for i := len(chain) - 1; i >= 0; i-- {
-		rows = append(rows, chain[i])
+	for a, b := 0, len(path)-1; a < b; a, b = a+1, b-1 {
+		path[a], path[b] = path[b], path[a]
 	}
-	return rows, entries[leaf].ID
+	return rowsOf(projectContext(path, entries), entries), entries[leaf].ID
+}
+
+// projectContext applies pi's buildContextEntries projection to a root-first
+// entry path: the newest compaction first, then the entries it kept (from
+// firstKeptEntryId up to the compaction), then everything after the
+// compaction. A path without a compaction is returned untouched, and so is one
+// whose firstKeptEntryId is present but names nothing on the path (a truncated
+// file, an older format): dropping history on a guess would be worse than
+// showing it. An EMPTY firstKeptEntryId is not a guess — pi's own projection
+// keeps no pre-compaction entry either when the pointer never latches, so the
+// pre-compaction range is dropped exactly as pi drops it.
+func projectContext(path []int, entries []sessionEntry) []int {
+	compactionIdx := -1
+	for i, idx := range path {
+		if entries[idx].Type == "compaction" {
+			compactionIdx = i // last one wins: pi keeps the newest compaction
+		}
+	}
+	if compactionIdx < 0 {
+		return path
+	}
+	firstKept := entries[path[compactionIdx]].FirstKeptEntryID
+	out := []int{path[compactionIdx]}
+	if firstKept != "" {
+		kept := false
+		for i := 0; i < compactionIdx; i++ {
+			if entries[path[i]].ID == firstKept {
+				kept = true
+			}
+			if kept {
+				out = append(out, path[i])
+			}
+		}
+		if len(out) == 1 {
+			// firstKeptEntryId names nothing on this path: keep the whole
+			// pre-compaction range rather than silently dropping it.
+			out = append(out, path[:compactionIdx]...)
+		}
+	}
+	return append(out, path[compactionIdx+1:]...)
+}
+
+// rowsOf turns a projected entry path into transcript rows, dropping the
+// entries that must not render (the system preamble, entries pi summarizes
+// away) — the caller gets exactly the rows to show.
+func rowsOf(path []int, entries []sessionEntry) []json.RawMessage {
+	rows := make([]json.RawMessage, 0, len(path))
+	for _, idx := range path {
+		if row, ok := transcriptRow(&entries[idx]); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows
 }
 
 // fileCandidates appends the active-file rows to the already-sorted bridge

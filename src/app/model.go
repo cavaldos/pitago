@@ -207,6 +207,9 @@ type Model struct {
 	imgAtts             []imgAttach // input tray: dropped/pasted/@-completed images as [Image N] chips
 	bashRunning         bool        // a "!cmd" runs through pi right now (Esc aborts it, pi parity)
 	retrying            bool        // pi is auto-retrying a failed turn (Esc aborts the retry)
+	compacting          bool        // pi is compacting (no abort_compaction RPC, so Esc cannot cancel it)
+	compactReason       string      // pi's compaction_start reason: manual | threshold | overflow
+	compactAborted      bool        // the last /compact was cancelled by Esc (suppresses its rethrown RPC error)
 	imgSeq              int         // chip counter, never renumbered
 	trayFocus           bool        // cursor moved into the tray (↓ from last input line)
 	imgCursor           int         // selected chip while trayFocus
@@ -430,6 +433,10 @@ type SettingsRefreshMsg struct {
 	Notice string
 	Level  string // thinking change: update sidebar immediately
 	Err    error
+	// CostNotice is pi's compaction/branch billing line. It travels with
+	// Notice because both are appended to the transcript by a command that
+	// reloaded it first (see handlePiOp).
+	CostNotice string
 }
 
 // LoginKeyMsg carries a saved provider key. The keystore write and the

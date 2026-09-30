@@ -87,8 +87,12 @@ func (m Model) petInterval() time.Duration {
 // petLooping reports whether the tick loop has a reason to stay alive. The
 // pet section itself is a reason: a visible block animates and rotates, and
 // the loop is what makes it do so while pi sits idle.
+//
+// m.compacting is one: a manual /compact is issued while idle, where the pet
+// is settled and no other reason keeps the loop running — without it the
+// spinner in the input border would freeze on its first frame.
 func (m Model) petLooping() bool {
-	return m.pet.status.Busy() || m.pet.status.Flashing() ||
+	return m.pet.status.Busy() || m.pet.status.Flashing() || m.compacting ||
 		m.taskActive() || m.SideVisible(SidePet)
 }
 
