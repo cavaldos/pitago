@@ -570,3 +570,44 @@ func TestEdgeScrollStopsAtTranscriptEnd(t *testing.T) {
 			got, m.vp.TotalLineCount()-m.vp.Height)
 	}
 }
+
+func TestDoubleClickWindowSurvivesRelease(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = true
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
+	m.chatLines = []string{"● the quick brown fox"}
+
+	press := tea.MouseMsg{X: 8, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	release := tea.MouseMsg{X: 8, Y: 2, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone}
+
+	m, _, _ = m.updateSelection(press)
+	if m.LastPressAt.IsZero() {
+		t.Fatal("first press must arm the double-click window")
+	}
+	m, _, _ = m.updateSelection(release)
+	if m.LastPressAt.IsZero() {
+		t.Fatal("the release inside a double-click must not disarm the window")
+	}
+}
+
+func TestClickAfterDragIsNotDoubleClick(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Mouse = true
+	m.winW, m.winH = 100, 24
+	m.vp.Width, m.vp.Height = 40, 10
+	m.chatLines = []string{"● alpha", "beta"}
+
+	press := tea.MouseMsg{X: 8, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	m, _, _ = m.updateSelection(press)
+	m, _, _ = m.updateSelection(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	m, _, _ = m.updateSelection(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone})
+	if !m.LastPressAt.IsZero() {
+		t.Fatal("a drag must disarm the double-click window")
+	}
+	m.LastPressAt = time.Now()
+	m, _, _ = m.updateSelection(press)
+	if m.sel.DoubleClick {
+		t.Fatal("a click right after a drag must not read as a double-click")
+	}
+}
