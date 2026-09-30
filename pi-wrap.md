@@ -25,6 +25,9 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 ## src/pirpc (stdlib only: os/exec + encoding/json + bufio)
 
 - Spawn `pi --mode rpc [-c] [--provider X] [--model Y]`, stderr → /tmp/pitago-pi-stderr.log
+- `pitago -ne` / `--no-extensions` forwards pi's own `-ne` to the child, so no discovered,
+  configured or built-in pi extension loads. pitago's `src/builtin` re-implementations are not
+  pi extensions and stay on — the switch only quiets the extension layer, exactly like in pi.
 - Reader: ReadString('\n'), strip \r (per protocol; no Scanner — its 64k buffer is too small, Reader is safe)
 - `type:response` + id → pending chan; everything else → OnEvent (calls prog.Send, thread-safe)
 - Command struct has explicit fields + omitempty, no map[string]any

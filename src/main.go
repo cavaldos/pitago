@@ -30,6 +30,10 @@ func main() {
 	provider := flag.String("provider", "", "pi provider (default from ~/.pi)")
 	modelFlag := flag.String("model", "", "pi model (default from ~/.pi)")
 	noSession := flag.Bool("no-session", false, "don't persist session")
+	// pi's own -ne, forwarded to the child: no discovered, configured or
+	// built-in pi extension loads. pitago's native TUI is unaffected.
+	noExt := flag.Bool("ne", false, "load no pi extensions (same as pi -ne)")
+	flag.BoolVar(noExt, "no-extensions", false, "alias of -ne")
 	mouse := flag.Bool("mouse", true, "mouse support (click sidebar, wheel scroll); --mouse=false keeps native text selection")
 	themeFlag := flag.String("theme", "", "TUI theme: one-dark, gruvbox, catppuccin-mocha… (/theme lists all)")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -76,7 +80,7 @@ func main() {
 	}
 	opts := pirpc.Options{
 		Provider: *provider, Model: *modelFlag,
-		Continue: *cont, NoSession: *noSession, Dir: cwd,
+		Continue: *cont, NoSession: *noSession, NoExtensions: *noExt, Dir: cwd,
 	}
 	// Restore the last model the user picked here, before Spawn: the child
 	// gets --provider/--model, so the first get_state already reports it

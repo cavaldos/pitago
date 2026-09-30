@@ -61,8 +61,13 @@ type Options struct {
 	Model     string // --model
 	Continue  bool   // -c (resume most recent session)
 	NoSession bool   // --no-session
-	Session   string // --session <path|id> (resume exact session)
-	Dir       string // working directory for the pi child (default: ours)
+	// NoExtensions is pitago's -ne / --no-extensions: pi's own switch,
+	// forwarded verbatim so the child loads no discovered/configured/
+	// built-in extension. pitago's re-implemented TUI builtins are
+	// unaffected — they never ran in pi to begin with.
+	NoExtensions bool   // -ne
+	Session      string // --session <path|id> (resume exact session)
+	Dir          string // working directory for the pi child (default: ours)
 }
 
 // piStderrLog captures the pi child's stderr (fresh per spawn; read it
@@ -99,6 +104,9 @@ func Spawn(opt Options) (*Client, error) {
 	}
 	if opt.NoSession {
 		args = append(args, "--no-session")
+	}
+	if opt.NoExtensions {
+		args = append(args, "-ne")
 	}
 	if opt.Session != "" {
 		args = append(args, "--session", opt.Session)

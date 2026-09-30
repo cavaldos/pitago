@@ -122,6 +122,9 @@ go run ./src --provider anthropic --model claude-sonnet-4-20250514
 # Don't persist a session
 go run ./src --no-session
 
+# Load no pi extensions (same as `pi -ne`)
+go run ./src -ne      # or --no-extensions
+
 # Self-update to the latest GitHub release
 go run ./src --update   # or /update inside the app
 

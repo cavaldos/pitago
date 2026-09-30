@@ -183,11 +183,13 @@ func TestSpawnArgvContract(t *testing.T) {
 			[]string{"fakepi", "--mode", "rpc", "-c"}},
 		{"exact session", pirpc.Options{Session: "/tmp/s.jsonl"},
 			[]string{"fakepi", "--mode", "rpc", "--session", "/tmp/s.jsonl"}},
+		{"no extensions", pirpc.Options{NoExtensions: true},
+			[]string{"fakepi", "--mode", "rpc", "-ne"}},
 		{"provider and model", pirpc.Options{Provider: "fake-provider", Model: "fake-model"},
 			[]string{"fakepi", "--mode", "rpc", "--provider", "fake-provider", "--model", "fake-model"}},
-		{"everything", pirpc.Options{Continue: true, NoSession: true, Session: "s1",
+		{"everything", pirpc.Options{Continue: true, NoSession: true, NoExtensions: true, Session: "s1",
 			Provider: "p", Model: "m"},
-			[]string{"fakepi", "--mode", "rpc", "-c", "--no-session", "--session", "s1",
+			[]string{"fakepi", "--mode", "rpc", "-c", "--no-session", "-ne", "--session", "s1",
 				"--provider", "p", "--model", "m"}},
 	}
 	for _, tc := range cases {
