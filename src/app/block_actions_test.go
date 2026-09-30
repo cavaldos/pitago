@@ -337,3 +337,63 @@ func TestChatRowToBlockIgnoresBlankRows(t *testing.T) {
 		t.Errorf("blank row %d resolved to block %d, want -1", rel, got)
 	}
 }
+
+// GFM allows a table with no outer pipes. It renders as a table in the chat,
+// so the copy menu must offer it — requiring a leading "|" silently dropped it
+// from the menu and made /copy-tables copy nothing.
+func TestExtractTablesAcceptsBothPipeForms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"with outer pipes",
+			"| Name | Status |\n|---|---|\n| Ada | ok |",
+			"| Name | Status |\n|---|---|\n| Ada | ok |",
+		},
+		{
+			"without outer pipes",
+			"Name | Status\n--- | ---\nAda | ok",
+			"Name | Status\n--- | ---\nAda | ok",
+		},
+		{
+			"alignment colons without outer pipes",
+			"Name | Status\n:--- | ---:\nAda | ok",
+			"Name | Status\n:--- | ---:\nAda | ok",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractTables(tc.in)
+			if len(got) != 1 {
+				t.Fatalf("want 1 table, got %d: %q", len(got), got)
+			}
+			if got[0] != tc.want {
+				t.Errorf("table = %q, want %q", got[0], tc.want)
+			}
+		})
+	}
+}
+
+// A pipe in prose is not a table; the separator row is what makes it one.
+func TestExtractTablesIgnoresProseWithPipes(t *testing.T) {
+	md := "Use `foo | bar` in the shell.\n\nNo table here at all."
+	if got := extractTables(md); len(got) != 0 {
+		t.Errorf("prose containing a pipe must not parse as a table, got %q", got)
+	}
+}
+
+// Two adjacent tables must not have the first swallow the second's header.
+func TestExtractTablesSeparatesAdjacentTables(t *testing.T) {
+	md := "A | B\n--|--\n1 | 2\n\nC | D\n--|--\n3 | 4"
+	got := extractTables(md)
+	if len(got) != 2 {
+		t.Fatalf("want 2 tables, got %d: %q", len(got), got)
+	}
+	if got[0] != "A | B\n--|--\n1 | 2" {
+		t.Errorf("first table = %q", got[0])
+	}
+	if got[1] != "C | D\n--|--\n3 | 4" {
+		t.Errorf("second table = %q", got[1])
+	}
+}
