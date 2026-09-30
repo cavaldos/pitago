@@ -611,3 +611,46 @@ func TestClickAfterDragIsNotDoubleClick(t *testing.T) {
 		t.Fatal("a click right after a drag must not read as a double-click")
 	}
 }
+
+// A full reset (ESC[0m) inside the selected range clears the reverse video the
+// highlight just enabled, so the highlight used to stop mid-row at the next
+// reset; an explicit colour could likewise override the inverted foreground.
+// The selected range therefore carries no escapes of its own.
+func TestHighlightSpanCarriesNoEscapes(t *testing.T) {
+	line := "plain " + "\x1b[0m" + "grey " + "\x1b[38;5;252m" + "more\x1b[0m" + " tail"
+
+	got := highlightLine(line, 0, visibleWidth(line))
+	k, j := strings.Index(got, "\x1b[7m"), strings.Index(got, "\x1b[27m")
+	if k < 0 || j < 0 {
+		t.Fatalf("no inverse span emitted: %q", got)
+	}
+	if inside := got[k+4 : j]; strings.Contains(inside, "\x1b") {
+		t.Errorf("selected span carries escapes that can end or alter the highlight: %q", inside)
+	}
+	if plain := stripSelectionANSI(got); plain != "plain grey more tail" {
+		t.Errorf("visible text changed: %q", plain)
+	}
+}
+
+// The same escape is still preserved when it falls outside the selected
+// range — the unselected columns of a line keep their styling.
+func TestHighlightKeepsEscapesOutsideSelectedRange(t *testing.T) {
+	line := "\x1b[38;5;252mhead\x1b[0m selected text tail"
+	start := visibleWidth("head ")
+
+	got := highlightLine(line, start, start+visibleWidth("selected text"))
+	if !strings.Contains(got, "\x1b[38;5;252m") {
+		t.Errorf("styling outside the selection was destroyed: %q", got)
+	}
+	if plain := stripSelectionANSI(got); plain != "head selected text tail" {
+		t.Errorf("visible text changed: %q", plain)
+	}
+	// The highlight must still cover exactly the selected words.
+	k, j := strings.Index(got, "\x1b[7m"), strings.Index(got, "\x1b[27m")
+	if k < 0 || j < 0 {
+		t.Fatalf("no inverse span emitted: %q", got)
+	}
+	if inside := strings.TrimSpace(stripSelectionANSI(got[k+4 : j])); inside != "selected text" {
+		t.Errorf("inverse span covers %q, want %q", inside, "selected text")
+	}
+}
