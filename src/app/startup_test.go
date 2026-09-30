@@ -451,10 +451,11 @@ func TestConnectedMsgClearsConnErr(t *testing.T) {
 	}
 }
 
-// Regression: latching the welcome header in the connect handler suppressed it
-// on the NORMAL path, because a fast pi connects within the first frames —
-// before the header was ever painted. The header must survive a fast connect
-// with an empty session.
+// Regression: the welcome header used to latch after ONE paint, so a fast pi
+// (which answers get_state within the first frames) blanked the chat one frame
+// after connect — the PITAGO banner showed for a moment and then vanished. The
+// header must survive a fast connect, and keep painting for the whole empty
+// session.
 func TestWelcomeHeaderSurvivesFastConnect(t *testing.T) {
 	var st pirpc.State
 	st.Model.ID = "m"
@@ -468,23 +469,63 @@ func TestWelcomeHeaderSurvivesFastConnect(t *testing.T) {
 	if !m.connected {
 		t.Fatal("connect did not latch the connected flag")
 	}
-	if out := stripANSI(m.renderBlocks()); !strings.Contains(out, "█████") {
-		t.Fatalf("welcome header lost on the normal startup path:\n%s", out)
-	}
-	if !m.started {
-		t.Fatal("header drawn after a connect must latch the welcome")
+	for i := range 3 { // every later paint, not just the next one
+		out := stripANSI(m.renderBlocks())
+		if !strings.Contains(out, "█████") {
+			t.Fatalf("welcome header lost on paint %d of an empty session:\n%s", i, out)
+		}
 	}
 }
 
-// ...and once it has latched, clearing a mid-session error must not bring the
-// logo back.
-func TestWelcomeHeaderDoesNotReturnAfterRecovery(t *testing.T) {
+// The header goes away with the first transcript block, and only then: that is
+// what keeps a mid-session error from resurrecting it.
+func TestWelcomeHeaderEndsWithFirstBlock(t *testing.T) {
+	var st pirpc.State
+	st.Model.ID = "m"
+	m := Model{AppVersion: "v0.0.1"}
+	m.vp = viewport.New(80, 20)
+	m.Update(connectedMsg{state: st})
+	m.AddBlock(Block{Kind: "assistant", Text: "hi"})
+	if out := stripANSI(m.renderBlocks()); strings.Contains(out, "█████") {
+		t.Fatalf("welcome header survived the first block:\n%s", out)
+	}
+}
+
+// A session reset empties the transcript, and pi greets an empty session with
+// the banner again — so Ctrl+N brings the logo back.
+func TestWelcomeHeaderReturnsOnSessionReset(t *testing.T) {
+	var st pirpc.State
+	st.Model.ID = "m"
+	m := Model{AppVersion: "v0.0.1"}
+	m.vp = viewport.New(80, 20)
+	tm, _ := m.Update(connectedMsg{state: st})
+	m = tm.(Model)
+	m.AddBlock(Block{Kind: "assistant", Text: "hi"})
+	if out := stripANSI(m.renderBlocks()); strings.Contains(out, "█████") {
+		t.Fatalf("banner shown next to a block:\n%s", out)
+	}
+	tm, _ = m.Update(SessionResetMsg{})
+	m = tm.(Model)
+	if len(m.blocks) != 0 {
+		t.Fatalf("session reset left %d blocks", len(m.blocks))
+	}
+	if out := stripANSI(m.renderBlocks()); !strings.Contains(out, "█████") {
+		t.Fatalf("new empty session has no banner:\n%s", out)
+	}
+}
+
+// A startup error paints the error line, not the banner; the banner comes back
+// once the retry lands and the chat is genuinely empty.
+func TestWelcomeHeaderReturnsAfterStartupRecovery(t *testing.T) {
 	var st pirpc.State
 	st.Model.ID = "m"
 	m := Model{AppVersion: "v0.0.1", connErr: "pi: get_state timed out"}
 	m.vp = viewport.New(80, 20)
 	if out := stripANSI(m.renderBlocks()); !strings.Contains(out, "get_state timed out") {
 		t.Fatal("test setup: the error line is not rendered")
+	}
+	if out := stripANSI(m.renderBlocks()); strings.Contains(out, "█████") {
+		t.Fatalf("banner must not compete with the error line:\n%s", out)
 	}
 	tm, _ := m.Update(connectedMsg{state: st}) // the retry finally landed
 	m = tm.(Model)
@@ -494,11 +535,8 @@ func TestWelcomeHeaderDoesNotReturnAfterRecovery(t *testing.T) {
 	if out := stripANSI(m.renderBlocks()); strings.Contains(out, "get_state timed out") {
 		t.Fatalf("error line survived a successful connect:\n%s", out)
 	}
-	// The empty chat is a real empty chat here, so the header may show once
-	// more — what must not happen is it coming back on later paints.
-	stripANSI(m.renderBlocks())
-	if out := stripANSI(m.renderBlocks()); strings.Contains(out, "█████") {
-		t.Fatalf("welcome header reappeared after recovery:\n%s", out)
+	if out := stripANSI(m.renderBlocks()); !strings.Contains(out, "█████") {
+		t.Fatalf("empty session after recovery has no banner:\n%s", out)
 	}
 }
 

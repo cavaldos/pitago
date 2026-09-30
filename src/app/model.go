@@ -175,8 +175,7 @@ type Model struct {
 	Dialogs             []*Dialog
 	connErr             string
 	probe               startupProbe            // startup readiness budget (zero = defaultProbe)
-	connected           bool                    // a connect landed: gates the welcome-header latch
-	started             bool                    // welcome header already painted post-connect
+	connected           bool                    // a connect landed (session identity/state came from pi)
 	HideThinking        bool                    // /settings: skip thinking blocks in chat (pi parity, pitago-local)
 	ShowImages          bool                    // terminal.showImages
 	ImageWidthCells     int                     // terminal.imageWidthCells

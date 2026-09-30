@@ -92,20 +92,20 @@ func (m *Model) renderBlocks() string {
 	if cw < 10 {
 		cw = 10
 	}
-	if len(m.blocks) == 0 && m.connErr == "" && !m.started {
-		// fresh chat: pi-style startup header (logo + resources + ready).
+	if len(m.blocks) == 0 && m.connErr == "" {
+		// Empty chat: pi-style startup header (logo + resources + ready).
 		//
-		// The latch belongs HERE, next to the paint, not in the connect
-		// handler: a fast pi answers get_state within the first frames, so a
-		// handler-side latch means the header is suppressed before it was
-		// ever drawn. Pre-connect paints keep showing it (the user is
-		// watching "connecting to pi…"), and the first paint AFTER a connect
-		// has landed shows it once and latches — so a later connErr that
-		// clears can never bring the logo back mid-session.
+		// It is painted on EVERY empty-chat paint, pre- and post-connect,
+		// and disappears with the first transcript block. It used to latch
+		// after one paint ("shown once, never again"), which blanked the
+		// chat one frame after pi connected: the latch fired on the very
+		// paint that drew the logo, the next paint had nothing to draw, and
+		// the user saw the PITAGO banner for a moment and then an empty
+		// pane. A session only leaves the empty state through a block or a
+		// session reset, and a reset is exactly when pi shows the banner
+		// again — so "no blocks and no error" is the whole condition, and
+		// no latch is needed.
 		b.WriteString(m.welcomeView(w))
-		if m.connected {
-			m.started = true
-		}
 	}
 	if m.connErr != "" {
 		b.WriteString(gutter(errStyle.Render("×"), errStyle.Render("! "+m.connErr)+"\n"))
