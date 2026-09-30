@@ -1000,6 +1000,21 @@ func TestTrackSubagentEndSurface(t *testing.T) {
 }
 
 func TestSubagentXPromptHandleFallback(t *testing.T) {
+	// Pin the host table. subagentActionPrompt only reaches the Orca
+	// interrupt grammar through surfaceCtlForHandle, which skips a host
+	// whose available() reports the CLI is missing — so without this the
+	// first assertion only holds on a machine that happens to have orca and
+	// cmux installed. The real claim/hints logic is still exercised; only
+	// the "is the binary on PATH" probe is neutralised.
+	old := surfaceControllers
+	defer func() { surfaceControllers = old }()
+	surfaceControllers = func() []surfaceCtl {
+		orca := orcaSurfaceCtl()
+		orca.available = func() error { return nil }
+		cmux := cmuxSurfaceCtl()
+		cmux.available = func() error { return nil }
+		return []surfaceCtl{orca, cmux}
+	}
 	text, _ := subagentActionPrompt("x", SubagentRow{ID: "c1", Name: "w", Interactive: true, Surface: "term_abc"})
 	if !strings.Contains(text, "--terminal term_abc --interrupt") || !strings.Contains(text, "kill -INT") {
 		t.Errorf("prompt = %q", text)
