@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pitago/src/components/clipboard"
 )
 
 // stubClip swaps the clipboard write for a recorder, restoring it after.
@@ -201,5 +203,43 @@ func TestNotificationPayloadIsNotTruncated(t *testing.T) {
 	}
 	if len(d.Options[0]) >= len(long) {
 		t.Fatalf("row should still be truncated for display, got %d cells", len(d.Options[0]))
+	}
+}
+
+// The dialog-copy seam must delegate to the shared clipboard transport, so
+// Ctrl+Y from the trajectory/notification/tree dialogs lands in the same
+// place as a drag-select: OSC 52 in a hosted session, platform fallbacks
+// otherwise. Asserted against the seam's real body, not a stub — every other
+// test here stubs clipWrite, so only this one can catch it going back to the
+// system clipboard directly.
+func TestClipWriteRoutesThroughClipboardTransport(t *testing.T) {
+	var got []string
+	prev := clipboard.Transport
+	clipboard.Transport = func(text string) clipboard.Status {
+		got = append(got, text)
+		return clipboard.Status{Channel: clipboard.Osc52, Bytes: len(text), Chars: len([]rune(text))}
+	}
+	t.Cleanup(func() { clipboard.Transport = prev })
+
+	if err := clipWrite("hello"); err != nil {
+		t.Fatalf("an OSC 52 delivery is a success, got %v", err)
+	}
+	if len(got) != 1 || got[0] != "hello" {
+		t.Fatalf("dialog copy bypassed the shared transport: %q", got)
+	}
+}
+
+// A transport that cannot deliver must surface its reason, because the footer
+// hint reads straight from this error.
+func TestClipWriteSurfacesTransportFailure(t *testing.T) {
+	prev := clipboard.Transport
+	clipboard.Transport = func(string) clipboard.Status {
+		return clipboard.Status{Channel: clipboard.None, Err: errors.New("no clipboard backend available")}
+	}
+	t.Cleanup(func() { clipboard.Transport = prev })
+
+	err := clipWrite("x")
+	if err == nil || !strings.Contains(err.Error(), "no clipboard backend") {
+		t.Fatalf("transport failure must reach the footer hint, got %v", err)
 	}
 }
