@@ -39,6 +39,8 @@ var (
 	tableSepRe   = regexp.MustCompile(`(?m)^\s*\|?[\s:|-]+\|?\s*$`)
 	boldRe       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	italicRe     = regexp.MustCompile(`\*([^*]+)\*`)
+	linkRe       = regexp.MustCompile(`\[([^\]]+)\]\([^)]*\)`)
+	autolinkRe   = regexp.MustCompile(`<(https?://[^>\s]+|mailto:[^>\s]+)>`)
 	headingRe    = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 )
 
@@ -106,6 +108,12 @@ func toPlainText(markdown string) string {
 	s = strings.Join(lines, "\n")
 	s = boldRe.ReplaceAllString(s, "$1")
 	s = italicRe.ReplaceAllString(s, "$1")
+	// A link's visible text is its label; the destination is chrome. Leaving
+	// the [label](url) form here would make "Copy plain text" hand over
+	// Markdown instead of what the reader actually sees. An autolink is all
+	// URL by definition, so unwrap it to the bare address.
+	s = linkRe.ReplaceAllString(s, "$1")
+	s = autolinkRe.ReplaceAllString(s, "$1")
 	s = headingRe.ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
 }
