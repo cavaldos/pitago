@@ -227,20 +227,31 @@ func TestDiacriticTableOrder(t *testing.T) {
 }
 
 func TestPlaceholderRowMatchesSpecVector(t *testing.T) {
-	// kitty docs' own 2x2 example for image id 42, first row:
-	// printf "\e[38;5;42m\U10EEEE\U0305\U0305\U10EEEE\U0305\U030D\e[39m"
-	want := "\x1b[38;5;42m\U0010EEEE\u0305\u0305\U0010EEEE\u0305\u030D\x1b[39m"
-	got, ok := PlaceholderRow(42, 0, 2)
+	// kitty docs' own inheritance example, a 2 rows by 3 columns grid for
+	// image id 42: the first cell of each row names the row, the rest
+	// inherit row and the next column from the cell to the left.
+	// printf "\e[38;5;42m\U10EEEE\U0305\U10EEEE\U10EEEE\e[39m"
+	want := "\x1b[38;5;42m\U0010EEEE\u0305\U0010EEEE\U0010EEEE\x1b[39m"
+	got, ok := PlaceholderRow(42, 0, 3)
 	if !ok || got != want {
 		t.Fatalf("row = %q,%v want %q", got, ok, want)
 	}
-	got1, ok := PlaceholderRow(42, 1, 2)
-	want1 := "\x1b[38;5;42m\U0010EEEE\u030D\u0305\U0010EEEE\u030D\u030D\x1b[39m"
+	got1, ok := PlaceholderRow(42, 1, 3)
+	want1 := "\x1b[38;5;42m\U0010EEEE\u030D\U0010EEEE\U0010EEEE\x1b[39m"
 	if !ok || got1 != want1 {
 		t.Fatalf("row1 = %q,%v want %q", got1, ok, want1)
 	}
 	if _, ok := PlaceholderRow(42, 0, 0); ok {
 		t.Fatal("zero cols must fail")
+	}
+	// One codepoint per cell, not three: this is the text every scrolled
+	// repaint re-sends to the terminal.
+	one, _ := PlaceholderRow(42, 0, 60)
+	if n := strings.Count(one, PlaceholderChar); n != 60 {
+		t.Fatalf("row must hold 60 placeholder cells, got %d", n)
+	}
+	if n := strings.Count(one, "\u0305"); n != 1 {
+		t.Fatalf("only the first cell may name a diacritic, got %d", n)
 	}
 }
 

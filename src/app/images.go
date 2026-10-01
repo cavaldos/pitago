@@ -8,11 +8,12 @@
 // transmit-and-place (a=T/a=p without U=1) was tried first and smeared on
 // scroll: screen-cell placements outlive the text written over them.
 //
-// The pixel payload never travels inside the frame. It is a one-shot
-// terminal side effect, written straight to ImageOut the first time a
-// digest is rendered, while the frame itself carries only the ~50 byte
-// place plus placeholder cells. Both of the alternatives were tried and
-// both are worse:
+// Neither the pixel payload nor the place sequence travels inside the
+// frame. Both are one-shot terminal side effects, written straight to
+// ImageOut the first time a digest is rendered at a given width, while the
+// frame itself carries only placeholder cells — one codepoint each, which
+// is what a repaint on every scrolled row can afford. The alternatives
+// were tried and both are worse:
 //
 //   - Payload in every frame (what this used to do): scrolling moves the
 //     image line to a new row index, the renderer rewrites it, and
@@ -24,6 +25,10 @@
 //     passes and while a dialog covers the chat, so the upload could be
 //     "sent" to a frame nobody saw and every later frame placed an image
 //     id the terminal had never received.
+//   - The place sequence in the frame: it is small, but re-placing on
+//     every repaint makes the terminal replace the virtual placement each
+//     time, which is image work per scrolled row for no gain — a
+//     placement is a stored prototype that placeholder cells keep using.
 //
 // Writing from the render is safe: Bubble Tea v1 drives the renderer from
 // the same event-loop goroutine that calls View, with no ticker, so the
@@ -198,14 +203,22 @@ func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 			continue
 		}
 		upload := terminal_image.Upload(data, id)
-		first := terminal_image.PlaceUnicode(id, c, r) + firstRow
+		place := terminal_image.PlaceUnicode(id, c, r)
+		first := place + firstRow
 		if ImageOut == nil {
+			// No raw writer: keep the whole sequence in the frame. Correct,
+			// just not cheap — main sets ImageOut.
 			first = upload + first
-		} else if !sent {
-			// One shot: the payload leaves the frame here and the frame
-			// never carries it again, so a scrolled repaint re-places the
-			// image instead of re-transmitting (and deleting) it.
-			_, _ = io.WriteString(ImageOut, upload)
+		} else {
+			// One shot per digest (payload) and per digest+width (place,
+			// whose geometry rides along). After this the frame only ever
+			// carries cells, so a scrolled repaint re-anchors the image
+			// instead of re-transmitting or re-placing it.
+			if !sent {
+				_, _ = io.WriteString(ImageOut, upload)
+			}
+			_, _ = io.WriteString(ImageOut, place)
+			first = firstRow
 		}
 		lines := []string{first}
 		for i := 1; i < r; i++ {

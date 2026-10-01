@@ -261,10 +261,20 @@ func Diacritic(n int) (rune, bool) {
 
 // PlaceholderRow returns one row of a U=1 placeholder grid for image id:
 // the foreground color encodes the id (8-bit form, so ids must stay under
-// 256) and every cell carries explicit row+column diacritics — no reliance
-// on the terminal's inheritance heuristics. Combining marks are zero-width,
-// so the row measures exactly cols cells. ok=false when the address exceeds
-// the diacritic table (caller falls back to □).
+// 256), the first cell carries the row diacritic, and the rest of the row
+// carries none at all — the spec inherits the row and the next column from
+// the placeholder to the left, so a row is 1 codepoint per cell instead of
+// 3. That is a third of the text to parse on every repaint, and a repaint
+// happens on every scrolled row.
+//
+// The inheritance rule is documented as failing for horizontal scrolling
+// and overlapping images. Neither can happen here: a row is written
+// left-to-right in one line, image rows are stacked and never overlap, and
+// the grid is rebuilt from scratch whenever the width changes (see
+// imageLines' width-keyed cache), which is the only thing a horizontal
+// reflow would change. Combining marks are zero-width, so the row measures
+// exactly cols cells. ok=false when the row exceeds the diacritic table
+// (caller falls back to □).
 func PlaceholderRow(id uint64, row, cols int) (string, bool) {
 	rd, ok := Diacritic(row)
 	if !ok || cols < 1 {
@@ -272,14 +282,10 @@ func PlaceholderRow(id uint64, row, cols int) (string, bool) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\x1b[38;5;%dm", id&0xff)
-	for c := 0; c < cols; c++ {
-		cd, ok := Diacritic(c)
-		if !ok {
-			return "", false
-		}
-		b.WriteString(PlaceholderChar)
-		b.WriteRune(rd)
-		b.WriteRune(cd)
+	b.WriteString(PlaceholderChar)
+	b.WriteRune(rd)
+	if cols > 1 {
+		b.WriteString(strings.Repeat(PlaceholderChar, cols-1))
 	}
 	b.WriteString("\x1b[39m")
 	return b.String(), true

@@ -50,8 +50,8 @@ func captureImageOut(t *testing.T) *bytes.Buffer {
 	return buf
 }
 
-// The frame carries place + placeholders only; the payload goes out of band
-// exactly once, and every later render of the same image at the same width
+// The frame carries placeholder cells only; the payload and the place go
+// out of band, and every later render of the same image at the same width
 // is byte-identical.
 func TestImageLinesPlaceInFrameAndUploadOutOfBand(t *testing.T) {
 	out := captureImageOut(t)
@@ -63,17 +63,20 @@ func TestImageLinesPlaceInFrameAndUploadOutOfBand(t *testing.T) {
 	if len(first) != 10 {
 		t.Fatalf("1x1 png at width 20 reserves 10 rows, got %d", len(first))
 	}
-	// The payload must not be in the frame: a scrolled repaint rewrites that
-	// line, and re-transmitting a known id makes the terminal delete the
-	// image and its placements before re-placing them.
+	// Neither the payload nor the place may be in the frame: a scrolled
+	// repaint rewrites that line, and re-transmitting a known id makes the
+	// terminal delete the image and its placements before re-placing them.
 	if strings.Contains(strings.Join(first, "\n"), "a=t") {
 		t.Fatal("the frame must not carry the payload")
+	}
+	if strings.Contains(strings.Join(first, "\n"), "a=p") {
+		t.Fatal("the frame must not carry the place")
 	}
 	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
 		t.Fatalf("payload must reach the terminal once, got %d: %q", n, out.String()[:120])
 	}
-	if !strings.Contains(first[0], "a=p,q=2,U=1") || !strings.Contains(first[0], "c=20,r=10") {
-		t.Fatalf("first row must place with geometry: %q", first[0][:160])
+	if !strings.Contains(out.String(), "a=p,q=2,U=1") || !strings.Contains(out.String(), "c=20,r=10") {
+		t.Fatalf("place must carry the geometry: %q", out.String()[:160])
 	}
 	// Rows carry SGR color around the cells: reset at the end, placeholders
 	// just before it; continuations are pure placeholder rows.
@@ -92,8 +95,8 @@ func TestImageLinesPlaceInFrameAndUploadOutOfBand(t *testing.T) {
 	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
 		t.Fatalf("re-render must not re-upload, got %d", n)
 	}
-	if !strings.Contains(second[0], "a=p,q=2,U=1") {
-		t.Fatalf("second render must still place: %q", second[0][:120])
+	if n := strings.Count(out.String(), "a=p"); n != 1 {
+		t.Fatalf("re-render at the same width must not re-place, got %d", n)
 	}
 	if strings.Join(second, "\n") != strings.Join(first, "\n") {
 		t.Fatal("renders of one image must be byte-identical, or the renderer rewrites the line every frame")
@@ -118,26 +121,30 @@ func TestImageLinesSurviveAnUnpaintedRender(t *testing.T) {
 	m.vp.YOffset = 0
 	m.vp.SetContent("filler\nfiller\nfiller")
 	dropped := m.imageLines([]chat.Image{img}, 50)
-	if !strings.Contains(strings.Join(dropped, "\n"), "a=p") {
-		t.Fatal("the dropped render must still have placed")
+	if !strings.Contains(strings.Join(dropped, "\n"), terminal_image.PlaceholderChar) {
+		t.Fatal("the dropped render must still have produced the cells")
 	}
-	// The payload went straight to the terminal, so it does not matter that
-	// the frame it was rendered in was thrown away.
+	// The payload and the place went straight to the terminal, so it does
+	// not matter that the frame they were rendered in was thrown away.
 	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
 		t.Fatalf("payload must reach the terminal once, got %d", n)
 	}
-	// Now the image scrolls into the painted window.
+	if n := strings.Count(out.String(), "a=p"); n != 1 {
+		t.Fatalf("place must reach the terminal once, got %d", n)
+	}
+	// Now the image scrolls into the painted window: cells only, no escapes
+	// that would re-transmit or re-place.
 	painted := m.imageLines([]chat.Image{img}, 50)
 	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
 		t.Fatalf("scrolled-into-view render must not re-upload, got %d", n)
 	}
-	if !strings.Contains(painted[0], "a=p,q=2,U=1") {
-		t.Fatalf("scrolled-into-view render lost the place: %q", painted[0][:120])
+	if strings.Contains(strings.Join(painted, "\n"), "a=") {
+		t.Fatalf("scrolled-into-view render must carry no escape: %q", painted[0][:120])
 	}
 }
 
 // The flicker regression: a repaint that changes the line (scrolling moves
-// the image to another row index) must re-place without re-transmitting.
+// the image to another row index) must re-anchor without re-transmitting.
 // Re-transmitting a known id makes the terminal delete that image and all
 // its placements, so the image blinks out and back on every scrolled row.
 func TestImageRepaintNeverRetransmits(t *testing.T) {
@@ -146,10 +153,16 @@ func TestImageRepaintNeverRetransmits(t *testing.T) {
 	m := kittyTestModel(img)
 	m.vp = viewport.New(50, 20)
 	m.imageLines([]chat.Image{img}, 50)
-	// A repaint at a different width, as a resize or a narrower frame does.
-	m.imageLines([]chat.Image{img}, 30)
+	// A repaint at a different width, as a resize or a narrower frame does:
+	// the geometry changed, so the place is re-issued — but the payload
+	// still must not travel a second time. (10 cells is below the model's
+	// ImageWidthCells of 20, so the width really changes.)
+	m.imageLines([]chat.Image{img}, 10)
 	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
 		t.Fatalf("resize must not re-transmit the payload, got %d", n)
+	}
+	if n := strings.Count(out.String(), "a=p"); n != 2 {
+		t.Fatalf("resize must re-place once for the new geometry, got %d", n)
 	}
 }
 
