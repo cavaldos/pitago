@@ -239,7 +239,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			clearCopyHintMsg,
 			petTickMsg, petFlashMsg, streamFlushMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
-			SettingsMsg, SettingsRefreshMsg, MarketMsg, PluginChangeMsg,
+			SettingsMsg, SettingsRefreshMsg, MarketMsg, MarketSearchMsg,
+			MarketStarsMsg, MarketSortMsg, PluginChangeMsg, PluginTickMsg,
 			LoginSyncedMsg, LoginReloadMsg, OAuthGoneMsg, SettingWrittenMsg,
 			LoginSwitchMsg, LoginDeleteMsg, LoginRenameOpenMsg, LogoutDoneMsg,
 			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg:
@@ -1226,27 +1227,151 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.pollCmds()
 
+	case MarketSearchMsg:
+		// Debounced keystroke: fire at most one remote search, and only
+		// while the hub still shows the query the user typed.
+		return m, m.marketSearchCmd(msg.Query)
+
 	case MarketMsg:
-		marketInflight = false
-		if msg.Err != nil {
-			m.MarketErr = Short(msg.Err.Error(), 80)
-			m.AddBlock(Block{Kind: "notice", Text: "marketplace failed: " + m.MarketErr, Err: true})
-		} else if msg.Append {
-			m.Market = append(m.Market, msg.Entries...)
-			m.MarketErr = ""
-			marketCacheData, marketCacheAt, marketTotal = m.Market, time.Now(), msg.Total
-			m.Status = "ready"
-		} else {
-			m.Market, m.MarketErr = msg.Entries, ""
-			marketCacheData, marketCacheAt, marketTotal = msg.Entries, time.Now(), msg.Total
-			m.Status = "ready"
+		q := marketQuery(msg.Query)
+		// a superseded result must not unlatch the fetch the user is
+		// actually waiting on
+		if q == marketInflightQuery {
+			marketInflight = false
 		}
-		m.reloadHubRows(PsecMarket)
-		m.Refresh()
+		visible := q == m.MarketQuery() // hub shows this page? (browse "" counts)
+		switch {
+		case msg.Err != nil:
+			// only the page on screen reports; a search the user typed
+			// past failed quietly and must not litter the chat
+			if visible {
+				m.MarketErr = Short(msg.Err.Error(), 80)
+				m.AddBlock(Block{Kind: "notice", Text: "marketplace failed: " + m.MarketErr, Err: true})
+				m.refreshHubSection(PsecMarket)
+				m.Refresh()
+			}
+		default:
+			// warm the cache first: a result for a query the user has
+			// already typed past is still worth keeping
+			entries, _, _ := marketCached(q)
+			if msg.Append {
+				marketStore(q, append(append([]MarketEntry{}, entries...), msg.Entries...), msg.More)
+			} else {
+				marketStore(q, msg.Entries, msg.More)
+			}
+			if !msg.Append {
+				// a fresh page has to be re-ordered by stars
+				delete(marketSorted, q)
+			}
+			if visible {
+				m.MarketErr = "" // only the page on screen owns the error state
+				if msg.Append {
+					m.Market = append(m.Market, msg.Entries...)
+				} else {
+					m.Market = msg.Entries
+				}
+				marketMore = msg.More
+				m.Status = "ready"
+				m.refreshHubSection(PsecMarket)
+				m.Refresh()
+			}
+		}
+		// only the page on screen orders itself; a typed search keeps
+		// npm's relevance ranking. The sort runs FIRST: it must claim
+		// the head of the page before the window hydration latches
+		// those same repos busy.
+		cmd := m.hydrateMarketStarsCmd(m.hubDialog())
+		if visible {
+			cmd = tea.Batch(m.marketSortCmd(q), cmd)
+		}
+		return m, cmd
+
+	case MarketSortMsg:
+		// Star counts that reorder the browse page. Same bookkeeping as
+		// the plain hydration batch: hits resolve, misses go bad.
+		q := marketQuery(msg.Query)
+		for repo, n := range msg.Stars {
+			marketStars[repo] = n
+			delete(marketStarsBad, repo)
+			delete(marketStarsBusy, repo)
+		}
+		for _, repo := range msg.Asked {
+			if _, ok := msg.Stars[repo]; !ok {
+				marketStarsBad[repo] = true // no stars upstream: never retry
+			}
+			delete(marketStarsBusy, repo)
+		}
+		for i, e := range m.Market {
+			if e.Repo == "" || e.StarsKnown {
+				continue
+			}
+			if n, ok := marketStars[e.Repo]; ok {
+				m.Market[i].Stars, m.Market[i].StarsKnown = n, true
+			}
+		}
+		if q != m.MarketQuery() {
+			return m, nil // the user typed on: the cache is warm, list untouched
+		}
+		marketSorted[q] = true
+		m.Status = "ready"
+		// reorder + repaint in one step: even when the order holds, the
+		// rows just gained their star chips
+		m.sortMarketVisible()
+		return m, nil
+
+	case MarketStarsMsg:
+		// A miss is judged against this batch's own request list: a repo
+		// another in-flight batch asked for is none of our business.
+		patched := false
+		for repo, n := range msg.Stars {
+			marketStars[repo] = n
+			delete(marketStarsBad, repo)
+			delete(marketStarsBusy, repo)
+		}
+		for _, repo := range msg.Asked {
+			if _, ok := msg.Stars[repo]; !ok {
+				marketStarsBad[repo] = true // no stars upstream: never retry
+			}
+			delete(marketStarsBusy, repo)
+		}
+		for i, e := range m.Market {
+			if e.Repo == "" || e.StarsKnown {
+				continue
+			}
+			if n, ok := marketStars[e.Repo]; ok {
+				m.Market[i].Stars, m.Market[i].StarsKnown = n, true
+				patched = true
+			}
+		}
+		if patched {
+			m.refreshHubSection(PsecMarket)
+			m.Refresh()
+		}
+		return m, nil
+
+	case PluginTickMsg:
+		// Spinner frame for the running plugin op, plus the self-clearing
+		// hub note. Both live in the ROWS and the section header, so each
+		// frame has to rebuild them: a bare Refresh() would freeze the
+		// glyph and the elapsed counter. The chain stops once nothing is
+		// running and no note is showing.
+		switch {
+		case m.plugBusyAction != "":
+			m.plugBusyFrame++
+			m.reloadHubRows("")
+			m.Refresh()
+			return m, pluginTickCmd()
+		case m.plugNote != "" && !time.Now().After(m.plugNoteHide):
+			return m, pluginTickCmd() // still inside the note's window
+		case m.plugNote != "":
+			m.clearPlugNote()
+		}
 		return m, nil
 
 	case PluginChangeMsg:
 		pluginCacheAt = time.Time{} // force getPlugins to refetch
+		// the op is over: stop the spinner on both paths, success or fail
+		m.plugBusyAction, m.plugBusySpec, m.plugBusyAt, m.plugBusyFrame = "", "", time.Time{}, 0
 		m.Plugins = getPlugins()
 		if msg.Err != nil {
 			detail := msg.Out
@@ -1256,18 +1381,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AddBlock(Block{Kind: "notice",
 				Text: fmt.Sprintf("%s %s failed: %s", msg.Action, msg.Spec, detail), Err: true})
 			m.Status = "ready"
+			// the hub is modal: the chat notice above is invisible until
+			// it closes, so the result also lands inside the dialog
+			m.setPlugNote("✗ "+msg.Action+" "+msg.Spec+" failed: "+shortOut([]byte(detail)), plugNoteResultWindow)
 			m.reloadHubRows("")
 			m.Refresh()
-			return m, nil
+			return m, pluginTickCmd()
 		}
 		verb := "installed"
 		if msg.Action == "remove" {
 			verb = "removed"
 		}
 		m.AddBlock(Block{Kind: "notice", Text: fmt.Sprintf("%s %s — reconnecting pi to load it…", verb, msg.Spec)})
+		m.Status = "ready" // the success path used to rely on RespawnPi
+		m.setPlugNote("✓ "+verb+" "+msg.Spec, plugNoteResultWindow)
 		m.reloadHubRows("")
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), pluginTickCmd())
 
 	case tea.MouseMsg:
 		// App-owned chat drag selection (left press/motion/release).
@@ -3197,6 +3327,18 @@ func (d *Dialog) Reindex() {
 	}
 	d.FIdx = d.FIdx[:0]
 	f := strings.ToLower(d.Filter)
+	if d.Kind == "pconfig" && d.CurPsec() == PsecMarket {
+		// Marketplace search runs against npm: m.Market already IS the
+		// result set for the filter, so re-filtering it locally would
+		// only hide packages the registry ranked for us.
+		for i := range d.Options {
+			d.FIdx = append(d.FIdx, i)
+		}
+		if d.Cursor >= len(d.FIdx) {
+			d.Cursor = 0
+		}
+		return
+	}
 	prov := d.selProv()
 	if d.Kind == "settings" && len(d.Provs) > 0 {
 		// two-pane groups: empty filter (or typing on the right) scopes

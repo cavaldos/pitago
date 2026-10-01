@@ -273,17 +273,23 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, nil
 	case p == "marketmore":
+		// paging is per query: the search the user typed owns the page
 		m.Status = "loading more plugins…"
 		m.Refresh()
-		return m, m.FetchMarketPageCmd(len(m.Market))
+		return m, m.FetchMarketPageCmd(m.MarketQuery(), len(m.Market))
 	case strings.HasPrefix(p, "market:"):
 		spec := "npm:" + strings.TrimPrefix(p, "market:")
+		// one plugin op at a time: pi install is not safe to double-fire
+		if _, busy := m.PluginBusy(); busy != "" {
+			// names the op that is running, not the one refused
+			m.Status = m.PluginBusyMsg()
+			m.Refresh()
+			return m, nil
+		}
 		if !m.ConfirmPluginOp("install", spec) {
 			return m, nil // first press arms the auth gate
 		}
-		m.Status = "installing " + spec + "…"
-		m.Refresh()
-		return m, m.ChangePluginCmd("install", spec)
+		return m, m.StartPluginOp("install", spec)
 	case p == "@agent":
 		m.Dialogs = m.Dialogs[1:]
 		m.Status = "loading settings…"

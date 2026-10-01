@@ -143,6 +143,34 @@ func (m *Model) OpenHubSection(id string) {
 // (section=="" keeps the current section): async results (market fetch,
 // install/remove) refresh the rows without closing the hub or losing
 // the cursor.
+// refreshHubSection rebuilds one section's rows in place, but ONLY when
+// the hub is already showing that section. Background work (a registry
+// page landing, stars, a sort) must never yank the hub to another
+// section: reloadHubRows(PsecMarket) moves the left-pane cursor, so a
+// result that lands while the user browsed elsewhere steals the focus.
+// The selection follows its package, not its old row index.
+func (m *Model) refreshHubSection(id string) {
+	d := m.hubDialog()
+	if d == nil || d.CurPsec() != id {
+		return
+	}
+	sel := ""
+	if ri := psecCursor(d); ri >= 0 && id == PsecMarket && ri < len(m.Market) {
+		sel = m.Market[ri].Name
+	}
+	m.reloadHubRows("")
+	if sel != "" {
+		if d := m.hubDialog(); d != nil {
+			for fi, ri := range d.FIdx {
+				if ri < len(m.Market) && m.Market[ri].Name == sel {
+					d.Cursor = fi
+					break
+				}
+			}
+		}
+	}
+}
+
 func (m *Model) reloadHubRows(section string) {
 	if len(m.Dialogs) == 0 || m.Dialogs[0].Kind != "pconfig" {
 		return
@@ -160,6 +188,45 @@ func (m *Model) reloadHubRows(section string) {
 	if cur < len(d.FIdx) {
 		d.Cursor = cur
 	}
+}
+
+// hubDialog returns the open settings hub, or nil when none is up.
+func (m *Model) hubDialog() *Dialog {
+	if len(m.Dialogs) == 0 {
+		return nil
+	}
+	if d := m.Dialogs[0]; d.Kind == "pconfig" {
+		return d
+	}
+	return nil
+}
+
+// hubWindow is the hub's fixed row window (both panes): the render clamps
+// it, and the star hydration reads the same window off the model so the
+// background fetch only ever covers what is on screen.
+func hubWindow(m *Model) int {
+	win := m.winH - 14
+	if win < 12 {
+		win = 12
+	}
+	if win > 24 {
+		win = 24
+	}
+	return win
+}
+
+// hubBoxW is the hub dialog's outer width. One source of truth: the
+// renderer lays the box out at this width, and psecRows clamps its
+// section message to it so a long line cannot wrap and stretch the box.
+func hubBoxW(m *Model) int {
+	w := m.winW - 10
+	if w < 70 {
+		w = 70
+	}
+	if w > 150 {
+		w = 150
+	}
+	return w
 }
 
 // CurPsec is the selected section id (left pane cursor).
@@ -300,6 +367,13 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 		msg = "Delete uninstalls the plugin (pi remove) · Marketplace installs new ones · Esc closes"
 		for _, p := range m.Plugins {
 			opts = append(opts, p.Name)
+			if m.plugBusySpec != "" && p.Spec == m.plugBusySpec {
+				// the running op owns this row: spinner + live elapsed
+				opts[len(opts)-1] = m.pluginBusyFrame() + " " + p.Name
+				descs = append(descs, m.pluginBusyRowDesc())
+				payload = append(payload, "")
+				continue
+			}
 			descs = append(descs, p.Spec)
 			payload = append(payload, "")
 		}
@@ -308,9 +382,29 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			descs = []string{"Marketplace installs one"}
 			payload = []string{""}
 		}
+		if m.plugBusyAction != "" {
+			msg = m.pluginBusyLabel(m.plugBusyAction, m.plugBusySpec) +
+				" · runs in the background"
+		}
+		if note := m.plugNoteLine(); note != "" {
+			msg = warnStyle.Render(Fit(note, hubBoxW(m)-2)) // the gate prompt / result
+		}
 	case PsecMarket:
-		msg = fmt.Sprintf("showing %d of %d · Enter installs (pi install) · type filters · Esc closes",
-			len(m.Market), marketTotal)
+		// The filter is a real remote npm search here (not a local
+		// filter), so the header names the query and the row count.
+		if q := m.MarketQuery(); q != "" {
+			msg = fmt.Sprintf("search %q · %d results · ↑↓ select · Enter installs · Esc clears", q, len(m.Market))
+		} else {
+			msg = fmt.Sprintf("%d pi packages · type to search npm · ↑↓ select · Enter installs · Esc closes",
+				len(m.Market))
+		}
+		if m.plugBusyAction != "" {
+			msg = m.pluginBusyLabel(m.plugBusyAction, m.plugBusySpec) +
+				" · runs in the background"
+		}
+		if note := m.plugNoteLine(); note != "" {
+			msg = warnStyle.Render(Fit(note, hubBoxW(m)-2))
+		}
 		if m.MarketErr != "" {
 			opts = []string{"— market unavailable —"}
 			descs = []string{Short(m.MarketErr, 60)}
@@ -321,21 +415,43 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			if ver != "" && !strings.HasPrefix(ver, "v") {
 				ver = "v" + ver
 			}
+			// stars are decoration: prefix only once resolved
+			stars := ""
+			if e.StarsKnown {
+				stars = "★" + fmtStars(e.Stars) + " "
+			}
 			opts = append(opts, e.Name)
+			if m.plugBusySpec != "" && m.plugBusySpec == "npm:"+e.Name {
+				// the running op owns this row: spinner + live elapsed
+				opts[len(opts)-1] = m.pluginBusyFrame() + " " + e.Name
+				descs = append(descs, m.pluginBusyRowDesc())
+				payload = append(payload, "")
+				continue
+			}
 			if marketInstalled(m, e.Name) {
-				descs = append(descs, "✓ installed · "+shortDesc(ver+" "+e.Desc, 44))
+				descs = append(descs, "✓ installed · "+stars+shortDesc(ver+" "+e.Desc, 44))
 				payload = append(payload, "")
 			} else {
-				descs = append(descs, shortDesc(strings.TrimSpace(ver+" — "+e.Desc), 48))
+				descs = append(descs, stars+shortDesc(strings.TrimSpace(ver+" — "+e.Desc), 48))
 				payload = append(payload, "market:"+e.Name)
 			}
 		}
 		if len(opts) == 0 {
-			opts = []string{"— empty market —"}
-			descs = []string{"fetch failed or registry has no pi packages"}
+			// an empty list is two different things: a fetch in flight
+			// (rows arrive in a moment) and a registry with nothing
+			// for this query. Say which one instead of guessing.
+			if marketInflight {
+				opts = []string{"— loading plugins… —"}
+				descs = []string{"npm is searching; rows appear as soon as it lands"}
+			} else {
+				opts = []string{"— empty market —"}
+				descs = []string{"no pi packages match — Esc clears the search"}
+			}
 			payload = []string{""}
-		} else if marketTotal > len(m.Market) {
-			opts = append(opts, fmt.Sprintf("… load more (%d/%d) …", len(m.Market), marketTotal))
+		} else if marketMore {
+			// npm's "total" is a constant, so "more" is just the
+			// registry having filled the last page.
+			opts = append(opts, fmt.Sprintf("… load more (%d shown) …", len(m.Market)))
 			descs = append(descs, "Enter loads the next 100")
 			payload = append(payload, "marketmore")
 		}
@@ -544,6 +660,33 @@ func pluginDetailLines(m *Model, d *Dialog, w int) []string {
 	return lines
 }
 
+// marketRow lays out one marketplace list row: the name, padded out, and
+// the star chip right-aligned in the last cells. Exactly w display cells;
+// the chip is dropped entirely when it does not fit (never a wrapped row).
+func marketRow(name, chip string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if chip == "" {
+		return Fit(Short(name, w), w)
+	}
+	cw := lipgloss.Width(chip)
+	if cw+1 >= w {
+		return Fit(Short(name, w), w)
+	}
+	nw := w - cw - 1
+	return Fit(Short(name, nw), nw) + " " + chip
+}
+
+// marketChip is the star chip for one row ("" while the count is unknown,
+// so pending rows render exactly as before).
+func marketChip(e MarketEntry) string {
+	if !e.StarsKnown {
+		return ""
+	}
+	return "★" + fmtStars(e.Stars)
+}
+
 // marketDetailLines builds the highlighted market entry's detail column:
 // title + Version · Status · Description + the Enter hint. Same fixed
 // width contract as pluginDetailLines.
@@ -572,9 +715,27 @@ func marketDetailLines(m *Model, d *Dialog, w int) []string {
 		status = "installed"
 		style = okStyle
 	}
+	// stars: "—" without a repo or when the repo will never resolve,
+	// "fetching…" only while the lookup is still genuinely unknown
+	starVal := "—"
+	switch {
+	case e.Repo == "":
+	case e.StarsKnown:
+		starVal = marketChip(e)
+	case marketStarsBad[e.Repo]:
+		starVal = "—"
+	default:
+		starVal = "fetching…"
+	}
+	dlVal := "—"
+	if e.Weekly > 0 {
+		dlVal = fmtStars(e.Weekly) + "/wk"
+	}
 	rows := [][2]string{
 		{"Version", orDash(e.Version)},
 		{"Spec", "npm:" + e.Name},
+		{"Stars", starVal},
+		{"Downloads", dlVal},
 	}
 	const lw = 11
 	valW := w - 2 - lw - 1
@@ -589,7 +750,22 @@ func marketDetailLines(m *Model, d *Dialog, w int) []string {
 		}
 		lines = append(lines, "  "+lab+" "+st.Render(Fit(Short(r[1], valW), valW)))
 	}
-	lines = append(lines, "  "+toolStyle.Render(Fit("Status", lw))+" "+style.Render(Fit(status, valW)))
+	// while this entry is the one being installed/removed the Status row
+	// is the live spinner, not a static installed/not-installed word
+	if m.plugBusyAction != "" && m.plugBusySpec == "npm:"+e.Name {
+		lines = append(lines, "  "+toolStyle.Render(Fit("Status", lw))+" "+
+			warnStyle.Render(Fit(m.pluginBusyFrame()+" "+m.pluginBusyRowDesc(), valW)))
+	} else {
+		lines = append(lines, "  "+toolStyle.Render(Fit("Status", lw))+" "+style.Render(Fit(status, valW)))
+	}
+	// Repository: the GitHub URL the star count came from, wrapped on
+	// segment boundaries (the value column is too narrow for a full URL).
+	if e.Repo != "" {
+		lines = append(lines, "  "+toolStyle.Render(Fit("Repository", lw)))
+		for _, ln := range wrapURL("https://github.com/"+e.Repo, w-2) {
+			lines = append(lines, "  "+codeStyle.Render(Fit(ln, w-2)))
+		}
+	}
 	lines = append(lines, "  "+toolStyle.Render(Fit("Description", w-2)))
 	if strings.TrimSpace(e.Desc) == "" {
 		lines = append(lines, "  "+statusBarStyle.Render(Fit("—", w-2)))
@@ -604,6 +780,52 @@ func marketDetailLines(m *Model, d *Dialog, w int) []string {
 	}
 	lines = append(lines, "  "+toolStyle.Render(Fit(hint, w-2)))
 	return lines
+}
+
+// wrapURL folds a URL into lines of at most n cells, breaking only after
+// "/" so a long path splits on segment boundaries and every line still
+// reads as the same link. Plain strings only — style after.
+func wrapURL(s string, n int) []string {
+	if n < 10 {
+		n = 10
+	}
+	var out []string
+	cur := ""
+	// keep each segment with its trailing slash: "https://",
+	// "github.com/", "owner/", "repo"
+	for _, seg := range splitAfter(s, '/') {
+		if cur == "" {
+			cur = seg
+			continue
+		}
+		if lipgloss.Width(cur+seg) > n {
+			out = append(out, cur)
+			cur = seg
+			continue
+		}
+		cur += seg
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// splitAfter cuts s after every sep, so the separators stay attached to the
+// piece before them.
+func splitAfter(s string, sep rune) []string {
+	var out []string
+	start := 0
+	for i, r := range s {
+		if r == sep {
+			out = append(out, s[start:i+1])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
 }
 
 // wrapWords folds s into lines of at most n display cells (word-boundary,
@@ -850,8 +1072,17 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 				m.LoadPsecRows(d)
 				// First visit to an unloaded marketplace fetches it in
 				// the background (rows reload when MarketMsg lands).
-				if d.CurPsec() == PsecMarket && !marketFresh() && !marketInflight {
-					return m, m.fetchMarketCmd()
+				if d.CurPsec() == PsecMarket {
+					// first visit: fetch a stale page, then let the
+					// browse head order itself by stars. The sort is
+					// built first so it claims the head before the
+					// window hydration latches those repos busy.
+					sortCmd := m.marketSortCmd("")
+					hyd := m.hydrateMarketStarsCmd(d)
+					if !marketFresh() && !marketInflight {
+						return m, tea.Batch(m.fetchMarketCmd(), sortCmd, hyd)
+					}
+					return m, tea.Batch(sortCmd, hyd)
 				}
 			}
 		} else if n := len(d.FIdx); n > 0 {
@@ -863,6 +1094,11 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 			// Theme rows are the one hub section that previews while
 			// browsing, so ↑↓ repaints in the new palette.
 			m.previewTheme(d)
+			// The marketplace hydrates GitHub stars for whatever the
+			// moved cursor brought into view (never from render).
+			if d.CurPsec() == PsecMarket {
+				return m, m.hydrateMarketStarsCmd(d)
+			}
 		}
 		return m, nil
 	case tea.KeyLeft:
@@ -890,7 +1126,8 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		if km.Type == tea.KeyBackspace && d.Filter != "" {
 			d.Filter = d.Filter[:len(d.Filter)-1]
 			d.Reindex()
-			return m, nil
+			// marketplace typing is a remote search: re-arm the debounce
+			return m, m.marketSearchTick()
 		}
 		// Empty filter (forward-delete always): Delete removes the
 		// highlighted plugin (sessions/login parity: ⌫ on empty
@@ -898,16 +1135,38 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		if d.CurPsec() == PsecPlugin && !d.ProvFocus {
 			if ri := psecCursor(d); ri >= 0 && ri < len(m.Plugins) {
 				spec := m.Plugins[ri].Spec
+				// one plugin op at a time: pi remove is not safe to
+				// double-fire while an install/uninstall is running
+				if _, busy := m.PluginBusy(); busy != "" {
+					// names the op that is running, not the one refused
+					m.Status = m.PluginBusyMsg()
+					m.Refresh()
+					return m, nil
+				}
 				if !m.ConfirmPluginOp("remove", spec) {
 					return m, nil // first Delete arms the auth gate
 				}
-				m.Status = "removing " + spec + "…"
-				m.Refresh()
-				return m, m.ChangePluginCmd("remove", spec)
+				return m, m.StartPluginOp("remove", spec)
 			}
 		}
 		return m, nil
 	case tea.KeyEsc:
+		// Esc in the marketplace clears the search first (one level,
+		// like every other filter dialog); a second Esc closes.
+		if d.CurPsec() == PsecMarket && d.Filter != "" {
+			d.Filter = ""
+			d.Reindex()
+			m.MarketErr = ""
+			if entries, more, fresh := marketCached(""); fresh {
+				m.Market, marketMore = entries, more
+				m.Status = "ready"
+				m.refreshHubSection(PsecMarket)
+				m.Refresh()
+				return m, tea.Batch(m.marketSortCmd(""), m.hydrateMarketStarsCmd(d))
+			}
+			m.Refresh()
+			return m, tea.Batch(m.fetchMarketCmd(), m.marketSortCmd(""), m.hydrateMarketStarsCmd(d))
+		}
 		m.Dialogs = m.Dialogs[1:]
 		m.refreshPiTasks()
 		m.Refresh()
@@ -922,7 +1181,8 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 	if km.Type == tea.KeyRunes {
 		d.Filter += km.String()
 		d.Reindex()
-		return m, nil
+		// marketplace typing debounces into a remote npm search
+		return m, m.marketSearchTick()
 	}
 	return m, nil
 }
@@ -950,16 +1210,15 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	if d.Message != "" {
 		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
 	}
-	b.WriteString(statusBarStyle.Render("filter: "+d.Filter+"▌") + "\n")
+	// the marketplace filter is a remote npm search, not a local filter
+	filterLabel := "filter: "
+	if d.CurPsec() == PsecMarket {
+		filterLabel = "search: "
+	}
+	b.WriteString(statusBarStyle.Render(filterLabel+d.Filter+"▌") + "\n")
 	b.WriteString("\n")
 
-	boxW := m.winW - 10
-	if boxW < 70 {
-		boxW = 70
-	}
-	if boxW > 150 {
-		boxW = 150
-	}
+	boxW := hubBoxW(&m)
 	leftW := 30
 	if boxW < 100 {
 		leftW = 24
@@ -983,13 +1242,7 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 			detW = rightW - listW - 3
 		}
 	}
-	win := m.winH - 14
-	if win < 12 {
-		win = 12
-	}
-	if win > 24 {
-		win = 24
-	}
+	win := hubWindow(&m)
 
 	// left window (sections): label + count badge.
 	ptotal := len(d.Provs)
@@ -1066,10 +1319,19 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 			}
 		}
 		row := Fit(Short(d.Options[ri], optW), optW)
-		if !detailCol {
+		switch {
+		case !detailCol:
 			if desc := DescOf(d, ri); desc != "" {
 				row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
 			}
+		case isMarket:
+			// the wide layout drops the desc column, so the star count
+			// rides the row itself ("" while still unknown)
+			chip := ""
+			if ri >= 0 && ri < len(m.Market) {
+				chip = marketChip(m.Market[ri])
+			}
+			row = marketRow(d.Options[ri], chip, optW)
 		}
 		rightLines = append(rightLines, mark+style.Width(listW-2).Render(row))
 	}
@@ -1162,6 +1424,10 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	foot := "↑↓ sections · → contents · Enter open · Esc close"
 	if !d.ProvFocus {
 		foot = "↑↓ select · ← sections · Tab switch · type filters · Enter run · Esc close"
+		if d.CurPsec() == PsecMarket {
+			// the filter is a remote npm search, not a local one
+			foot = "↑↓ select · ← sections · Tab switch · type to search npm · Enter install · Esc clears"
+		}
 	}
 	b.WriteString("\n" + toolStyle.Render(foot))
 	box := dlgStyle.Width(boxW).Render(b.String())

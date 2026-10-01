@@ -88,3 +88,46 @@ func TestConfirmBlockActionsClosesAndDispatches(t *testing.T) {
 		t.Fatalf("Enter closed the menu without copying: %q", copied)
 	}
 }
+
+// Enter on a marketplace row while another plugin op is running must not
+// fire a second `pi install` — and must not even arm the confirm gate.
+func TestPluginBusyGate(t *testing.T) {
+	m := hubModel()
+	m.Market = []app.MarketEntry{{Name: "pi-new", Version: "1.0.0", Desc: "fresh"}}
+	d := m.Dialogs[0]
+	selectPsec(m, d, app.PsecMarket)
+
+	// an install is already running
+	if cmd := m.StartPluginOp("install", "npm:pi-other"); cmd == nil {
+		t.Fatal("StartPluginOp should return a cmd")
+	}
+	mm, cmd := confirmPconfig(m, d, d.FIdx[d.Cursor])
+	m2 := mm.(*app.Model)
+	if cmd != nil {
+		t.Error("Enter while an op is running must not issue a second install")
+	}
+	act, spec := m2.PluginBusy()
+	if act != "install" || spec != "npm:pi-other" {
+		t.Errorf("the running op must be left alone, got %q/%q", act, spec)
+	}
+	if got := m2.Status; !strings.Contains(got, "wait for it") {
+		t.Errorf("the status should tell the user to wait, got %q", got)
+	}
+	if len(m2.Dialogs) != 1 {
+		t.Error("the hub should stay open")
+	}
+	// once the op lands, Enter arms the confirm gate as usual
+	um, _ := m2.Update(app.PluginChangeMsg{Action: "install", Spec: "npm:pi-other"})
+	m3 := um.(app.Model)
+	if _, spec := m3.PluginBusy(); spec != "" {
+		t.Fatalf("the op should be done, got %q", spec)
+	}
+	mm, cmd = confirmPconfig(&m3, m3.Dialogs[0], m3.Dialogs[0].FIdx[0])
+	m4 := mm.(*app.Model)
+	if cmd != nil {
+		t.Error("the first Enter after the op should only arm the gate")
+	}
+	if !strings.Contains(m4.Status, "confirm install npm:pi-new") {
+		t.Errorf("the confirm gate should arm again, got %q", m4.Status)
+	}
+}

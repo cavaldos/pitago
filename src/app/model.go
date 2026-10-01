@@ -249,6 +249,12 @@ type Model struct {
 	plugAction          string    // pending plugin op awaiting second confirm (auth gate)
 	plugSpec            string    // pending plugin spec (cleared on confirm/cancel/timeout)
 	plugAt              time.Time // first press timestamp for the pending plugin op
+	plugBusyAction      string    // running plugin op: "install" | "remove" ("" = idle)
+	plugBusySpec        string    // running plugin op spec (spinner row + duplicate gate)
+	plugBusyAt          time.Time // when the running op started (elapsed counter)
+	plugBusyFrame       int       // spinner frame index, advanced by PluginTickMsg
+	plugNote            string    // short-lived hub line: confirm prompt / op result
+	plugNoteHide        time.Time // when plugNote stops showing (0 = no note)
 	renderCache         []string  // per-block rendered output (renderBlocks reuses clean history)
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
 	blockLine           []int     // transcript line where each block starts (parallel to m.blocks; hidden/skip blocks share the next visible line)

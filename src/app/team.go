@@ -119,7 +119,7 @@ const (
 // guarantee a field would: teamCmdLive holds the token of the request still
 // awaiting delivery (0 = none), and any tick carrying an older token is a
 // no-op. Mirrors the existing package-level state in this package
-// (marketInflight, marketCacheData in update.go).
+// (marketInflight, marketPages in pmarket.go).
 var (
 	teamCmdSeq  atomic.Uint64
 	teamCmdLive atomic.Uint64
