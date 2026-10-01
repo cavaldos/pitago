@@ -8,10 +8,18 @@
 // transmit-and-place (a=T/a=p without U=1) was tried first and smeared on
 // scroll: screen-cell placements outlive the text written over them.
 //
-// The payload is uploaded once per digest (a=t); every repaint only
-// re-emits the ~50 byte place (a=p). Image-bearing blocks bypass the
-// per-block render cache (see renderBlocks) so a cached string can never
-// replay an upload on every frame.
+// Every render emits the whole sequence (a=t upload + a=p place +
+// placeholder cells) and the result is byte-identical for a given digest
+// and width. That identity is what keeps the payload off the wire: the
+// Bubble Tea renderer only writes a line when it differs from the one it
+// wrote last frame, so a still image is transmitted once, not once per
+// repaint. Stripping the upload after the first render — the previous
+// design — was wrong because a render is not the same thing as a paint:
+// the transcript is rendered for off-screen windows, for measuring passes,
+// and while a dialog covers the chat, and none of those reach the
+// terminal. The upload was then marked done for a frame nobody saw, and
+// every later frame placed an image id the terminal had never received.
+// Rendering must stay pure; dedupe belongs to the renderer.
 package app
 
 import (
@@ -21,19 +29,30 @@ import (
 	terminal_image "pitago/src/components/terminal_image"
 )
 
+// cachedImage is one finished image block, ready to print. Reusing the
+// strings is what keeps a repaint free: no per-frame re-chunking of a
+// megabyte of base64, and the bytes stay identical so the renderer skips
+// the line.
+type cachedImage struct {
+	widthCells int
+	lines      []string
+}
+
 // imageRenderState is render-only kitty bookkeeping. It lives behind a
 // pointer on Model so it survives Model's value copies (View, renderBlocks
 // inputs) while staying mutable.
 type imageRenderState struct {
-	up     map[uint64]uint64 // image digest -> kitty image id
-	geo    map[uint64][3]int // image digest -> {cols, rows, widthCells used}
-	png    map[uint64]string // image digest -> transcoded PNG base64 (non-png inputs)
-	pngBad map[uint64]bool   // image digest -> transcode failed, don't retry per frame
+	up       map[uint64]uint64      // image digest -> kitty image id
+	geo      map[uint64][3]int      // image digest -> {cols, rows, widthCells used}
+	png      map[uint64]string      // image digest -> transcoded PNG base64 (non-png inputs)
+	pngBad   map[uint64]bool        // image digest -> transcode failed, don't retry per frame
+	rendered map[uint64]cachedImage // image digest -> finished rows, per width
 }
 
 func newImageRenderState() *imageRenderState {
 	return &imageRenderState{up: map[uint64]uint64{}, geo: map[uint64][3]int{},
-		png: map[uint64]string{}, pngBad: map[uint64]bool{}}
+		png: map[uint64]string{}, pngBad: map[uint64]bool{},
+		rendered: map[uint64]cachedImage{}}
 }
 
 func (m *Model) imgState() *imageRenderState {
@@ -117,12 +136,12 @@ func (m *Model) resolvePNG(img chat.Image) (string, bool) {
 }
 
 // imageLines renders one image per reserved row block. The first row
-// carries the place sequence (plus a one-time upload) followed by
-// placeholder cells; continuation rows are placeholder cells only.
-// Viewport padding after the placeholders is harmless — it starts beyond
-// the image columns. Images that cannot be placed (non-kitty protocol,
-// hidden by settings, or an unsupported/undecodable mime) keep the □
-// fallback, exactly the historical behaviour.
+// carries the upload + place sequences followed by placeholder cells;
+// continuation rows are placeholder cells only. Viewport padding after
+// the placeholders is harmless — it starts beyond the image columns.
+// Images that cannot be placed (non-kitty protocol, hidden by settings,
+// or an unsupported/undecodable mime) keep the □ fallback, exactly the
+// historical behaviour.
 func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 	if lineWidth < 1 {
 		lineWidth = 1
@@ -143,8 +162,12 @@ func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 			continue
 		}
 		st := m.imgState()
-		id, uploaded := st.up[img.Digest]
-		if !uploaded {
+		if hit, ok := st.rendered[img.Digest]; ok && hit.widthCells == w {
+			out = append(out, hit.lines...)
+			continue
+		}
+		id, known := st.up[img.Digest]
+		if !known {
 			id = st.allocImageID()
 			if id == 0 {
 				out = append(out, terminal_image.Fallback())
@@ -157,18 +180,20 @@ func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 			out = append(out, terminal_image.Fallback())
 			continue
 		}
-		first := terminal_image.PlaceUnicode(id, c, r) + firstRow
-		if !uploaded {
-			first = terminal_image.Upload(data, id) + first
-		}
-		out = append(out, first)
+		lines := []string{terminal_image.Upload(data, id) +
+			terminal_image.PlaceUnicode(id, c, r) + firstRow}
 		for i := 1; i < r; i++ {
 			row, ok := terminal_image.PlaceholderRow(id, i, c)
 			if !ok {
 				break
 			}
-			out = append(out, row)
+			lines = append(lines, row)
 		}
+		if len(st.rendered) > 64 {
+			st.rendered = map[uint64]cachedImage{}
+		}
+		st.rendered[img.Digest] = cachedImage{widthCells: w, lines: lines}
+		out = append(out, lines...)
 	}
 	return out
 }

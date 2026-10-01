@@ -207,15 +207,19 @@ func TestRenderBlocksImageStableAcrossScroll(t *testing.T) {
 		t.Fatalf("want 200 placeholder cells, got %d", n)
 	}
 	// Scroll repaint: renderBlocks is offset-independent, so the
-	// placeholder grid is stable and the upload is not resent. With U=1
-	// the image lives in the cells, so scrolling needs no delete pass.
+	// placeholder grid is stable and the line stays byte-identical — the
+	// renderer therefore writes nothing new. With U=1 the image lives in
+	// the cells, so scrolling needs no delete pass.
 	m.vp.YOffset = 3
 	repaint := m.renderBlocks()
 	if n := strings.Count(repaint, terminal_image.PlaceholderChar); n != 20*10 {
 		t.Fatalf("scroll must keep 200 placeholder cells, got %d", n)
 	}
-	if !strings.Contains(repaint, "a=p,q=2,U=1") || strings.Contains(repaint, "a=t,f=100") {
-		t.Fatalf("scroll must place without re-uploading")
+	if !strings.Contains(repaint, "a=p,q=2,U=1") || !strings.Contains(repaint, "a=t,f=100") {
+		t.Fatal("scroll must place and carry the upload, or a paint after a dropped render shows nothing")
+	}
+	if repaint != first {
+		t.Fatal("scroll must not change the image bytes")
 	}
 	// Non-kitty protocol falls back to squares with no escapes.
 	m.ImageProtocol = terminal_image.ITerm2

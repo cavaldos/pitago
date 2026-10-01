@@ -39,9 +39,11 @@ func kittyTestModel(img chat.Image) Model {
 	}
 }
 
-// The first render uploads the payload and places; later renders only
-// re-place (payload-free), so repaints stay cheap.
-func TestImageLinesUploadOncePlaceAlways(t *testing.T) {
+// Every render emits upload + place + placeholders, and every render of
+// the same image at the same width is byte-identical. That identity is
+// what keeps the payload off the wire: the Bubble Tea renderer only writes
+// a line that changed since the last frame it painted.
+func TestImageLinesCarryUploadAndStayIdentical(t *testing.T) {
 	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
 	m := kittyTestModel(img)
 	m.vp = viewport.New(50, 20)
@@ -70,14 +72,41 @@ func TestImageLinesUploadOncePlaceAlways(t *testing.T) {
 	}
 
 	second := m.imageLines([]chat.Image{img}, 50)
-	if strings.Contains(strings.Join(second, "\n"), "a=t,f=100") {
-		t.Fatalf("second render must not re-upload")
+	if !strings.Contains(second[0], "a=t,f=100") {
+		t.Fatalf("second render must still carry the upload: %q", second[0][:120])
 	}
 	if !strings.Contains(second[0], "a=p,q=2,U=1") {
 		t.Fatalf("second render must still place: %q", second[0][:120])
 	}
+	if strings.Join(second, "\n") != strings.Join(first, "\n") {
+		t.Fatal("renders of one image must be byte-identical, or the renderer rewrites the payload every frame")
+	}
 	if len(m.imgState().up) != 1 {
 		t.Fatalf("upload cache = %v", m.imgState().up)
+	}
+}
+
+// The regression that mattered: a render is not a paint. The transcript is
+// also rendered for off-screen windows, measuring passes and dialogs, none
+// of which reach the terminal — so a render that is later scrolled into
+// view must still carry the full upload, or the terminal places an image
+// id it never received and shows nothing at all.
+func TestImageLinesSurviveAnUnpaintedRender(t *testing.T) {
+	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
+	m := kittyTestModel(img)
+	m.vp = viewport.New(50, 20)
+	// First render happens while the image sits outside the painted
+	// window: the frame is built, then dropped.
+	m.vp.YOffset = 0
+	m.vp.SetContent("filler\nfiller\nfiller")
+	dropped := m.imageLines([]chat.Image{img}, 50)
+	if !strings.Contains(dropped[0], "a=t,f=100") {
+		t.Fatal("the dropped render must still have carried the payload")
+	}
+	// Now the image scrolls into the painted window.
+	painted := m.imageLines([]chat.Image{img}, 50)
+	if !strings.Contains(painted[0], "a=t,f=100") {
+		t.Fatalf("scrolled-into-view render lost the upload: %q", painted[0][:120])
 	}
 }
 
@@ -138,7 +167,7 @@ func TestImageIDStaysInEightBitRange(t *testing.T) {
 
 // Past 255 distinct images the pool stays exhausted: existing placeholders
 // keep pointing at their own digest (no re-minted id can show the wrong
-// picture) and no payload is re-uploaded every frame.
+// picture) and the new image falls back to □ without disturbing them.
 func TestImageIDExhaustionFallsBackWithoutDisturbingExisting(t *testing.T) {
 	first := chat.NewImage(pngTestData(t, 1, 1), "image/png")
 	m := kittyTestModel(first)
@@ -152,8 +181,8 @@ func TestImageIDExhaustionFallsBackWithoutDisturbingExisting(t *testing.T) {
 		st.up[uint64(1<<32+i)] = st.allocImageID()
 	}
 	after := m.imageLines(m.blocks[0].Images, 50)
-	if strings.Join(after, "\n") != strings.Join(before[0:], "\n") && strings.Contains(strings.Join(after, "\n"), "a=t,f=100") {
-		t.Fatal("existing image re-uploaded after exhaustion")
+	if strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Fatalf("exhausting the pool must not disturb an existing image: %q", after[0][:120])
 	}
 	if len(after) != 10 {
 		t.Fatalf("existing image must still render 10 rows, got %d", len(after))
@@ -249,13 +278,14 @@ func TestImageLinesTranscodesAndCaches(t *testing.T) {
 	if len(m.imgState().png) != 1 {
 		t.Fatalf("transcode must cache, cache = %d entries", len(m.imgState().png))
 	}
-	// First render uploads; steady-state renders only re-place.
+	// Every render carries the transcoded upload, and identical bytes mean
+	// the renderer writes the line once.
 	if !strings.Contains(got[0], "a=t,f=100") {
 		t.Fatalf("first render must upload transcode")
 	}
 	again := m.imageLines([]chat.Image{img}, 50)
-	if strings.Contains(strings.Join(again, "\n"), "a=t,f=100") {
-		t.Fatalf("second render must not re-upload")
+	if !strings.Contains(again[0], "a=t,f=100") {
+		t.Fatalf("second render must carry the upload too")
 	}
 	third := m.imageLines([]chat.Image{img}, 50)
 	if strings.Join(third, "\n") != strings.Join(again, "\n") {
@@ -311,8 +341,9 @@ func TestImageBlockRowAccounting(t *testing.T) {
 	}
 }
 
-// Image-bearing blocks bypass the render cache: the first render embeds a
-// one-time upload that must never replay from cache.
+// Image-bearing blocks bypass the render cache, and every render is
+// byte-identical: the renderer, not this code, decides when a line
+// actually reaches the terminal.
 func TestImageBlocksBypassRenderCache(t *testing.T) {
 	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
 	m := Model{blocks: []Block{{Kind: "user", Text: "look", Images: []chat.Image{img}}},
@@ -320,11 +351,11 @@ func TestImageBlocksBypassRenderCache(t *testing.T) {
 	m.vp = viewport.New(50, 20)
 	first := m.renderBlocks()
 	if n := strings.Count(first, "a=t,f=100"); n != 1 {
-		t.Fatalf("first render must upload once, got %d", n)
+		t.Fatalf("each render must carry the upload exactly once, got %d", n)
 	}
 	second := m.renderBlocks()
-	if strings.Contains(second, "a=t,f=100") {
-		t.Fatalf("second render must not re-upload")
+	if n := strings.Count(second, "a=t,f=100"); n != 1 {
+		t.Fatalf("second render must carry the upload exactly once, got %d", n)
 	}
 	if third := m.renderBlocks(); third != second {
 		t.Fatalf("steady-state renders must be identical")
