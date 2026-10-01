@@ -6,14 +6,16 @@
 
 https://github.com/user-attachments/assets/93bfcae4-b02e-429d-a302-d2df850f71a7
 
-<sub>▸ 88s walkthrough — plays right here, no download. Want the lightweight loop instead? <a href="resources/demo.gif">GIF version</a></sub>
-
 [![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/cavaldos/pitago/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/cavaldos/pitago/total?style=flat-square)](https://github.com/cavaldos/pitago/releases)
 [![GitHub stars](https://img.shields.io/github/stars/cavaldos/pitago?style=flat-square)](https://github.com/cavaldos/pitago/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/cavaldos/pitago?style=flat-square)](https://github.com/cavaldos/pitago/network/members)
 [![License](https://img.shields.io/github/license/cavaldos/pitago?style=flat-square)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor%20%E2%9D%A4%EF%B8%8F-8A2BE2?style=flat-square)](https://ko-fi.com/calvados)
+
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/%E2%9A%99%20Install%20now-2ea44f?style=for-the-badge" alt="Install pitago" /></a>
+</p>
 
 _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built with Bubble Tea. `pi --mode rpc` serves as the backend (multi-provider, tools, sessions, compaction), while pitago provides a rich terminal interface communicating over JSONL._
 
@@ -22,31 +24,15 @@ _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built wit
 ## Screenshots
 
 <div align="center">
-  <img src="resources/Screenshot.png" alt="main chat" width="49%" />
-  <img src="resources/provider_management.png" alt="provider management (/login)" width="49%" />
-  <img src="resources/model_management.png" alt="model picker" width="49%" />
-  <img src="resources/themes.png" alt="themes (/theme)" width="49%" />
-  <img src="resources/notifications.png" alt="toast notifications" width="49%" />
-  <img src="resources/marketplace.png" alt="the marketplace" width="49%" />
+  <img src="resources/Screenshot.png" alt="main chat" width="32%" />
+  <img src="resources/provider_management.png" alt="provider management (/login)" width="32%" />
+  <img src="resources/model_management.png" alt="model picker" width="32%" />
+  <br />
+  <img src="resources/themes.png" alt="themes (/theme)" width="32%" />
+  <img src="resources/notifications.png" alt="toast notifications" width="32%" />
+  <img src="resources/marketplace.png" alt="the marketplace" width="32%" />
 </div>
 
-## Overview
-
-pitago wraps the `pi` agent in a beautiful terminal interface with:
-
-- Real-time chat with streaming responses
-- Sidebar showing session info, model details, token usage, and git status
-- Command palette with builtins and extension commands
-- File mention support (`@file`)
-- Image send via `@photo.png` or dropping/pasting file paths — or `Ctrl+V` on a copied screenshot (macOS needs `pngpaste`, Linux uses `wl-paste`/`xclip`). Vision over RPC, max 5 × 8MB. Paths collapse into `[Image N]` chips; `↓` moves into the tray, `←→` picks a chip, `⌫` deletes it, `Esc` back
-- Recent models picker
-- Clipboard integration (`Ctrl+Y` to yank last answer)
-
-## Requirements
-
-- Go ≥ 1.27
-- `pi` available in PATH (or set `PI_BIN` to its path)
-- An API key for your provider (e.g. `ANTHROPIC_API_KEY`), or run `/login` inside the app to save one to the keystore
 
 ## Install
 
@@ -63,7 +49,7 @@ Invoke-WebRequest https://github.com/cavaldos/pitago/releases/latest/download/pi
 # move pitago.exe somewhere on your PATH, then: pitago --version
 ```
 
-From source (requires Go ≥ 1.27):
+### From source
 
 ```bash
 git clone https://github.com/cavaldos/pitago.git
@@ -71,37 +57,17 @@ cd pitago
 script/build.sh                      # outputs bin/pitago (VERSION defaults to git tag/commit)
 mkdir -p ~/.local/bin && cp bin/pitago ~/.local/bin/pitago
 pitago --version
+
+script/run.sh                        # or: go run ./src
 ```
 
-Uninstall (if installed into bin):
+### Uninstall
 
-macOS:
-
-```bash
-rm ~/.local/bin/pitago   # or /usr/local/bin/pitago if you installed with sudo before
-rm -rf ~/.config/pitago         # optional: remove saved API keys + recent models
-```
-
-Linux:
-
-```bash
-rm ~/.local/bin/pitago   # or /usr/local/bin/pitago if you installed with sudo before
-rm -rf ~/.config/pitago         # optional: remove saved API keys + recent models
-```
-
-Windows (PowerShell):
-
-```powershell
-del C:\path\to\pitago.exe              # wherever you placed it (a folder on your PATH)
-Remove-Item -Recurse -Force $HOME\.config\pitago   # optional: remove saved API keys + recent models
-```
-
-
-Build and run straight from source:
-
-```bash
-script/run.sh
-```
+| Platform | Command |
+| -------- | ------- |
+| macOS / Linux | `rm ~/.local/bin/pitago` (or `/usr/local/bin/pitago` if you installed with `sudo` before) |
+| Windows | `del C:\path\to\pitago.exe` — wherever you placed it, on a folder in your PATH |
+| Any (reset data) | `rm -rf ~/.config/pitago` / `Remove-Item -Recurse -Force $HOME\.config\pitago` — drops saved API keys + recent models |
 
 ## Quick Start
 
@@ -116,9 +82,6 @@ go run ./src --cwd ~/Code/workspace
 # Resume most recent session
 go run ./src -c
 
-# Specify provider and model
-go run ./src --provider anthropic --model claude-sonnet-4-20250514
-
 # Don't persist a session
 go run ./src --no-session
 
@@ -127,44 +90,27 @@ go run ./src -ne      # or --no-extensions
 
 # Self-update to the latest GitHub release
 go run ./src --update   # or /update inside the app
-
-# Mouse (sidebar click + wheel scroll) is on by default;
-# opt out with --mouse=false for plain highlight-to-copy
-go run ./src --mouse=false
 ```
 
 ## Live sessions (read-only)
 
-Press `/live` to list the `pi` sessions running in the current directory and
-attach to one of them. It appears live in an `EXTERNAL · READ-ONLY` view;
-`/live` again or `Ctrl+D` detaches and you can type prompts normally.
+Press `/live` to list the `pi` sessions running in the current directory and attach to one of them. It appears live in an `EXTERNAL · READ-ONLY` view; `/live` again or `Ctrl+D` detaches and you can type prompts normally.
 
-You start the `pi` sessions yourself; pitago only views them. Two sources are
-offered in the same picker: a **bridge** session (token-level streaming, busy
-spinner) and a **session file** session, which works with any running `pi` —
-no restart, no extension, nothing required of that process. The bridge
-extension is installed for you on the first `/live`.
+You start the `pi` sessions yourself; pitago only views them. Two sources are offered in the same picker: a **bridge** session (token-level streaming, busy spinner) and a **session file** session, which works with any running `pi` — no restart, no extension, nothing required of that process.
 
-Full documentation, including what each source can and cannot show:
-[resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md).
+Full documentation: [resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md).
 
 ## Build & Test
 
 ```bash
-# Vet
-go vet ./...
-
-# Build
-go build -o /tmp/pitago ./src
-
-# Test
-go test ./...
+go vet ./...                    # vet
+go build -o /tmp/pitago ./src  # build
+go test ./...                  # test
 ```
 
 ## Release
 
-Tag push triggers the `release` workflow, which cross-builds
-(linux-amd64, darwin-amd64/arm64, windows-amd64) and publishes a GitHub Release:
+Tag push triggers the `release` workflow, which cross-builds (linux-amd64, darwin-amd64/arm64, windows-amd64) and publishes a GitHub Release:
 
 ```bash
 script/test-cicd.sh        # check vet + test + builds locally first
@@ -173,108 +119,73 @@ script/release.sh v0.0.1
 
 ## Keybindings
 
-| Key                                                         | Action                                                                                                                        |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `Enter`                                                     | Send (idle) / steer (while running)                                                                                           |
-| `Esc×2`                                                     | Cancel running turn (double-press within 3s — 1st press only arms)                                                            |
-| `Ctrl+C`                                                    | Clear the input — text, a recalled message, and the image tray (pi parity, `app.clear`); on an empty input, quit (press twice within 3s — warning pins to the sidebar corner) |
-| `Ctrl+N`                                                    | New session                                                                                                                   |
-| `Ctrl+P`                                                    | Cycle model                                                                                                                   |
-| `Ctrl+R`                                                    | Recent-models picker                                                                                                          |
-| `Ctrl+T`                                                    | Cycle thinking level (no picker)                                                                                              |
-| `Ctrl+E`                                                    | Hide/show sidebar (hide for clean drag-select of chat only)                                                                   |
-| `Ctrl+Y`                                                    | Yank last assistant answer to clipboard (chat-only, no sidebar)                                                               |
-| `Ctrl+V`                                                    | Paste text — or screenshot data (pngpaste/wl-paste/xclip); errors shown, terminal Cmd+V still works                           |
-| `Backspace`                                                 | Empty input + image tray → remove last `[Image N]` chip                                                                       |
-| `↓` (+tray)                                                 | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input                                           |
-| `Ctrl+O`                                                    | Yank picker: choose any message to copy (sidebar stays visible)                                                               |
-| `Ctrl+G`                                                    | Expand/collapse tool output: write content, read results, diffs (collapsed previews like pi)                                  |
-| `Alt+1…5`                                                   | Jump straight to a recent model                                                                                               |
-| `Tab`                                                       | Complete `/command` or `@file`                                                                                                |
-| `@`                                                         | Mention a file (fuzzy finder, like pi — Tab/Enter completes, text goes to pi raw; `@*.png/.jpg/.gif/.webp` also sends vision) |
-| `↑↓ PgUp PgDn`                                              | Empty input: recall sent messages (`↑` older · `↓` newer · `Esc` clear) · otherwise scroll chat (single-line input)           |
-| `Alt+↑↓ PgUp PgDn Home End` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll sidebar (keyboard, always works)                                                                                       |
-| `Mouse wheel`                                               | On by default: hover sidebar to scroll it, chat otherwise; `--mouse=false` disables                                           |
+| Key | Action |
+| --- | --- |
+| `Enter` | Send (idle) / steer (while running) |
+| `Esc×2` | Cancel running turn (double-press within 3s — 1st press only arms) |
+| `Ctrl+C` | Clear the input — text, a recalled message, the image tray; on an empty input, quit (press twice within 3s) |
+| `Ctrl+N` | New session |
+| `Ctrl+P` / `Ctrl+R` / `Alt+1…5` | Cycle model · recent-models picker · jump to a recent model |
+| `Ctrl+T` | Cycle thinking level (no picker) |
+| `Ctrl+E` | Hide/show sidebar (hide for clean drag-select of chat only) |
+| `Ctrl+Y` / `Ctrl+O` | Yank last assistant answer · yank picker for any message |
+| `Ctrl+V` | Paste text — or screenshot data (pngpaste/wl-paste/xclip) |
+| `Ctrl+G` | Expand/collapse tool output: write content, read results, diffs |
+| `Backspace` | Empty input + image tray → remove the last `[Image N]` chip |
+| `↓` (+tray) | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input |
+| `Tab` | Complete `/command` or `@file` |
+| `@` | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision) |
+| `↑↓ PgUp PgDn` | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat |
+| `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar |
+| `Mouse wheel` | Hover the sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
 
 ### Copying text and messages
 
-- **With mouse on (default):** drag inside the chat to select and copy. Selection is clamped to the chat pane, so the sidebar is never included; dragging to the top/bottom edge auto-scrolls.
-- **Double-click** a chat line to select the whole rendered line.
-- **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, or `Copy plain text` — the menu lists only what the block actually contains.
-- With mouse off, native terminal selection works normally; start with `pitago --mouse=false` or toggle at runtime with `/mouse off`.
-- `Ctrl+Y` / `/yank` / `/copy` copies the last assistant answer; `Ctrl+O` opens the message picker.
-- `/copy-md`, `/copy-tables`, and `/copy-code` copy semantic content from the last assistant message.
-- Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial drag selection copies ANSI/OSC-free visible text.
-- In hosted sessions (terminal multiplexers / remote panes), Pitago emits OSC 52 to the controlling terminal. Delivery depends on the terminal's OSC 52 support; if it is unavailable or the payload exceeds the safe cap, Pitago reports the copy failure instead of claiming success. Other sessions use the local system clipboard with platform fallbacks.
+| Action | How |
+| ------ | --- |
+| Drag-select | With mouse on (default): drag inside the chat — selection is clamped to the chat pane, edge auto-scrolls |
+| Select a line | **Double-click** a chat line |
+| Copy a block | **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, `Copy plain text` — the menu only lists what the block contains |
+| Mouse off | Native terminal selection; toggle at runtime with `/mouse off` |
+| Last answer | `Ctrl+Y` / `/yank` / `/copy`, or `/copy-md` `/copy-tables` `/copy-code` for semantic content |
+| Any message | `Ctrl+O` opens the yank picker |
+
+Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial drag selection copies visible text without ANSI/OSC sequences. In hosted sessions pitago emits OSC 52 — if the terminal does not support it, or the payload is too large, the copy failure is reported instead of claiming success.
 
 ## Commands
 
-Type `/` to open the command popup. Two kinds:
+Type `/` to open the command popup. Builtins are intercepted locally and re-implemented over RPC; extension/prompt/skill commands come from pi's `get_commands` and run server-side.
 
-### Builtins
-
-(intercepted locally, re-implemented over RPC):
-
-- `/model` — change model
-- `/recent` — recent models picker
-- `/yank` / `/copy` — copy last answer to clipboard
-- `/copy-md` / `/copy-tables` / `/copy-code` — semantic copy from the last assistant message
-- `/sidebar` — hide/show sidebar
-- `/theme` — switch TUI theme (`/theme` opens picker, `/theme gruvbox` applies directly; or `pitago --theme one-dark`)
-- `/pet` — pick the sidebar pet. `/pet` opens a two-pane dialog in the `/model` shape: left = the entry list (18 animals plus the `ascii` and `classic` looks, `▸` cursor, `●` the one in use, type to filter, `↑↓` move, `Enter` applies, `Esc` cancels), right = a live demo of the highlighted entry. `/pet dragon`, `/pet ascii` and `/pet classic` apply directly. In the **ascii** look the sidebar block draws the animal (name inline, 5 rows) and the animals take turns every ~20s; in the **classic** look it draws the compact animated kaomoji face with the status label on one row (2 rows, no `PET` title) and nothing rotates
-- `/plugins` — collapse/expand installed pi plugins in the sidebar
-- `/mouse` — toggle mouse (click sidebar, wheel scroll) at runtime, `[on|off]`; off for native text selection
-- `/update` — check GitHub releases + install latest (auto-checks in background, once a day)
-- `/thinking` — toggle thinking level
-- `/mcp` — MCP server manager, pi parity. One row per configured server: name plus `state · exposure · global|project` (`connected · 12 tools · 2 resources`, `failed: <first line of the error>`, `needs sign-in`, `disabled`), **servers needing attention first**, then by name; type to filter (the wheel moves the selection). `Enter` opens pi's per-server menu on the picked row — `Sign in` (only when it needs one; runs `pi mcp login` in the background with a status line, so the UI never blocks), `Tools` (the tool list), `Reconnect`, `Sign out` (deletes the stored OAuth credentials), `Exposure`, `Disable`; a disabled server offers `Enable` instead. `Esc`/`Ctrl+C` backs out to the list with the same row selected. Exposure and enable/disable are written into the `mcp.json` that defines the server, keeping every other key, its order and its indentation; the default value (`codemode`, enabled) removes the key rather than writing it, exactly like pi's own `updateMcpServerConfig`. Outside the manager the same actions run directly: `/mcp login <server>`, `/mcp logout <server>`, `/mcp reconnect <server>`. Data comes from `pi mcp list --json` (which is also what connects the servers, so it backs `Reconnect`); `/reload` is still needed for a *running session* to pick up a newly added server
-- `/tree` — session tree, pi-style rows. `Enter` (or a left click when mouse is on) opens pi's follow-up **Tree action** menu on the picked row: `Jump to message` (scrolls the chat to that message and marks it), `Copy entry`, `Fork from here` (user rows only — pi's fork rejects any other entry), `Back to tree`; rows that are not chat messages offer `View entry` (prints the full entry, e.g. a compaction or a label) instead of the jump. `Esc`/`Ctrl+C` returns to the tree with the same row selected. Real branch navigation (pi's `navigateTree` + `Summarize branch?`) is not possible over RPC — pi 0.87.1 has no `navigate_tree` command — so the menu is local; the tree itself is read-only over RPC
-- `/trajectory [all|tools|messages]` — harness-style run trace window (numbered steps with time + kind, type to filter, `Enter` views the full step in chat)
-- `/notification [filter]` — browse notification history (time + info/error, newest first; in RAM for the current Pitago run, max 200)
-- `/settings` — agent settings, pi parity (22 rows: model · thinking · steering · follow-up · auto-compact · auto-retry · theme + skill commands · show images · image width · auto-resize · block images · transport · http timeout · cache warming · hide thinking · cache-miss notices · project trust · quiet startup · telemetry · autocomplete max · tree filter; file rows save to `~/.pi/agent/settings.json` and reconnect pi; dialog shows pi-style position `(6/33)`)
-- `/pitago-setting` — Pitago settings hub: agent, skills, prompts, extensions, plugins, MCP servers, session tool stats, tasks, theme, login (Tasks also carries **Show task widget above editor** — the todos are already mirrored into the sidebar, and the widget claims chat rows above the input)
-
-  The Tasks section's display rows — **Collapse completed tasks**, **Show all tasks in widget**, **Max visible tasks in widget**, **Widget sort order**, **Hidden tasks position** — are read from `tasks-config.json` (global `~/.pi/agent/tasks-config.json`, project `.pi/tasks-config.json` overriding) and compose in pi-tasks' documented order: sort, then collapse, then truncate. The header always counts every task regardless of these settings. `Task storage` (`taskScope`) is honoured too; `Auto-cascade agent tasks` and `Auto-clear completed tasks` are stored but not yet applied (they are behavioural, not display, settings).
-- `/login` / `/logout` — manage logins: API keys + pi OAuth/subscriptions (`/login`: left providers, right keys + auth — `Enter` use/add, `⌫` delete/disconnect, `s` show/hide key, `r` rename, `Ctrl+P` model picker, `Esc` close; stays open, pi reconnects behind)
-- `/reload` — reload extensions
-- `/new` — new session
-- `/resume` — resume picker (like pi: current project, Tab for all)
-- `/quit` — exit
-- `/session` — session management
-- `/compact [instructions]` — summarize the context now (pi's own `compact` RPC; an LLM call, so it can take a while). While it runs, pi's **status indicator** is mirrored in the input box's top border — an animated braille spinner plus one of pi's three labels, verbatim: `Compacting context... (escape to cancel)` (manual), `Context overflow detected, Auto-compacting... (escape to cancel)` (overflow), `Auto-compacting... (escape to cancel)` (threshold). It is a border indicator, not a chat line, so no row is painted in the transcript. The `(escape to cancel)` hint is honest: one `Esc` press cancels the compaction, sending pi's own generic `abort` command, which reaches `session.abortCompaction()` (it outranks bash cancel, auto-retry cancel and the double-`Esc` turn cancel for the duration, exactly as in pi). One difference remains: pi has no compaction-ONLY abort over RPC, so when an **automatic** compaction lands mid-turn `Esc` also stops the agent run, where pi would cancel only the compaction. The indicator is reconciled against `get_state.isCompacting`, so a dropped event cannot freeze the spinner. Afterwards the transcript is re-read from pi, so the summary shows up as pi's own block: a bold `[compaction]` label, a blank row, then `Compacted from 12,345 tokens (ctrl+g to expand)`; expanded (`Ctrl+G`) it becomes `**Compacted from 12,345 tokens**` plus the summary as markdown and a `ctrl+g to collapse` hint. Auto-compaction mid-turn renders the same block in place, an aborted run reports `Compaction cancelled` (manual) or `Auto-compaction cancelled` (automatic), and a branch summary is the twin with a `[branch]` label and `Branch summary (ctrl+g to expand)`. pi's `Compaction: 12,345 tokens billed (~$0.03)` line is shown only when pi's own `showCacheMissNotices` setting is on (off by default)
-
-### Extension / prompt / skill
-
-(from pi's `get_commands`): forwarded to pi as `/...` prompt text, executed server-side.
-
-## Sidebar
-
-The right column (pi session-panel style) shows:
-
-- **SESSION** — first message + session id
-- Model + thinking level
-- Context bar (`used/total tkns`)
-- **Stats | Tokens** — `time`, `last`, `speed`, `turns`, context left, `in/out/total/cache/cost`
-- Clickable **RECENT MODELS** and **COMMANDS** counts
-- Collapsible **PLUGINS** — installed pi packages (`pi list`), click the header or `/plugins` to collapse/expand
-- **WORKSPACE** — git status (branch + per-file `+add -del`, refreshed every 10s and after each turn)
-- Current working directory
-
-Hidden on terminals narrower than 80 columns.
-Long content scrolls inside the sidebar (`Ctrl`/`Alt`+`↑↓ PgUp PgDn Home End`, or mouse wheel over it).
+| Command | Action |
+| ------- | ------ |
+| `/model` · `/recent` | Change model · recent models picker |
+| `/yank` `/copy` `/copy-md` `/copy-tables` `/copy-code` | Copy the last assistant answer, whole or semantic |
+| `/sidebar` · `/mouse [on\|off]` | Hide/show sidebar · toggle mouse (click + wheel) |
+| `/theme [name]` | Switch theme — picker, or apply directly (`pitago --theme one-dark`) |
+| `/pet [name\|ascii\|classic]` | Sidebar pet: picker dialog, or apply directly |
+| `/plugins` | Collapse/expand installed pi plugins in the sidebar |
+| `/thinking` | Toggle thinking level |
+| `/mcp` | MCP server manager: per-server login, tools, reconnect, exposure, enable/disable |
+| `/tree` | Session tree with jump-to-message, copy entry, fork from here |
+| `/trajectory [all\|tools\|messages]` | Harness-style run trace window |
+| `/notification [filter]` | Notification history (time + info/error, newest first) |
+| `/settings` | Agent settings (22 rows), saved to `~/.pi/agent/settings.json` |
+| `/pitago-setting` | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login |
+| `/login` · `/logout` | Manage API keys + pi OAuth/subscriptions |
+| `/live` | Attach read-only to a running `pi` session |
+| `/reload` | Reload extensions |
+| `/new` · `/resume` · `/session` | New session · resume picker · session management |
+| `/compact [instructions]` | Compact the context now (an LLM call, can take a while) |
+| `/update` | Check GitHub releases and install the latest |
+| `/quit` | Exit |
 
 ## Layout (MVC + core/ext/pitago)
 
-Source tree and import rules — see [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md).
+`app` is a thin MVC shell, `components` holds pure view primitives, `ext` and `pitago` are separate pure domain layers, `builtin` is a command surface over RPC, and `pirpc`/`update` are the backend edges. `script/check-layers.sh` enforces the one-way import graph.
 
-In short: `app` is a thin MVC shell, `components` holds pure view primitives,
-`ext` and `pitago` are separate pure domain layers, `builtin` is a command surface over RPC, and `pirpc`/`update` are the backend edges. `script/check-layers.sh` enforces the one-way import graph.
+Full map and import rules: [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md).
 
-## Configuration Files
+## Configuration
 
-- `~/.config/pitago/keys.json` (0600) — saved API keys, several per provider with one active + optional name/added-date (`/login`, `/logout`; active key is also written to pi's `auth.json` so pi sees models)
-- `~/.config/pitago/pi_auth.json` (0600) — mirrored pi logins (OAuth account/expiry, no secrets) so `/login` lists + disconnects subscriptions done in stock pi
-- `~/.config/pitago/recent_models.json` — recent models (max 5)
-- `~/.config/pitago/prefs.json` (0600) — display prefs + the last model you picked (`currentModel`), passed to `pi` as `--provider/--model` at startup so a new window reopens on it (explicit `--provider`/`--model` flags win); also the sidebar pet (`pet`, missing = default `cat`) and its look (`petStyle`: `ascii` (default) or `classic`); `taskWidgetOff: true` hides the above-editor task widget (default shown)
-- `~/.config/pitago/theme.json` — active TUI theme (25 built-ins: default, one-dark, gruvbox, catppuccin-mocha, dracula… — `/theme` lists all)
-- `~/.config/pitago/update.json` — last update-check timestamp + tag (24h TTL)
-- `/tmp/pitago-pi-stderr.log` — pi child stderr
+State lives in `~/.config/pitago/` — keys, logins, recent models, prefs, theme. Per-file reference: [resources/doc/CONFIGURATION.md](resources/doc/CONFIGURATION.md).
+
