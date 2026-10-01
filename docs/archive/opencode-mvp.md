@@ -1,6 +1,6 @@
 # opencode-mvp — Go TUI agent like opencode (MVP)
 
-> SUPERSEDED by `pi-wrap.md`. The direct OpenAI-client MVP
+> SUPERSEDED by [docs/design.md](../design.md). The direct OpenAI-client MVP
 > (`internal/{llm,agent,tools}`) was deleted; pi is the backend now.
 > Kept for history.
 

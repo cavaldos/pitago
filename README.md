@@ -37,20 +37,15 @@ _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built wit
 
 ## Install
 
-### Release binary (macOS and Linux)
-
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/cavaldos/pitago/main/script/install.sh | bash
-```
 
-### Windows (PowerShell)
-
-```powershell
+# Windows (PowerShell)
 Invoke-WebRequest https://github.com/cavaldos/pitago/releases/latest/download/pitago-windows-amd64.exe -OutFile pitago.exe
-# move pitago.exe somewhere on your PATH, then: pitago --version
 ```
 
-### From source
+From source:
 
 ```bash
 git clone https://github.com/cavaldos/pitago.git
@@ -73,52 +68,46 @@ script/run.sh                        # or: go run ./src
 ## Quick Start
 
 ```bash
-# From the repo root — everything lives under src/
-go run ./src
-
-# Open another working directory (flags first, then the path)
-go run ./src ~/Code/workspace
-go run ./src --cwd ~/Code/workspace
-
-# Resume most recent session
-go run ./src -c
-
-# Don't persist a session
-go run ./src --no-session
-
-# Load no pi extensions (same as `pi -ne`)
-go run ./src -ne      # or --no-extensions
-
-# Self-update to the latest GitHub release
-go run ./src --update   # or /update inside the app
+go run ./src                        # start in this directory
+go run ./src ~/Code/workspace       # or open another directory (flags first)
+go run ./src -c                     # resume the most recent session
+go run ./src -ne                    # load no pi extensions (same as `pi -ne`)
+go run ./src --update               # self-update to the latest GitHub release
 ```
 
-## Live sessions (read-only)
 
-Press `/live` to list the `pi` sessions running in the current directory and attach to one of them. It appears live in an `EXTERNAL · READ-ONLY` view; `/live` again or `Ctrl+D` detaches and you can type prompts normally.
+<details>
+<summary><b>Commands &amp; keybindings</b> (full list)</summary>
 
-You start the `pi` sessions yourself; pitago only views them. Two sources are offered in the same picker: a **bridge** session (token-level streaming, busy spinner) and a **session file** session, which works with any running `pi` — no restart, no extension, nothing required of that process.
+### Commands
 
-Full documentation: [resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md).
+Type `/` to open the command popup. Builtins are intercepted locally and re-implemented over
+RPC; extension/prompt/skill commands come from pi's `get_commands` and run server-side.
 
-## Build & Test
+| Command | Action |
+| ------- | ------ |
+| `/model` · `/recent` | Change model · recent models picker |
+| `/yank` `/copy` `/copy-md` `/copy-tables` `/copy-code` | Copy the last assistant answer, whole or semantic |
+| `/sidebar` · `/mouse [on\|off]` | Hide/show sidebar · toggle mouse (click + wheel) |
+| `/theme [name]` | Switch theme — picker, or apply directly (`pitago --theme one-dark`) |
+| `/pet [name\|ascii\|classic]` | Sidebar pet: picker dialog, or apply directly |
+| `/plugins` | Collapse/expand installed pi plugins in the sidebar |
+| `/thinking` | Toggle thinking level |
+| `/mcp` | MCP server manager: per-server login, tools, reconnect, exposure, enable/disable |
+| `/tree` | Session tree with jump-to-message, copy entry, fork from here |
+| `/trajectory [all\|tools\|messages]` | Harness-style run trace window |
+| `/notification [filter]` | Notification history (time + info/error, newest first) |
+| `/settings` | Agent settings, saved to `~/.pi/agent/settings.json` |
+| `/pitago-setting` | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login |
+| `/login` · `/logout` | Manage API keys + pi OAuth/subscriptions |
+| `/live` | Attach read-only to a running `pi` session |
+| `/reload` | Reload extensions |
+| `/new` · `/resume` · `/session` | New session · resume picker · session management |
+| `/compact [instructions]` | Compact the context now (an LLM call, can take a while) |
+| `/update` | Check GitHub releases and install the latest |
+| `/quit` | Exit |
 
-```bash
-go vet ./...                    # vet
-go build -o /tmp/pitago ./src  # build
-go test ./...                  # test
-```
-
-## Release
-
-Tag push triggers the `release` workflow, which cross-builds (linux-amd64, darwin-amd64/arm64, windows-amd64) and publishes a GitHub Release:
-
-```bash
-script/test-cicd.sh        # check vet + test + builds locally first
-script/release.sh v0.0.1
-```
-
-## Keybindings
+### Keybindings
 
 | Key | Action |
 | --- | --- |
@@ -138,13 +127,11 @@ script/release.sh v0.0.1
 | `@` | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision) |
 | `↑↓ PgUp PgDn` | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat |
 | `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar |
-| `Mouse wheel` | Hover the sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
+| `Mouse wheel` | Hover sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
 
 ### Copying text and messages
 
-<div align="center">
-  <sub>▶ <a href="https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07">Video demo</a></sub>
-</div>
+<sub>▶ <a href="https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07">Video demo</a></sub>
 
 | Action | How |
 | ------ | --- |
@@ -155,42 +142,35 @@ script/release.sh v0.0.1
 | Last answer | `Ctrl+Y` / `/yank` / `/copy`, or `/copy-md` `/copy-tables` `/copy-code` for semantic content |
 | Any message | `Ctrl+O` opens the yank picker |
 
-Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial drag selection copies visible text without ANSI/OSC sequences. In hosted sessions pitago emits OSC 52 — if the terminal does not support it, or the payload is too large, the copy failure is reported instead of claiming success.
+Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial
+drag selection copies visible text without ANSI/OSC sequences.
 
-## Commands
+</details>
 
-Type `/` to open the command popup. Builtins are intercepted locally and re-implemented over RPC; extension/prompt/skill commands come from pi's `get_commands` and run server-side.
+## Development
 
-| Command | Action |
-| ------- | ------ |
-| `/model` · `/recent` | Change model · recent models picker |
-| `/yank` `/copy` `/copy-md` `/copy-tables` `/copy-code` | Copy the last assistant answer, whole or semantic |
-| `/sidebar` · `/mouse [on\|off]` | Hide/show sidebar · toggle mouse (click + wheel) |
-| `/theme [name]` | Switch theme — picker, or apply directly (`pitago --theme one-dark`) |
-| `/pet [name\|ascii\|classic]` | Sidebar pet: picker dialog, or apply directly |
-| `/plugins` | Collapse/expand installed pi plugins in the sidebar |
-| `/thinking` | Toggle thinking level |
-| `/mcp` | MCP server manager: per-server login, tools, reconnect, exposure, enable/disable |
-| `/tree` | Session tree with jump-to-message, copy entry, fork from here |
-| `/trajectory [all\|tools\|messages]` | Harness-style run trace window |
-| `/notification [filter]` | Notification history (time + info/error, newest first) |
-| `/settings` | Agent settings (22 rows), saved to `~/.pi/agent/settings.json` |
-| `/pitago-setting` | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login |
-| `/login` · `/logout` | Manage API keys + pi OAuth/subscriptions |
-| `/live` | Attach read-only to a running `pi` session |
-| `/reload` | Reload extensions |
-| `/new` · `/resume` · `/session` | New session · resume picker · session management |
-| `/compact [instructions]` | Compact the context now (an LLM call, can take a while) |
-| `/update` | Check GitHub releases and install the latest |
-| `/quit` | Exit |
+```bash
+go vet ./...                    # vet
+go build -o /tmp/pitago ./src  # build
+go test ./...                  # test
+script/test-cicd.sh             # what CI runs, locally first
+```
 
-## Layout (MVC + core/ext/pitago)
+A tag push cross-builds (linux-amd64, darwin-amd64/arm64, windows-amd64) and publishes a GitHub
+Release: `script/release.sh v0.0.1`.
 
-`app` is a thin MVC shell, `components` holds pure view primitives, `ext` and `pitago` are separate pure domain layers, `builtin` is a command surface over RPC, and `pirpc`/`update` are the backend edges. `script/check-layers.sh` enforces the one-way import graph.
+`app` is a thin MVC shell, `components` holds pure view primitives, `ext` and `pitago` are
+separate pure domain layers, `builtin` is a command surface over RPC, and `pirpc`/`update` are
+the backend edges. `script/check-layers.sh` enforces the one-way import graph.
 
-Full map and import rules: [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md).
+## Docs
 
-## Configuration
-
-State lives in `~/.config/pitago/` — keys, logins, recent models, prefs, theme. Per-file reference: [resources/doc/CONFIGURATION.md](resources/doc/CONFIGURATION.md).
-
+| Doc | What |
+| --- | ---- |
+| [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md) | Directory map and the import rules |
+| [resources/doc/CONFIGURATION.md](resources/doc/CONFIGURATION.md) | Every file under `~/.config/pitago/` |
+| [resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md) | Attaching to a running `pi` session |
+| [resources/doc/CONTRIBUTING.md](resources/doc/CONTRIBUTING.md) | Dev workflow, layers, tests |
+| [docs/design.md](docs/design.md) | Design notes: why each decision looks the way it does |
+| [docs/subagent-surface-hosts.md](docs/subagent-surface-hosts.md) | Subagent surface hosts |
+| [pirust/README.md](pirust/README.md) | Rust port of the same UI (`ratatui` + `crossterm`) |

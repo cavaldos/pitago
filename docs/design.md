@@ -1,4 +1,4 @@
-# pi-wrap — Go TUI wrapping `pi --mode rpc`
+# pitago — design notes (Go TUI frontend for `pi --mode rpc`)
 
 ## Idea
 
