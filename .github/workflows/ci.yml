@@ -23,31 +23,8 @@ jobs:
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-  # The test suite, with the race detector on: pirpc runs its reader, pump
-  # and process-waiter goroutines concurrently with the UI thread.
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - run: go test ./... -race -count=1
-
-  # JSONL wire contract with pi. The real pi binary is not available on the
-  # runner, so the two live-pi tests in src/pirpc would skip; this job builds
-  # the stdlib fake pi server (tests/fakepi) and points PI_BIN at it, which
-  # makes those tests run and adds tests/wire, which pins the exact payload
-  # of every command sender.
-  wire:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - run: bash script/test-wire.sh
-
+  # Tests run only on release tags, in release.yml. Pushes and PRs stay on
+  # quality + build.
   build:
     runs-on: ubuntu-latest
     steps:

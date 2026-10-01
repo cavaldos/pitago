@@ -16,6 +16,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Tests run only here, on release tags. The race detector is on: pirpc
+      # runs its reader, pump and process-waiter goroutines concurrently with
+      # the UI thread. A failure here stops the release before any binary is
+      # published.
+      - name: Test
+        run: go test ./... -race -count=1
+
+      # JSONL wire contract with pi. The real pi binary is not available on
+      # the runner, so this builds the stdlib fake pi server (tests/fakepi) and
+      # points PI_BIN at it, which makes the live-pi tests run and pins the
+      # exact payload of every command sender.
+      - name: Wire test
+        run: bash script/test-wire.sh
+
       - name: Build binaries
         env:
           CGO_ENABLED: "0"
