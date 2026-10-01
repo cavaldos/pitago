@@ -39,11 +39,22 @@ func kittyTestModel(img chat.Image) Model {
 	}
 }
 
-// Every render emits upload + place + placeholders, and every render of
-// the same image at the same width is byte-identical. That identity is
-// what keeps the payload off the wire: the Bubble Tea renderer only writes
-// a line that changed since the last frame it painted.
-func TestImageLinesCarryUploadAndStayIdentical(t *testing.T) {
+// captureImageOut swaps the raw terminal writer for a buffer so a test can
+// see the payload that leaves the frame.
+func captureImageOut(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	old := ImageOut
+	ImageOut = buf
+	t.Cleanup(func() { ImageOut = old })
+	return buf
+}
+
+// The frame carries place + placeholders only; the payload goes out of band
+// exactly once, and every later render of the same image at the same width
+// is byte-identical.
+func TestImageLinesPlaceInFrameAndUploadOutOfBand(t *testing.T) {
+	out := captureImageOut(t)
 	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
 	m := kittyTestModel(img)
 	m.vp = viewport.New(50, 20)
@@ -52,8 +63,14 @@ func TestImageLinesCarryUploadAndStayIdentical(t *testing.T) {
 	if len(first) != 10 {
 		t.Fatalf("1x1 png at width 20 reserves 10 rows, got %d", len(first))
 	}
-	if n := strings.Count(first[0], "a=t,f=100"); n != 1 {
-		t.Fatalf("first render must upload once: %q", first[0][:120])
+	// The payload must not be in the frame: a scrolled repaint rewrites that
+	// line, and re-transmitting a known id makes the terminal delete the
+	// image and its placements before re-placing them.
+	if strings.Contains(strings.Join(first, "\n"), "a=t") {
+		t.Fatal("the frame must not carry the payload")
+	}
+	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
+		t.Fatalf("payload must reach the terminal once, got %d: %q", n, out.String()[:120])
 	}
 	if !strings.Contains(first[0], "a=p,q=2,U=1") || !strings.Contains(first[0], "c=20,r=10") {
 		t.Fatalf("first row must place with geometry: %q", first[0][:160])
@@ -72,14 +89,14 @@ func TestImageLinesCarryUploadAndStayIdentical(t *testing.T) {
 	}
 
 	second := m.imageLines([]chat.Image{img}, 50)
-	if !strings.Contains(second[0], "a=t,f=100") {
-		t.Fatalf("second render must still carry the upload: %q", second[0][:120])
+	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
+		t.Fatalf("re-render must not re-upload, got %d", n)
 	}
 	if !strings.Contains(second[0], "a=p,q=2,U=1") {
 		t.Fatalf("second render must still place: %q", second[0][:120])
 	}
 	if strings.Join(second, "\n") != strings.Join(first, "\n") {
-		t.Fatal("renders of one image must be byte-identical, or the renderer rewrites the payload every frame")
+		t.Fatal("renders of one image must be byte-identical, or the renderer rewrites the line every frame")
 	}
 	if len(m.imgState().up) != 1 {
 		t.Fatalf("upload cache = %v", m.imgState().up)
@@ -92,6 +109,7 @@ func TestImageLinesCarryUploadAndStayIdentical(t *testing.T) {
 // view must still carry the full upload, or the terminal places an image
 // id it never received and shows nothing at all.
 func TestImageLinesSurviveAnUnpaintedRender(t *testing.T) {
+	out := captureImageOut(t)
 	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
 	m := kittyTestModel(img)
 	m.vp = viewport.New(50, 20)
@@ -100,13 +118,38 @@ func TestImageLinesSurviveAnUnpaintedRender(t *testing.T) {
 	m.vp.YOffset = 0
 	m.vp.SetContent("filler\nfiller\nfiller")
 	dropped := m.imageLines([]chat.Image{img}, 50)
-	if !strings.Contains(dropped[0], "a=t,f=100") {
-		t.Fatal("the dropped render must still have carried the payload")
+	if !strings.Contains(strings.Join(dropped, "\n"), "a=p") {
+		t.Fatal("the dropped render must still have placed")
+	}
+	// The payload went straight to the terminal, so it does not matter that
+	// the frame it was rendered in was thrown away.
+	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
+		t.Fatalf("payload must reach the terminal once, got %d", n)
 	}
 	// Now the image scrolls into the painted window.
 	painted := m.imageLines([]chat.Image{img}, 50)
-	if !strings.Contains(painted[0], "a=t,f=100") {
-		t.Fatalf("scrolled-into-view render lost the upload: %q", painted[0][:120])
+	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
+		t.Fatalf("scrolled-into-view render must not re-upload, got %d", n)
+	}
+	if !strings.Contains(painted[0], "a=p,q=2,U=1") {
+		t.Fatalf("scrolled-into-view render lost the place: %q", painted[0][:120])
+	}
+}
+
+// The flicker regression: a repaint that changes the line (scrolling moves
+// the image to another row index) must re-place without re-transmitting.
+// Re-transmitting a known id makes the terminal delete that image and all
+// its placements, so the image blinks out and back on every scrolled row.
+func TestImageRepaintNeverRetransmits(t *testing.T) {
+	out := captureImageOut(t)
+	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
+	m := kittyTestModel(img)
+	m.vp = viewport.New(50, 20)
+	m.imageLines([]chat.Image{img}, 50)
+	// A repaint at a different width, as a resize or a narrower frame does.
+	m.imageLines([]chat.Image{img}, 30)
+	if n := strings.Count(out.String(), "a=t,f=100"); n != 1 {
+		t.Fatalf("resize must not re-transmit the payload, got %d", n)
 	}
 }
 

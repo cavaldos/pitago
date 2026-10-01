@@ -8,26 +8,43 @@
 // transmit-and-place (a=T/a=p without U=1) was tried first and smeared on
 // scroll: screen-cell placements outlive the text written over them.
 //
-// Every render emits the whole sequence (a=t upload + a=p place +
-// placeholder cells) and the result is byte-identical for a given digest
-// and width. That identity is what keeps the payload off the wire: the
-// Bubble Tea renderer only writes a line when it differs from the one it
-// wrote last frame, so a still image is transmitted once, not once per
-// repaint. Stripping the upload after the first render — the previous
-// design — was wrong because a render is not the same thing as a paint:
-// the transcript is rendered for off-screen windows, for measuring passes,
-// and while a dialog covers the chat, and none of those reach the
-// terminal. The upload was then marked done for a frame nobody saw, and
-// every later frame placed an image id the terminal had never received.
-// Rendering must stay pure; dedupe belongs to the renderer.
+// The pixel payload never travels inside the frame. It is a one-shot
+// terminal side effect, written straight to ImageOut the first time a
+// digest is rendered, while the frame itself carries only the ~50 byte
+// place plus placeholder cells. Both of the alternatives were tried and
+// both are worse:
+//
+//   - Payload in every frame (what this used to do): scrolling moves the
+//     image line to a new row index, the renderer rewrites it, and
+//     re-transmitting a known id makes the terminal delete that image and
+//     all its placements before re-placing them. The image blinked, and
+//     every scrolled row cost megabytes.
+//   - Payload in the first frame only: a render is not a paint. The
+//     transcript is also rendered for off-screen windows, for measuring
+//     passes and while a dialog covers the chat, so the upload could be
+//     "sent" to a frame nobody saw and every later frame placed an image
+//     id the terminal had never received.
+//
+// Writing from the render is safe: Bubble Tea v1 drives the renderer from
+// the same event-loop goroutine that calls View, with no ticker, so the
+// payload lands before the frame that references it and never interleaves
+// with one.
 package app
 
 import (
+	"io"
 	"strings"
 
 	"pitago/src/components/chat"
 	terminal_image "pitago/src/components/terminal_image"
 )
+
+// ImageOut is the terminal's raw output, set by main next to the program.
+// Image payloads bypass the Bubble Tea frame and go straight here, once per
+// image (see the file comment for why they cannot ride the frame). nil —
+// tests, embedding — falls back to putting the payload in the frame, which
+// is correct output, just less efficient.
+var ImageOut io.Writer
 
 // cachedImage is one finished image block, ready to print. Reusing the
 // strings is what keeps a repaint free: no per-frame re-chunking of a
@@ -136,11 +153,11 @@ func (m *Model) resolvePNG(img chat.Image) (string, bool) {
 }
 
 // imageLines renders one image per reserved row block. The first row
-// carries the upload + place sequences followed by placeholder cells;
-// continuation rows are placeholder cells only. Viewport padding after
-// the placeholders is harmless — it starts beyond the image columns.
-// Images that cannot be placed (non-kitty protocol, hidden by settings,
-// or an unsupported/undecodable mime) keep the □ fallback, exactly the
+// carries the place sequence followed by placeholder cells; continuation
+// rows are placeholder cells only. Viewport padding after the
+// placeholders is harmless — it starts beyond the image columns. Images
+// that cannot be placed (non-kitty protocol, hidden by settings, or an
+// unsupported/undecodable mime) keep the □ fallback, exactly the
 // historical behaviour.
 func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 	if lineWidth < 1 {
@@ -166,8 +183,8 @@ func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 			out = append(out, hit.lines...)
 			continue
 		}
-		id, known := st.up[img.Digest]
-		if !known {
+		id, sent := st.up[img.Digest]
+		if !sent {
 			id = st.allocImageID()
 			if id == 0 {
 				out = append(out, terminal_image.Fallback())
@@ -180,8 +197,17 @@ func (m *Model) imageLines(images []chat.Image, lineWidth int) []string {
 			out = append(out, terminal_image.Fallback())
 			continue
 		}
-		lines := []string{terminal_image.Upload(data, id) +
-			terminal_image.PlaceUnicode(id, c, r) + firstRow}
+		upload := terminal_image.Upload(data, id)
+		first := terminal_image.PlaceUnicode(id, c, r) + firstRow
+		if ImageOut == nil {
+			first = upload + first
+		} else if !sent {
+			// One shot: the payload leaves the frame here and the frame
+			// never carries it again, so a scrolled repaint re-places the
+			// image instead of re-transmitting (and deleting) it.
+			_, _ = io.WriteString(ImageOut, upload)
+		}
+		lines := []string{first}
 		for i := 1; i < r; i++ {
 			row, ok := terminal_image.PlaceholderRow(id, i, c)
 			if !ok {
