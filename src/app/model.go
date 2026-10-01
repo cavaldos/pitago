@@ -229,6 +229,7 @@ type Model struct {
 	histIdx             int               // -1 = live input, else index into hist while browsing
 	CmdShortcuts        map[string]string // /command → "alt+x" (hub-assigned Alt shortcuts, persisted in prefs)
 	RecentCmds          []string          // last-run /command names, most recent first (top of the "/" popup, persisted in prefs)
+	SuggestPlugins      []string          // user's own suggested plugin names (hub Plugins tab ★ rows, Ctrl+F adds, persisted in prefs)
 	Tidy                bool              // tidy mode: tool blocks render header-only (global pref, all projects)
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
 	themePath           string            // persisted theme ("" = don't persist)
@@ -1391,6 +1392,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.Side = prefs.Side
 	m.CmdShortcuts = prefs.CmdShortcuts
 	m.RecentCmds = prefs.RecentCmds
+	m.SuggestPlugins = prefs.SuggestPlugins
 	m.hideTaskWidget = !prefs.TaskWidgetVisible()
 	m.loadTaskDisplay()
 	palette.Win = prefs.EffectiveAutocompleteMax()

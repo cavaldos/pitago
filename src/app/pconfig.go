@@ -249,6 +249,83 @@ func (m *Model) LoadPsecRows(d *Dialog) {
 	d.Reindex()
 }
 
+// curatedPlugins are the pi packages pitago is built around. They ride the
+// Plugins section as ★ rows: installed or not, the star marks the row as a
+// suggestion. name is the npm name — pi install takes "npm:<name>".
+var curatedPlugins = []pluginSuggestion{
+	{"pi-subagents", "delegate work to background teams"},
+	{"pi-ask-user", "handshake before risky decisions"},
+	{"@dietrichgebert/ponytail", "lazy-senior mode: less code, fewer deps"},
+}
+
+// pluginSuggestion is one ★ package in the Plugins section.
+type pluginSuggestion struct{ name, why string }
+
+// suggestions returns every suggested package: the curated list plus the
+// user's own picks (prefs.json, added with Ctrl+F), curated first and
+// deduped. Static per row build — the model mirrors prefs.
+func (m *Model) suggestions() []pluginSuggestion {
+	out := make([]pluginSuggestion, 0, len(curatedPlugins)+len(m.SuggestPlugins))
+	seen := map[string]bool{}
+	for _, c := range curatedPlugins {
+		if c.name != "" && !seen[c.name] {
+			seen[c.name] = true
+			out = append(out, c)
+		}
+	}
+	for _, n := range m.SuggestPlugins {
+		if n = pluginName(strings.TrimSpace(n)); n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, pluginSuggestion{name: n, why: "your pick"})
+		}
+	}
+	return out
+}
+
+// suggestAddKind is the free-text prompt Ctrl+F opens in the Plugins tab.
+const suggestAddKind = "pluginadd"
+
+// openSuggestAdd pushes the "add a suggested plugin" prompt over the hub
+// (same stacking as the shortcut capture, so Esc returns to the tab).
+func (m *Model) openSuggestAdd() {
+	d := &Dialog{Kind: suggestAddKind, Title: "Suggest a plugin",
+		Message: "npm name · Enter adds it to the ★ list · Esc cancels"}
+	m.Dialogs = append([]*Dialog{d}, m.Dialogs...)
+	m.Refresh()
+}
+
+// AddSuggestPlugin persists a user-picked suggested package (Ctrl+F). Bare
+// npm name: an "npm:" prefix the user pasted is stripped, and anything pi
+// would refuse as a spec never reaches prefs.json.
+func (m *Model) AddSuggestPlugin(name string) {
+	name = pluginName(strings.TrimSpace(name))
+	if name == "" {
+		return
+	}
+	if !validPluginSpec("npm:" + name) {
+		m.AddBlock(Block{Kind: "notice", Text: "not an npm package name: " + name, Err: true})
+		m.Refresh()
+		return
+	}
+	prefs := LoadPrefs(m.prefsPath)
+	for _, s := range m.suggestions() {
+		if s.name == name {
+			m.AddBlock(Block{Kind: "notice", Text: name + " is already suggested"})
+			m.Refresh()
+			return
+		}
+	}
+	prefs.SuggestPlugins = append(prefs.SuggestPlugins, name)
+	if err := SavePrefs(m.prefsPath, prefs); err != nil {
+		m.AddBlock(Block{Kind: "notice", Text: "prefs.json: " + err.Error(), Err: true})
+		m.Refresh()
+		return
+	}
+	m.SuggestPlugins = prefs.SuggestPlugins
+	m.AddBlock(Block{Kind: "notice", Text: "★ " + name + " suggested — Enter installs it"})
+	m.Refresh()
+}
+
 // psecRows builds one section's right pane. Payload parallels Options: the
 // /command name for runnable rows, "@agent"/"@theme"/"@login" for action
 // rows, "" for info-only rows.
@@ -364,9 +441,22 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			payload = []string{""}
 		}
 	case PsecPlugin:
-		msg = "Delete uninstalls the plugin (pi remove) · Marketplace installs new ones · Esc closes"
+		msg = "★ suggested · Enter installs · Delete uninstalls · Ctrl+F suggests your own · Esc closes"
+		// The star is a property of the package, not of the install state:
+		// a suggested package keeps its ★ after being installed, so the
+		// user can still see it is one of ours. Uninstalling drops the row
+		// back to the ★ suggestion list below (same row, installable).
+		sug := m.suggestions()
+		isSug := map[string]bool{}
+		for _, s := range sug {
+			isSug[s.name] = true
+		}
 		for _, p := range m.Plugins {
-			opts = append(opts, p.Name)
+			name, desc := p.Name, p.Spec
+			if isSug[p.Name] {
+				name, desc = "★ "+p.Name, "suggested · "+p.Spec
+			}
+			opts = append(opts, name)
 			if m.plugBusySpec != "" && p.Spec == m.plugBusySpec {
 				// the running op owns this row: spinner + live elapsed
 				opts[len(opts)-1] = m.pluginBusyFrame() + " " + p.Name
@@ -374,13 +464,19 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 				payload = append(payload, "")
 				continue
 			}
-			descs = append(descs, p.Spec)
+			descs = append(descs, desc)
 			payload = append(payload, "")
 		}
-		if len(opts) == 0 {
-			opts = []string{"— no packages —"}
-			descs = []string{"Marketplace installs one"}
-			payload = []string{""}
+		// The suggested-but-not-installed ones: the installable ★ rows.
+		// Payload is the marketplace one, so Enter reuses the single
+		// pi install path (busy gate + confirm + npm spec).
+		for _, s := range sug {
+			if marketInstalled(m, s.name) {
+				continue // already listed above, star and all
+			}
+			opts = append(opts, "★ "+s.name)
+			descs = append(descs, "suggested · "+s.why+" · Enter installs")
+			payload = append(payload, "market:"+s.name)
 		}
 		if m.plugBusyAction != "" {
 			msg = m.pluginBusyLabel(m.plugBusyAction, m.plugBusySpec) +
@@ -1048,7 +1144,7 @@ func (m *Model) FillCommand(name string) {
 // updateDialog path).
 func isFilterKind(kind string) bool {
 	switch kind {
-	case "model", "thinking", "sessions", "login", "logout", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet", "mcp":
+	case "model", "thinking", "sessions", "login", "logout", "trajectory", "tree", "settings", "subagents", "notification", "fork", "pet", "mcp", suggestAddKind:
 		return true
 	}
 	return false
@@ -1109,6 +1205,14 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		return m, nil
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
+		return m, nil
+	case tea.KeyCtrlF:
+		// Suggest your own plugin (Plugins tab only): a free-text prompt
+		// over the hub, persisted to prefs.json when it submits.
+		if d.CurPsec() == PsecPlugin {
+			m.openSuggestAdd()
+			return m, nil
+		}
 		return m, nil
 	case tea.KeyCtrlS:
 		// Assign an Alt-shortcut to the highlighted /command (hub stays

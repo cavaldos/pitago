@@ -528,3 +528,109 @@ func TestOpenTasksSettingsFocusesTab(t *testing.T) {
 		t.Fatalf("tasks rows = %d, want %d", len(d.Options), want)
 	}
 }
+
+// The Plugins section offers the curated pitago packages as ★ rows and the
+// user's own picks (Ctrl+F) beside them. The star is a property of the
+// package, not the install state: installed keeps its ★ (as the installed
+// row), uninstalled keeps it as the installable suggestion row. Ctrl+F
+// persists a new pick to prefs.json.
+func TestPconfigPluginSuggestions(t *testing.T) {
+	rows := func(m *Model) *Dialog {
+		m.OpenPconfig()
+		d := m.Dialogs[0]
+		for i, id := range d.PsecIDs {
+			if id == PsecPlugin {
+				d.ProvCursor = i
+			}
+		}
+		m.LoadPsecRows(d)
+		return d
+	}
+	row := func(d *Dialog, name string) int {
+		for i, o := range d.Options {
+			if o == name || o == "★ "+name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// not installed → installable suggestion row
+	m := testPconfigModel() // only npm:pi-lens installed
+	d := rows(m)
+	ri := row(d, "pi-subagents")
+	if ri < 0 {
+		t.Fatalf("pi-subagents should be suggested, rows: %v", d.Options)
+	}
+	if d.Payload[ri] != "market:pi-subagents" {
+		t.Errorf("suggestion payload = %q, want the marketplace install payload", d.Payload[ri])
+	}
+	if ri2 := row(d, "pi-lens"); ri2 >= 0 && d.Payload[ri2] != "" {
+		t.Error("an installed package must not be installable")
+	}
+
+	// installed → same ★ name, now the installed row (no install payload)
+	m2 := testPconfigModel()
+	m2.Plugins = append(m2.Plugins, Plugin{Spec: "npm:pi-subagents", Name: "pi-subagents"})
+	d2 := rows(m2)
+	ri = row(d2, "pi-subagents")
+	if ri < 0 {
+		t.Fatalf("an installed suggestion must keep its star, rows: %v", d2.Options)
+	}
+	if d2.Options[ri] != "★ pi-subagents" {
+		t.Errorf("installed suggestion row = %q, want the starred name", d2.Options[ri])
+	}
+	if d2.Payload[ri] != "" {
+		t.Error("an installed suggestion must not stay installable")
+	}
+	if n := countRows(d2.Options, "★ pi-subagents"); n != 1 {
+		t.Errorf("pi-subagents should be listed once, got %d", n)
+	}
+
+	// Ctrl+F prompt: typing a name adds a starred row and saves prefs.json
+	prefs := filepath.Join(t.TempDir(), "prefs.json")
+	m2.prefsPath = prefs
+	mm, _ := m2.Update(tea.KeyMsg{Type: tea.KeyCtrlF, Runes: []rune("f")})
+	m3 := mm.(Model)
+	if len(m3.Dialogs) != 2 || m3.Dialogs[0].Kind != suggestAddKind {
+		t.Fatalf("Ctrl+F should open the suggest prompt, got %+v", m3.Dialogs)
+	}
+	mm, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("npm:pi-lens-x")})
+	m3 = mm.(Model)
+	if got := m3.Dialogs[0].Filter; got != "npm:pi-lens-x" {
+		t.Fatalf("typed name should land in the prompt buffer, got %q", got)
+	}
+	mm, _ = m3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m4 := mm.(Model)
+	d4 := m4.Dialogs[0]
+	if ri = row(d4, "pi-lens-x"); ri < 0 {
+		t.Fatalf("the added pick should render, rows: %v", d4.Options)
+	}
+	if d4.Payload[ri] != "market:pi-lens-x" {
+		t.Errorf("added pick payload = %q, want the install payload", d4.Payload[ri])
+	}
+	saved := LoadPrefs(prefs)
+	if len(saved.SuggestPlugins) != 1 || saved.SuggestPlugins[0] != "pi-lens-x" {
+		t.Errorf("prefs.json should hold the bare npm name, got %v", saved.SuggestPlugins)
+	}
+	// a duplicate (already curated or already added) is refused, not doubled
+	m4.AddSuggestPlugin("npm:pi-lens-x")
+	if got := LoadPrefs(prefs).SuggestPlugins; len(got) != 1 {
+		t.Errorf("a duplicate pick should not be appended, got %v", got)
+	}
+	// a fresh process reads the same list back
+	m5 := &Model{prefsPath: prefs, SuggestPlugins: LoadPrefs(prefs).SuggestPlugins}
+	if ri = row(rows(m5), "pi-lens-x"); ri < 0 {
+		t.Error("saved picks should come back on the next run")
+	}
+}
+
+func countRows(opts []string, name string) int {
+	n := 0
+	for _, o := range opts {
+		if o == name {
+			n++
+		}
+	}
+	return n
+}

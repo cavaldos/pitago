@@ -37,6 +37,7 @@ type Prefs struct {
 	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 	RecentCmds      []string          `json:"recentCmds,omitempty"`      // last-run /command names, most recent first (floated to the top of the "/" popup)
+	SuggestPlugins  []string          `json:"suggestPlugins,omitempty"`  // extra packages suggested in the hub Plugins tab (Ctrl+F), bare npm names
 	Tidy            bool              `json:"tidy,omitempty"`            // tidy mode: tool blocks collapse to their header (no args detail, no result/diff/output)
 	TaskWidgetOff   bool              `json:"taskWidgetOff,omitempty"`   // hide the above-editor task widget
 }

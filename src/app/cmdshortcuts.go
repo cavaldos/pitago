@@ -214,3 +214,25 @@ func (m Model) renderShortcutDialog(d *Dialog) string {
 		"",
 	)
 }
+
+// renderSuggestAdd draws the Ctrl+F prompt (a filter buffer with no rows):
+// same compact box as the ui.input prompt, typed npm name plus the cursor.
+func (m Model) renderSuggestAdd(d *Dialog) string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
+	if d.Message != "" {
+		b.WriteString(statusBarStyle.Render(d.Message) + "\n")
+	}
+	b.WriteString("\n")
+	if d.Filter == "" {
+		b.WriteString(toolStyle.Render("e.g. pi-lens or @scope/pkg") + cmdHiStyle.Render("▌") + "\n")
+	} else {
+		b.WriteString(cmdHiStyle.Render(d.Filter+"▌") + "\n")
+	}
+	b.WriteString("\n" + toolStyle.Render("Enter saves to prefs.json · Esc cancels"))
+	box := dlgStyle.Width(72).Render(b.String())
+	return lipgloss.JoinVertical(lipgloss.Center,
+		lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box),
+		"",
+	)
+}

@@ -1680,6 +1680,9 @@ func (m Model) renderDialog() string {
 	if d.Kind == shortcutKind {
 		return m.renderShortcutDialog(d)
 	}
+	if d.Kind == suggestAddKind {
+		return m.renderSuggestAdd(d)
+	}
 	if d.Kind == "subagent-herd" || d.Kind == "subagents-steer" {
 		return m.renderSubagentsDialog(d)
 	}

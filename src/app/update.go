@@ -3145,6 +3145,18 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		m.answerInput(d, false)
 		return m, nil
 	}
+	if d.Kind == suggestAddKind {
+		// Ctrl+F's prompt: the typed name joins the ★ list in prefs.json
+		// and the hub rows rebuild underneath (empty = cancel).
+		name := strings.TrimSpace(d.Filter)
+		m.Dialogs = m.Dialogs[1:]
+		if name != "" {
+			m.AddSuggestPlugin(name) // saves prefs + mirrors the list
+		}
+		m.reloadHubRows("") // the ★ rows must see the new pick
+		m.Refresh()
+		return m, nil
+	}
 	if len(d.FIdx) == 0 {
 		return m, nil
 	}
