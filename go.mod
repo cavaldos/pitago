@@ -18,7 +18,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/image v0.31.0
+	golang.org/x/image v0.46.0
 )
 
 require (
