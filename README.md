@@ -34,17 +34,6 @@ _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built wit
 </div>
 
 
-## Images
-
-Images attached to a message (or returned inside a tool result) are drawn
-inline in the transcript, in terminals that speak the Kitty graphics protocol
-(kitty, ghostty, wezterm, warp). PNG is sent as-is; JPEG, GIF and WebP are
-transcoded to PNG once and cached. Everything else — including terminals
-without the protocol — keeps a `□` placeholder, so the feature is invisible
-where it does not apply.
-
-Sizing follows pi's `terminal.imageWidthCells`; `PITAGO_IMAGE_PROTOCOL`
-(also `PI_IMAGE_PROTOCOL`) forces `kitty`, `iterm2` or `none`.
 
 ## Install
 
@@ -154,8 +143,7 @@ script/release.sh v0.0.1
 ### Copying text and messages
 
 <div align="center">
-  <sub>Video demo</sub><br />
-  https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07
+  <sub>▶ <a href="https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07">Video demo</a></sub>
 </div>
 
 | Action | How |
