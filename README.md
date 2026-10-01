@@ -34,6 +34,18 @@ _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built wit
 </div>
 
 
+## Images
+
+Images attached to a message (or returned inside a tool result) are drawn
+inline in the transcript, in terminals that speak the Kitty graphics protocol
+(kitty, ghostty, wezterm, warp). PNG is sent as-is; JPEG, GIF and WebP are
+transcoded to PNG once and cached. Everything else — including terminals
+without the protocol — keeps a `□` placeholder, so the feature is invisible
+where it does not apply.
+
+Sizing follows pi's `terminal.imageWidthCells`; `PITAGO_IMAGE_PROTOCOL`
+(also `PI_IMAGE_PROTOCOL`) forces `kitty`, `iterm2` or `none`.
+
 ## Install
 
 ### Release binary (macOS and Linux)

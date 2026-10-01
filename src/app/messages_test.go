@@ -126,7 +126,8 @@ func TestLiveNamedToolResultFallbackWithoutContent(t *testing.T) {
 	}
 }
 
-// User echoes retain image payloads for RPC/history but render safe squares.
+// User echoes retain image payloads for RPC/history and render kitty
+// unicode placeholder rows inline.
 func TestUserEchoWithImages(t *testing.T) {
 	m := Model{curAsst: -1, curThink: -1, ShowImages: true, ImageWidthCells: 20,
 		ImageProtocol: terminal_image.Kitty}
@@ -140,8 +141,13 @@ func TestUserEchoWithImages(t *testing.T) {
 	}
 	m.vp = viewport.New(50, 20)
 	got := m.renderBlocks()
-	if !strings.Contains(got, "□") || strings.Contains(got, "\x1b_G") || strings.Contains(got, "\x1b]1337") {
-		t.Fatalf("app image must be fallback-only: %q", got)
+	// The 1x1 png at width 20 reserves 10 rows of 20 placeholder cells,
+	// placed with a U=1 sequence after a one-time upload.
+	if n := strings.Count(got, terminal_image.PlaceholderChar); n != 20*10 {
+		t.Fatalf("want 200 placeholder cells, got %d", n)
+	}
+	if !strings.Contains(got, "a=p,q=2,U=1") || !strings.Contains(got, "a=t,f=100") {
+		t.Fatalf("transcript must place (and upload) the image")
 	}
 	if got := withImages("", 2); got != "📷 2 images attached" {
 		t.Fatalf("image-only = %q", got)
@@ -151,52 +157,72 @@ func TestUserEchoWithImages(t *testing.T) {
 	}
 }
 
-func TestRenderOneBlockImageIsFallbackOnlyForEveryProtocol(t *testing.T) {
+func TestRenderOneBlockImagePlaceholderOnKittyFallbackElsewhere(t *testing.T) {
 	bl := Block{Kind: "user", Text: "look", Images: []chat.Image{
 		chat.NewImage(pngTestData(t, 1, 1), "image/png"),
-		chat.NewImage(pngTestData(t, 1, 1), "image/png"),
 	}}
-	for _, protocol := range []terminal_image.Protocol{terminal_image.Kitty, terminal_image.ITerm2} {
-		for _, show := range []bool{true, false} {
-			m := Model{ShowImages: show, ImageWidthCells: 20, ImageProtocol: protocol}
-			got, skip := m.renderOneBlock(bl, 48)
-			if skip {
-				t.Fatal("user image block was skipped")
-			}
-			if !strings.Contains(got, "\n  □\n  □\n\n") {
-				t.Fatalf("protocol=%q show=%v fallback = %q", protocol, show, got)
-			}
-			if strings.Contains(got, "\x1b_G") || strings.Contains(got, "\x1b]1337") || strings.Contains(got, "\x1b[9A") {
-				t.Fatalf("protocol=%q emitted terminal image escape: %q", protocol, got)
-			}
+	// Kitty + shown: placeholder rows, flush-left below the user box.
+	m := Model{ShowImages: true, ImageWidthCells: 20, ImageProtocol: terminal_image.Kitty}
+	got, skip := m.renderOneBlock(bl, 48)
+	if skip {
+		t.Fatal("user image block was skipped")
+	}
+	if n := strings.Count(got, terminal_image.PlaceholderChar); n != 20*10 {
+		t.Fatalf("kitty want 200 placeholder cells, got %d", n)
+	}
+	if !strings.Contains(got, "a=p,q=2,U=1") || strings.Contains(got, "□") {
+		t.Fatalf("kitty must place placeholders: %q", got[:200])
+	}
+	// iTerm2, hidden, or no protocol: the historical □ fallback, no escapes.
+	for _, tc := range []struct {
+		name     string
+		show     bool
+		protocol terminal_image.Protocol
+	}{
+		{"iterm2", true, terminal_image.ITerm2},
+		{"hidden", false, terminal_image.Kitty},
+		{"none", true, ""},
+	} {
+		m := Model{ShowImages: tc.show, ImageWidthCells: 20, ImageProtocol: tc.protocol}
+		got, skip := m.renderOneBlock(bl, 48)
+		if skip {
+			t.Fatalf("%s: user image block was skipped", tc.name)
+		}
+		if !strings.HasSuffix(got, "□\n") {
+			t.Fatalf("%s: fallback = %q", tc.name, got)
+		}
+		if strings.Contains(got, "\x1b_G") || strings.Contains(got, "\x1b]1337") || strings.Contains(got, terminal_image.PlaceholderChar) {
+			t.Fatalf("%s: emitted image bytes: %q", tc.name, got)
 		}
 	}
 }
 
-func TestRenderBlocksPurgesOldImageEscapeCacheAndStaysStable(t *testing.T) {
+func TestRenderBlocksImageStableAcrossScroll(t *testing.T) {
 	img := chat.NewImage(pngTestData(t, 1, 1), "image/png")
-	m := Model{blocks: []Block{{Kind: "user", Text: "look", Images: []chat.Image{img, img}}},
+	m := Model{blocks: []Block{{Kind: "user", Text: "look", Images: []chat.Image{img}}},
 		ShowImages: true, ImageWidthCells: 20, ImageProtocol: terminal_image.Kitty}
 	m.vp = viewport.New(50, 20)
-	// Simulate cache written by the old real-image path. The current key must
-	// not allow that placement escape to survive repaint/scroll.
-	m.renderCache = []string{"\x1b_Ga=T;OLD\x1b\\"}
-	m.renderCacheKey = []uint64{blockKey(m.blocks[0], m.vp.Width-2, false, false, "", false)}
-
 	first := m.renderBlocks()
-	if strings.Contains(first, "\x1b_G") || strings.Contains(first, "\x1b]1337") || !strings.Contains(first, "\n  □\n  □\n") {
-		t.Fatalf("old cache escaped fallback: %q", first)
+	if n := strings.Count(first, terminal_image.PlaceholderChar); n != 20*10 {
+		t.Fatalf("want 200 placeholder cells, got %d", n)
 	}
+	// Scroll repaint: renderBlocks is offset-independent, so the
+	// placeholder grid is stable and the upload is not resent. With U=1
+	// the image lives in the cells, so scrolling needs no delete pass.
 	m.vp.YOffset = 3
 	repaint := m.renderBlocks()
-	if repaint != first {
-		t.Fatalf("scroll repaint changed transcript: first=%q repaint=%q", first, repaint)
+	if n := strings.Count(repaint, terminal_image.PlaceholderChar); n != 20*10 {
+		t.Fatalf("scroll must keep 200 placeholder cells, got %d", n)
 	}
+	if !strings.Contains(repaint, "a=p,q=2,U=1") || strings.Contains(repaint, "a=t,f=100") {
+		t.Fatalf("scroll must place without re-uploading")
+	}
+	// Non-kitty protocol falls back to squares with no escapes.
 	m.ImageProtocol = terminal_image.ITerm2
 	m.ImageWidthCells = 120
 	m.ShowImages = false
-	if got := m.renderBlocks(); got != first {
-		t.Fatalf("protocol/settings changed square transcript: first=%q got=%q", first, got)
+	if got := m.renderBlocks(); strings.Contains(got, "\x1b_G") || !strings.Contains(got, "□") {
+		t.Fatalf("fallback transcript = %q", got)
 	}
 }
 

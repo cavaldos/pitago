@@ -11,7 +11,6 @@ import (
 
 	"pitago/src/components/format"
 	"pitago/src/components/markdown"
-	terminal_image "pitago/src/components/terminal_image"
 	"pitago/src/extension"
 	"pitago/src/pirpc"
 )
@@ -154,14 +153,11 @@ func (m *Model) renderBlocks() string {
 		// next visible block will use and the table never drifts.
 		m.blockRows[i] = cursor
 		m.blockLine[i] = line
-		// Image-bearing transcript blocks are always rebuilt as safe squares.
-		// This purges any cache entry created by an older image-render path
-		// before scroll/repaint can re-emit Kitty/iTerm placement escapes.
-		if len(bl.Images) > 0 {
-			m.renderCache[i], m.renderCacheKey[i] = "", 0
-		}
+		// Image-bearing blocks bypass the cache: their first render embeds a
+		// one-time upload, and a cached replay would resend the payload on
+		// every frame. Re-rendering them is a few string concats.
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
-		if m.renderCacheKey[i] == key {
+		if len(bl.Images) == 0 && m.renderCacheKey[i] == key {
 			s := m.renderCache[i]
 			b.WriteString(s)
 			cursor += ly(s)
@@ -172,6 +168,8 @@ func (m *Model) renderBlocks() string {
 		if skip {
 			s = ""
 		}
+		// Stored for gutter/selection bookkeeping below, but never
+		// loaded back for image blocks (see the load guard above).
 		m.renderCacheKey[i] = key
 		m.renderCache[i] = s
 		b.WriteString(s)
@@ -322,19 +320,15 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 	switch bl.Kind {
 	case "user":
 		icon = statusBarStyle.Render("●")
-		// Transcript is fallback-only until an image-aware viewport can manage
-		// Kitty/iTerm placement lifecycle. Never put real image escapes into
-		// the scrollable Bubbletea output.
-		body = strings.TrimSuffix(userStyle.Width(cw-2).Render(bl.Text), "\n")
-		imageLines := make([]string, len(bl.Images))
-		for i := range imageLines {
-			imageLines[i] = terminal_image.Fallback()
+		body = strings.TrimSuffix(userStyle.Width(cw-2).Render(bl.Text), "\n") + "\n\n"
+		// Images sit flush-left below the user box as kitty unicode
+		// placeholders: viewport padding after the placeholders is
+		// harmless (it starts beyond the image columns).
+		s := gutterBox(icon, body)
+		if imgs := m.imageLines(bl.Images, cw+2); len(imgs) > 0 {
+			s += strings.Join(imgs, "\n") + "\n"
 		}
-		if len(imageLines) > 0 {
-			body += "\n" + strings.Join(imageLines, "\n")
-		}
-		body += "\n\n"
-		boxed = true
+		return s, false
 	case "assistant":
 		icon = statusBarStyle.Render("●")
 		body = renderMarkdown(m, bl.Text, cw) + "\n\n"
@@ -355,7 +349,14 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		// it. renderToolBlock owns the frame; the status bullet stays on
 		// the header row as a color-free fallback for terminals that
 		// drop the fill entirely.
-		return m.renderToolBlock(bl, cw) + "\n\n", false
+		// Tool-result images render flush-left below the frame — the frame
+		// border must never overlap the image rows. Same sentinel contract
+		// as user images.
+		s := m.renderToolBlock(bl, cw)
+		if imgs := m.imageLines(bl.Images, cw); len(imgs) > 0 {
+			s += "\n" + strings.Join(imgs, "\n")
+		}
+		return s + "\n\n", false
 	case "bash":
 		// A local shell echo (!cmd) is output without an agent tool call,
 		// so it has no execution state: quiet neutral block, reddened

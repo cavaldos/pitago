@@ -224,11 +224,21 @@ var (
 	// OSC bodies cannot contain BEL or ESC. This matches both BEL and ST
 	// terminators without greedily consuming visible text after an ST.
 	selectionOSC = regexp.MustCompile("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)")
+	// Kitty graphics use APC (ESC _ ... ESC \), which neither pattern
+	// above matches, and image rows are kitty unicode placeholder cells
+	// (U+10EEEE, see images.go). A drag across an image row must copy
+	// neither payloads nor placeholders: all are dropped, leaving the
+	// row's padding behind. The Mark class eats the row/col diacritics
+	// after each placeholder cell.
+	selectionAPC         = regexp.MustCompile("\x1b_[^\x1b]*(?:\x1b\\\\|\x07)")
+	selectionPlaceholder = regexp.MustCompile("\U0010EEEE\\pM*")
 )
 
 func stripSelectionANSI(s string) string {
 	s = selectionOSC.ReplaceAllString(s, "")
-	return selectionCSI.ReplaceAllString(s, "")
+	s = selectionCSI.ReplaceAllString(s, "")
+	s = selectionAPC.ReplaceAllString(s, "")
+	return selectionPlaceholder.ReplaceAllString(s, "")
 }
 
 func visibleWidth(s string) int {

@@ -4,10 +4,19 @@
 // last-answer lookup) live in components/yank.
 package chat
 
-import "hash/fnv"
+import (
+	"crypto/sha256"
+	"encoding/binary"
+)
 
 // Image is an inline image carried by a chat block. Digest is computed once
 // so render-cache keys never hash the base64 payload on every frame.
+//
+// The digest is SHA-256 truncated to 64 bits, not FNV: it keys the upload,
+// geometry and transcode caches, and the image bytes come off the wire. A
+// non-cryptographic hash lets a crafted image collide with another and
+// render the wrong pixels (or poison a negative cache), so collision
+// resistance is load-bearing here.
 type Image struct {
 	Data   string
 	Mime   string
@@ -15,11 +24,11 @@ type Image struct {
 }
 
 func NewImage(data, mime string) Image {
-	h := fnv.New64a()
+	h := sha256.New()
 	_, _ = h.Write([]byte(mime))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(data))
-	return Image{Data: data, Mime: mime, Digest: h.Sum64()}
+	return Image{Data: data, Mime: mime, Digest: binary.BigEndian.Uint64(h.Sum(nil)[:8])}
 }
 
 // Block is one rendered unit in the chat column.

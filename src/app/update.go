@@ -1831,6 +1831,11 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 			m.blocks[i].ToolStatus = "done"
 		}
 		m.blocks[i].ToolResult = joinText(p.Result.Content)
+		// Images the tool returned (screenshots, charts) ride the block
+		// for terminal render, like pi's tool image components.
+		if imgs := chatImagesBlocks(p.Result.Content); len(imgs) > 0 {
+			m.blocks[i].Images = imgs
+		}
 		// Always keep the diff, even when content is non-empty: pi's edit
 		// tool always reports a "Successfully replaced ..." line, so
 		// falling back to the diff only when ToolResult is empty means the
@@ -2173,10 +2178,16 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 			if m.blocks[i].ToolResult == "" {
 				m.blocks[i].ToolResult = text
 			}
+			if imgs := chatImages(msg.Content); len(imgs) > 0 {
+				m.blocks[i].Images = imgs
+			}
 		} else if strings.TrimSpace(msg.ToolName) != "" {
 			i := m.ensureTool(msg.ToolCallID, msg.ToolName)
 			m.blocks[i].ToolStatus = status
 			m.blocks[i].ToolResult = text
+			if imgs := chatImages(msg.Content); len(imgs) > 0 {
+				m.blocks[i].Images = imgs
+			}
 		}
 	case "bashExecution":
 		out := msg.Output
@@ -2271,6 +2282,9 @@ func (m *Model) restore(msgs []pirpc.AgentMessage) {
 					m.blocks[i].ToolStatus = "error"
 				}
 				m.blocks[i].ToolResult = text
+				if imgs := chatImages(msg.Content); len(imgs) > 0 {
+					m.blocks[i].Images = imgs
+				}
 				// Restoring a past session must show the diff too, not just
 				// the receipt line the tool also reported.
 				if d := diffOfDetails(msg.Details); d != "" {
@@ -2340,6 +2354,24 @@ func joinText(blocks []pirpc.ContentBlock) string {
 }
 
 func joinTextBlocks(blocks []pirpc.ContentBlock) string { return joinText(blocks) }
+
+// chatImagesBlocks preserves image payloads from parsed RPC content blocks
+// for terminal render. Cap the count like the send path: every image rides
+// every repaint as a place sequence, and stale uploads linger in the
+// terminal until purged.
+func chatImagesBlocks(blocks []pirpc.ContentBlock) []chat.Image {
+	var out []chat.Image
+	for _, b := range blocks {
+		if b.Type != "image" || b.Data == "" || b.MimeType == "" {
+			continue
+		}
+		out = append(out, chat.NewImage(b.Data, b.MimeType))
+		if len(out) >= 5 {
+			break
+		}
+	}
+	return out
+}
 
 // chatImages preserves image payloads from RPC user blocks for terminal render.
 func chatImages(raw json.RawMessage) []chat.Image {

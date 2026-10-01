@@ -187,6 +187,7 @@ type Model struct {
 	ShowImages          bool                    // terminal.showImages
 	ImageWidthCells     int                     // terminal.imageWidthCells
 	ImageProtocol       terminal_image.Protocol // detected inline-image capability
+	imgRender           *imageRenderState       // kitty upload/geometry cache (pointer: survives Model value copies)
 	respawning          bool                    // reconnecting pi: skip pi_exited notice
 	spawnOpts           pirpc.Options           // for respawning pi (login)
 	KeyPath             string                  // keystore API keys
@@ -592,6 +593,7 @@ func New(pi *pirpc.Client, cwd string) Model {
 		cwd:           cwd,
 		ModelLbl:      "…",
 		showPlugins:   true, // PLUGINS starts expanded
+		imgRender:     newImageRenderState(),
 	}
 }
 
