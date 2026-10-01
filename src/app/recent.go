@@ -153,7 +153,7 @@ func (m Model) recentAt(x, y int) (int, bool) {
 	if !m.SideVisible(SideRecent) {
 		return 0, false
 	}
-	if x < m.mainW()+1 || x > m.winW || y < 1+m.recentContentRow() {
+	if x < m.mainW() || x > m.winW || y < 1+m.recentContentRow() {
 		return 0, false
 	}
 	// visible rows start at YOffset when the sidebar is scrolled
@@ -198,7 +198,7 @@ func (m Model) pluginToggleAt(x, y int) bool {
 	if !m.SideVisible(SidePlugins) {
 		return false
 	}
-	if x < m.mainW()+1 || x > m.winW {
+	if x < m.mainW() || x > m.winW {
 		return false
 	}
 	return y-1+m.sideVp.YOffset == m.pluginHeaderRow()

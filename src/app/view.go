@@ -20,7 +20,7 @@ func (m Model) showSide() bool { return !m.hideSide && m.winW >= 80 }
 func (m Model) mainW() int {
 	w := m.winW - 2 // single column margin
 	if m.showSide() {
-		w = m.winW - sideW - 5 // chat + gap + sidebar
+		w = m.winW - sideW // chat + sidebar, flush against the right edge
 	}
 	if w < 30 {
 		w = 30
@@ -1360,16 +1360,17 @@ func (m Model) invokedTools() []Block {
 
 // renderSidebar draws the sidebar box around the visible sideVp slice.
 // lipgloss Height covers the content only (border adds 2), so size it by
-// sideContentH to keep the outer box exactly sideH tall.
+// sideContentH to keep the outer box exactly sideH tall. Width likewise
+// covers padding, not the border: sideInnerW+2 lands the box on sideW.
 func (m Model) renderSidebar() string {
 	h := m.sideContentH()
 	body := m.sideVp.View()
 	if !m.quitArmed() {
-		return sideStyle.Width(sideW).Height(h).Render(body)
+		return sideStyle.Width(sideInnerW + 2).Height(h).Render(body)
 	}
 	// armed: viewport already shrunk by one line (syncSideH), so the
 	// warning pins to the bottom-right corner of the box.
-	return sideStyle.Width(sideW).Height(h).Render(body + "\n" + quitArmFooter())
+	return sideStyle.Width(sideInnerW + 2).Height(h).Render(body + "\n" + quitArmFooter())
 }
 
 // quitArmFooter is the 1-line bottom-right sidebar warning (yellow).
@@ -1382,7 +1383,7 @@ func quitArmFooter() string {
 }
 
 func sep() string {
-	return sepStyle.Render(strings.Repeat("─", sideW-6))
+	return sepStyle.Render(strings.Repeat("─", sideInnerW))
 }
 
 func (m Model) sideH() int {
@@ -1404,9 +1405,10 @@ func (m Model) sideContentH() int {
 	return h
 }
 
-// overSide reports whether screen x is over the sidebar column.
+// overSide reports whether screen x is over the sidebar column. The box is
+// butted straight against the chat column, so its left border is mainW.
 func (m Model) overSide(x int) bool {
-	return m.showSide() && x >= m.mainW()+1 && x <= m.winW
+	return m.showSide() && x >= m.mainW() && x <= m.winW
 }
 
 // statsLine mirrors opencode's status footer: model · ctx% · cost, no sidebar.
@@ -3219,7 +3221,7 @@ func (m Model) View() string {
 	left := lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body)
 	left = m.overlayToasts(left) // float above chat: never shifts the frame
 	if m.showSide() {
-		return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", m.renderSidebar())
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, m.renderSidebar())
 	}
 	return left
 }

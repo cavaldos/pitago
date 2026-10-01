@@ -81,7 +81,7 @@ func TestSideHideKeepsClickMapping(t *testing.T) {
 		}
 		return -1
 	}
-	x := m.mainW() + 1
+	x := m.mainW()
 	// box line 0 is the border: content row = line-1, screen y = 1+content.
 	if i := lineOf("RECENT MODELS"); i < 0 {
 		t.Fatal("no RECENT MODELS header")

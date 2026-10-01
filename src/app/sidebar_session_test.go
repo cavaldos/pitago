@@ -48,7 +48,7 @@ func TestSidebarSessionDetail(t *testing.T) {
 		}
 		return -1
 	}
-	x := m.mainW() + 1
+	x := m.mainW()
 	// output line 0 is the box top border, so the row below a header
 	// (line i+1) is the clickable row, like TestRecentAtMatchesRender.
 	if i := outLine("RECENT MODELS"); i < 0 {

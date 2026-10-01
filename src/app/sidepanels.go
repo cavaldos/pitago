@@ -1444,7 +1444,7 @@ func (m Model) subagentsMoreAt(x, y int) bool {
 	if !m.SideVisible(SideSubagents) || len(m.Subagents) <= subagentsShowMax {
 		return false // nothing truncated, so the line is not rendered
 	}
-	if x < m.mainW()+1 || x > m.winW {
+	if x < m.mainW() || x > m.winW {
 		return false
 	}
 	want := fmt.Sprintf("+%d more", len(m.Subagents)-subagentsShowMax)
@@ -1507,7 +1507,7 @@ func (m Model) subagentRowAt(x, y int) string {
 	if !m.SideVisible(SideSubagents) || len(m.Subagents) == 0 {
 		return ""
 	}
-	if x < m.mainW()+1 || x > m.winW {
+	if x < m.mainW() || x > m.winW {
 		return ""
 	}
 	rows := m.Subagents

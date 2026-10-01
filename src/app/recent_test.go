@@ -36,23 +36,23 @@ func TestPushRecent(t *testing.T) {
 }
 
 func TestRecentAt(t *testing.T) {
-	m := Model{winW: 120, winH: 30, ready: true} // mainW=81, sidebar x>=82
+	m := Model{winW: 120, winH: 30, ready: true} // mainW=86, sidebar x>=86
 	m.recentModels = []RecentModel{{ID: "a"}, {ID: "b"}}
 	m.ModelLbl = "a"
 	y0 := 1 + m.recentContentRow() // first model row
-	if idx, ok := m.recentAt(82, y0); !ok || idx != 0 {
+	if idx, ok := m.recentAt(86, y0); !ok || idx != 0 {
 		t.Fatalf("row 0: got %d,%v", idx, ok)
 	}
 	if idx, ok := m.recentAt(100, y0+1); !ok || idx != 1 {
 		t.Fatalf("row 1: got %d,%v", idx, ok)
 	}
-	for _, pt := range [][2]int{{10, y0}, {82, y0 - 1}, {82, y0 + 2}, {82, y0 + 50}} {
+	for _, pt := range [][2]int{{10, y0}, {86, y0 - 1}, {86, y0 + 2}, {86, y0 + 50}} {
 		if _, ok := m.recentAt(pt[0], pt[1]); ok {
 			t.Fatalf("point %v must miss", pt)
 		}
 	}
 	m.ready = false
-	if _, ok := m.recentAt(82, y0); ok {
+	if _, ok := m.recentAt(86, y0); ok {
 		t.Fatal("not ready must miss")
 	}
 }
@@ -94,7 +94,7 @@ func testRecentAtMatchesRender(t *testing.T, style string) {
 	if head < 0 {
 		t.Fatal("rendered sidebar has no RECENT MODELS header")
 	}
-	x := m.mainW() + 1
+	x := m.mainW()
 	// output line 0 is the box top border, so content row = line-1 and
 	// screen y = 1 (border) + content row.
 	at := func(y, want int) {

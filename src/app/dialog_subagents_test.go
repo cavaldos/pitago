@@ -389,7 +389,7 @@ func TestSubagentsMoreAtHitTest(t *testing.T) {
 	// sideCache index 0 is the first sidebar content row, which renders on
 	// screen row 1, so the hint's screen row is 1 + its cache index.
 	idx := row + 1
-	x := m.mainW() + 1 // first column inside the sidebar
+	x := m.mainW() // the sidebar's left border
 	if !m.subagentsMoreAt(x, idx+1) {
 		t.Fatalf("click should hit the truncation line:\n%s", section)
 	}
@@ -429,7 +429,7 @@ func TestSubagentRowAtHitTest(t *testing.T) {
 	if !ok || len(lines) != 3 {
 		t.Fatalf("expected 3 rendered rows, got %d (lines=%v)", len(lines), lines)
 	}
-	x := m.mainW() + 1
+	x := m.mainW()
 	for i, want := range []string{"s0", "s1", "s2"} {
 		if got := m.subagentRowAt(x, lines[i]+1); got != want {
 			t.Errorf("row %d = %q want %q", i, got, want)
