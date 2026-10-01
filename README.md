@@ -141,6 +141,11 @@ script/release.sh v0.0.1
 
 ### Copying text and messages
 
+<div align="center">
+  <sub>Video demo</sub><br />
+  https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07
+</div>
+
 | Action | How |
 | ------ | --- |
 | Drag-select | With mouse on (default): drag inside the chat — selection is clamped to the chat pane, edge auto-scrolls |
