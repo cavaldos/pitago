@@ -1612,6 +1612,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Refresh()
 				return m, nil
 			}
+		case tea.KeyTab:
+			// Tab toggles plan mode (/plan), opencode-style. Sits below
+			// the @/palette popup handlers (which own Tab for completion)
+			// and above the textarea tail, so it can neither steal their
+			// Tab nor leak a tab character into the prompt.
+			return m, m.togglePlanMode()
 		case tea.KeyCtrlO:
 			return m, m.OpenYank()
 		case tea.KeyCtrlG:

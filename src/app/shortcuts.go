@@ -16,6 +16,7 @@ var shortcutsDb = []ShortcutItem{
 	// Global / System
 	{"Ctrl+C", "Quit (double-press within 3s)", "Global"},
 	{"Esc", "Cancel running turn (double-press within 3s)", "Global"},
+	{"Tab", "Toggle plan mode (/plan)", "Global"},
 	{"Ctrl+Shift+/", "Open the Shortcuts section (/shortcuts)", "Global"},
 	{"/?", "Open command palette", "Global"},
 	{"Ctrl+D", "Detach from external Pi session (back to owned session)", "Global"},
