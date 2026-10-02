@@ -53,4 +53,10 @@ type Block struct {
 	// markdown itself. Zero means unknown, and the block then shows the
 	// summary alone.
 	TokensBefore int
+	// Foot is the line an opencode-style reply closes with: the model that
+	// answered, its thinking level, and the wall time of the prompt
+	// ("Muse Spark 1.3 Free · xhigh · 5m 47s"). Baked at turn settle, so a
+	// reply keeps the model that served it even after a /model switch;
+	// empty while streaming (and for history restored without timestamps).
+	Foot string
 }

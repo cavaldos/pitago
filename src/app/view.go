@@ -291,6 +291,7 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string, tidy bool) uint
 	h.Write([]byte(bl.ToolCallID))
 	h.Write([]byte{0})
 	fmt.Fprintf(h, "\x00tokensBefore\x00%d", bl.TokensBefore)
+	fmt.Fprintf(h, "\x00foot\x00%s", bl.Foot)
 	h.Write([]byte{0})
 	if bl.Err {
 		h.Write([]byte{1})
@@ -331,7 +332,15 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		return s, false
 	case "assistant":
 		icon = statusBarStyle.Render("●")
-		body = renderMarkdown(m, bl.Text, cw) + "\n\n"
+		body = strings.TrimSuffix(renderMarkdown(m, bl.Text, cw), "\n")
+		// Footer opencode-style: model · thinking · wall time of the prompt
+		// that produced this reply (issue #15). Baked at settle, so it never
+		// ticks in the transcript; it rides on the turn's last reply, where
+		// it reads as the cost of everything above it.
+		if bl.Foot != "" {
+			body += "\n\n" + toolStyle.Render(Short(bl.Foot, cw))
+		}
+		body += "\n\n"
 		// Table/fence-led replies render as aligned rows: keep the 2-cell
 		// gutter so "● " doesn't push the first row 2 cells past the rest.
 		boxed = startsPreformatted(bl.Text)

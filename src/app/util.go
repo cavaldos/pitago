@@ -37,7 +37,16 @@ const expandHint = "ctrl+g to expand"
 
 const collapseHint = "ctrl+g to collapse"
 
-func fmtDur(d time.Duration) string        { return format.FmtDur(d) }
+func fmtDur(d time.Duration) string { return format.FmtDur(d) }
+
+// fmtTurnDur is fmtDur under a second: fmtDur rounds to whole seconds, so a
+// prompt answered in 400ms would read as "0s". Above a second the two agree.
+func fmtTurnDur(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return fmtDur(d)
+}
 func twoCol(l, r string, inner int) string { return format.TwoCol(l, r, inner) }
 func ctxBar(pct float64, w int) string     { return format.CtxBar(pct, w) }
 func stripANSI(s string) string            { return format.StripANSI(s) }

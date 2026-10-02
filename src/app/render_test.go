@@ -620,3 +620,84 @@ func TestToolDetail(t *testing.T) {
 		t.Errorf("blank result detail = %q", got)
 	}
 }
+
+// Issue #15: every prompt closes with an opencode-style footer — model,
+// thinking level, wall time — baked onto the last reply of the turn. A
+// mid-turn prose block must stay bare: it is not a prompt boundary.
+func TestTurnFooterBakedOnLastReplyAndRendered(t *testing.T) {
+	m := Model{ModelLbl: "Muse Spark 1.3 Free", thinkLvl: "xhigh"}
+	m.vp.Width = 120
+	m.AddBlock(Block{Kind: "user", Text: "hi"})
+	updated, _ := m.handleEvent(pirpc.Event{Type: "turn_start"})
+	m = updated.(Model)
+	m.AddBlock(Block{Kind: "assistant", Text: "one"})
+	m.AddBlock(Block{Kind: "assistant", Text: "two"})
+	updated, _ = m.handleEvent(pirpc.Event{Type: "agent_settled", Raw: json.RawMessage(`{}`)})
+	m = updated.(Model)
+
+	if m.blocks[1].Foot != "" {
+		t.Fatalf("mid-turn reply must stay unstamped, got %q", m.blocks[1].Foot)
+	}
+	foot := m.blocks[2].Foot
+	for _, want := range []string{"Muse Spark 1.3 Free", "xhigh", " · "} {
+		if !strings.Contains(foot, want) {
+			t.Fatalf("footer %q missing %q", foot, want)
+		}
+	}
+	if got := stripANSI(m.renderBlocks()); !strings.Contains(got, foot) {
+		t.Fatalf("footer %q missing from transcript:\n%s", foot, got)
+	}
+}
+
+// The footer is baked, not derived at render time: after a /model switch the
+// old reply keeps the model that actually served it.
+func TestTurnFooterKeepsModelOfItsOwnTurn(t *testing.T) {
+	m := Model{ModelLbl: "old-model", thinkLvl: "high"}
+	m.AddBlock(Block{Kind: "user", Text: "hi"})
+	updated, _ := m.handleEvent(pirpc.Event{Type: "turn_start"})
+	m = updated.(Model)
+	m.AddBlock(Block{Kind: "assistant", Text: "answer"})
+	updated, _ = m.handleEvent(pirpc.Event{Type: "agent_settled", Raw: json.RawMessage(`{}`)})
+	m = updated.(Model)
+
+	m.ModelLbl, m.thinkLvl = "new-model", "low"
+	if got := m.blocks[1].Foot; !strings.Contains(got, "old-model") || !strings.Contains(got, "high") {
+		t.Fatalf("footer followed a later /model switch: %q", got)
+	}
+}
+
+// A turn that produced no prose (tool calls only) has no reply to stamp, and
+// must leave the previous turn's reply showing its own footer rather than the
+// latest one.
+func TestToolOnlyTurnLeavesEarlierFooterAlone(t *testing.T) {
+	m := Model{ModelLbl: "m1"}
+	m.AddBlock(Block{Kind: "user", Text: "hi"})
+	updated, _ := m.handleEvent(pirpc.Event{Type: "turn_start"})
+	m = updated.(Model)
+	m.AddBlock(Block{Kind: "assistant", Text: "answer"})
+	updated, _ = m.handleEvent(pirpc.Event{Type: "agent_settled", Raw: json.RawMessage(`{}`)})
+	m = updated.(Model)
+	first := m.blocks[1].Foot
+	if first == "" {
+		t.Fatal("first turn should be stamped")
+	}
+
+	updated, _ = m.handleEvent(pirpc.Event{Type: "turn_start"})
+	m = updated.(Model)
+	m.AddBlock(Block{Kind: "tool", ToolName: "read", ToolStatus: "done"})
+	updated, _ = m.handleEvent(pirpc.Event{Type: "agent_settled", Raw: json.RawMessage(`{}`)})
+	m = updated.(Model)
+	if m.blocks[1].Foot != first {
+		t.Fatalf("tool-only turn overwrote the earlier reply's footer: %q -> %q", first, m.blocks[1].Foot)
+	}
+}
+
+// fmtTurnDur keeps sub-second prompts honest: fmtDur alone renders them "0s".
+func TestFmtTurnDurSubSecond(t *testing.T) {
+	if got := fmtTurnDur(400 * time.Millisecond); got != "400ms" {
+		t.Errorf("fmtTurnDur(400ms) = %q, want 400ms", got)
+	}
+	if got := fmtTurnDur(5*time.Minute + 47*time.Second); got != "5m47s" {
+		t.Errorf("fmtTurnDur(5m47s) = %q, want 5m47s", got)
+	}
+}
