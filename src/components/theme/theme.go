@@ -40,6 +40,10 @@ type Theme struct {
 	ToolNeutral                         string // quiet fill: output with no execution state
 	Tool                                ToolPalette
 	HiBg, HiFg                          string
+	// Light marks a palette designed for a light terminal. It only picks
+	// which background variant the hub's background column offers
+	// (Backgrounds), so a light palette never gets a dark surface.
+	Light bool
 }
 
 // builtins: Default keeps today's opencode-like monochrome exactly.
@@ -119,7 +123,8 @@ var builtins = []Theme{
 		// separates from the terminal background.
 		ToolNeutral: "#EFF1F5",
 		HiBg:        "#BCC0CC", HiFg: "#4C4F69",
-		Plan: "#8839EF",
+		Plan:  "#8839EF",
+		Light: true,
 	},
 	{
 		Name:   "solarized-dark",
@@ -137,7 +142,8 @@ var builtins = []Theme{
 		Input: "#268BD2", InputDim: "#93A1A1",
 		ToolPending: "#EEE8D5", ToolSuccess: "#E6EBD3", ToolError: "#F0D9D2",
 		HiBg: "#EEE8D5", HiFg: "#586E75",
-		Plan: "#6C71C4",
+		Plan:  "#6C71C4",
+		Light: true,
 	},
 	{
 		Name:   "monokai",
@@ -164,7 +170,8 @@ var builtins = []Theme{
 		Input: "#0969DA", InputDim: "#59636E",
 		ToolPending: "#EAEEF2", ToolSuccess: "#DAFBE1", ToolError: "#FFEBE9",
 		HiBg: "#E3E8EE", HiFg: "#1F2328",
-		Plan: "#8250DF",
+		Plan:  "#8250DF",
+		Light: true,
 	},
 	{
 		Name:   "ayu-dark",
@@ -228,7 +235,8 @@ var builtins = []Theme{
 		Input: "#907AA9", InputDim: "#797593",
 		ToolPending: "#F2E9DE", ToolSuccess: "#DDE8D5", ToolError: "#EAD9DB",
 		HiBg: "#DFDAD9", HiFg: "#575279",
-		Plan: "#907AA9",
+		Plan:  "#907AA9",
+		Light: true,
 	},
 	{
 		Name:   "gruvbox-light",
@@ -237,7 +245,8 @@ var builtins = []Theme{
 		Input: "#AF3A03", InputDim: "#928374",
 		ToolPending: "#EBDBB2", ToolSuccess: "#DEE3C0", ToolError: "#EACFC4",
 		HiBg: "#D5C4A1", HiFg: "#3C3836",
-		Plan: "#8F3F71",
+		Plan:  "#8F3F71",
+		Light: true,
 	},
 	{
 		Name:   "one-light",
@@ -246,7 +255,8 @@ var builtins = []Theme{
 		Input: "#4078F2", InputDim: "#A0A1A7",
 		ToolPending: "#ECECEC", ToolSuccess: "#DCEBDA", ToolError: "#F2DADA",
 		HiBg: "#E5E5E6", HiFg: "#383A42",
-		Plan: "#A626A4",
+		Plan:  "#A626A4",
+		Light: true,
 	},
 	{
 		Name:   "zenburn",
@@ -278,6 +288,86 @@ var builtins = []Theme{
 		HiBg: "#292E42", HiFg: "#C0CAF5",
 		Plan: "#BB9AF7",
 	},
+}
+
+// Transparent is the background choice that keeps the terminal's own
+// background: no fill at all, which is pitago's default look.
+const Transparent = "transparent"
+
+// Background is one choice in the hub's background column: opencode's
+// theme slug plus the surface each of its two appearances paints.
+// Values are copied from opencode's TUI theme assets
+// (packages/tui/src/theme/assets/<slug>.json → theme.background).
+type Background struct {
+	Name        string
+	Dark, Light string
+}
+
+// backgrounds is opencode's TUI theme set. Two slugs are left out on
+// purpose: "lucent-orng" is transparent in opencode too (a duplicate of
+// Transparent), and "orng" is opencode's own default with the same two
+// values as "opencode".
+var backgrounds = []Background{
+	{"aura", "#0f0f0f", "#0f0f0f"},
+	{"ayu", "#0B0E14", "#0B0E14"},
+	{"carbonfox", "#161616", "#ffffff"},
+	{"catppuccin", "#1e1e2e", "#eff1f5"},
+	{"catppuccin-frappe", "#303446", "#303446"},
+	{"catppuccin-macchiato", "#24273a", "#24273a"},
+	{"cobalt2", "#193549", "#ffffff"},
+	{"cursor", "#181818", "#fcfcfc"},
+	{"dracula", "#282a36", "#f8f8f2"},
+	{"everforest", "#2d353b", "#fdf6e3"},
+	{"flexoki", "#100F0F", "#FFFCF0"},
+	{"github", "#0d1117", "#ffffff"},
+	{"gruvbox", "#282828", "#fbf1c7"},
+	{"kanagawa", "#1F1F28", "#F2E9DE"},
+	{"material", "#263238", "#fafafa"},
+	{"matrix", "#0a0e0a", "#eef3ea"},
+	{"mercury", "#171721", "#ffffff"},
+	{"monokai", "#272822", "#fafafa"},
+	{"nightowl", "#011627", "#011627"},
+	{"nord", "#2E3440", "#ECEFF4"},
+	{"one-dark", "#282c34", "#fafafa"},
+	{"opencode", "#0a0a0a", "#ffffff"},
+	{"osaka-jade", "#111c18", "#F6F5DD"},
+	{"palenight", "#292d3e", "#fafafa"},
+	{"rosepine", "#191724", "#faf4ed"},
+	{"solarized", "#002b36", "#fdf6e3"},
+	{"synthwave84", "#262335", "#fafafa"},
+	{"tokyonight", "#1a1b26", "#e1e2e7"},
+	{"vercel", "#000000", "#FFFFFF"},
+	{"vesper", "#101010", "#FFFFFF"},
+	{"zenburn", "#3f3f3f", "#ffffef"},
+}
+
+// Backgrounds lists the background choices in column order: Transparent
+// first, then opencode's themes.
+func Backgrounds() []string {
+	out := make([]string, 0, len(backgrounds)+1)
+	out = append(out, Transparent)
+	for _, b := range backgrounds {
+		out = append(out, b.Name)
+	}
+	return out
+}
+
+// BackgroundHex is the surface one choice paints for a light or dark
+// palette ("" for Transparent: the terminal background stays).
+func BackgroundHex(name string, light bool) string {
+	if name == "" || norm(name) == Transparent {
+		return ""
+	}
+	n := norm(name)
+	for _, b := range backgrounds {
+		if b.Name == n {
+			if light {
+				return b.Light
+			}
+			return b.Dark
+		}
+	}
+	return ""
 }
 
 // Names lists theme names in order.

@@ -46,7 +46,14 @@ const (
 const (
 	psecActAgent = "@agent"
 	psecActLogin = "@login"
+	// psecActBg marks a background row in the hub's Theme section. A
+	// background is not a theme, so it rides its own payload prefix.
+	psecActBg = "bg:"
 )
+
+// PsecBgPrefix is psecActBg for src/builtin, which confirms hub rows by
+// payload prefix (see confirmPconfig).
+func PsecBgPrefix() string { return psecActBg }
 
 // CountCmds tallies extension catalog commands per source (skill/prompt/
 // extension) for the section labels.
@@ -101,6 +108,7 @@ func (m *Model) OpenPconfig() {
 		ProvFocus: true}
 	m.LoadPsecRows(d)
 	m.Dialogs = append(m.Dialogs, d)
+	d.PalRow, d.BgRow = 0, -1 // palette "default" is a sane first row; backgrounds start unvisited
 	m.Refresh()
 }
 
@@ -337,10 +345,10 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			[]string{"model · thinking · steering · images · skills · … (pi parity)"},
 			[]string{psecActAgent}, msg
 	case PsecTheme:
-		// The theme list lives here now (the standalone picker is gone).
-		// ↑↓ live-previews through previewTheme, Enter applies and keeps
-		// the hub open. Accent hex rides the desc so the row is filterable.
-		msg = "↑↓ previews live · Enter applies · Esc closes"
+		// Two columns: the palettes (↑↓ live-previews through previewRow,
+		// Enter applies) and the background set behind them. Accent hex
+		// rides the desc so a row stays filterable.
+		msg = "↑↓ previews live · → background column · Enter applies · Esc closes"
 		for _, n := range theme.Names() {
 			opts = append(opts, n)
 			desc := theme.Get(n).Accent
@@ -350,10 +358,17 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 			descs = append(descs, desc)
 			payload = append(payload, "theme:"+n)
 		}
-		if len(opts) == 0 {
-			opts = []string{"— no themes —"}
-			descs = []string{"the theme table is empty"}
-			payload = []string{""}
+		for _, b := range theme.Backgrounds() {
+			opts = append(opts, b)
+			desc := theme.BackgroundHex(b, theme.Get(m.currentTheme()).Light)
+			switch {
+			case desc == "":
+				desc = "terminal background"
+			case b == m.currentBackground():
+				desc = "✓ current · " + desc
+			}
+			descs = append(descs, desc)
+			payload = append(payload, psecActBg+b)
 		}
 	case PsecLogin:
 		msg = "Enter opens login · Esc closes"
@@ -982,11 +997,208 @@ func wrapWords(s string, n int) []string {
 
 // psecCursor resolves the highlighted right-pane row to its option index
 // (-1 when the list is empty or the cursor is out of range).
+// psecCursor is the option index under the hub's right-pane cursor, or -1.
 func psecCursor(d *Dialog) int {
 	if len(d.FIdx) == 0 || d.Cursor < 0 || d.Cursor >= len(d.FIdx) {
 		return -1
 	}
 	return d.FIdx[d.Cursor]
+}
+
+// hubHead is one right-pane column header. The focused column carries
+// the pointer and the highlight, the other stays dim, so the active
+// column is obvious before the pointer reaches a row.
+func hubHead(label string, n, w int, focused bool) string {
+	mark, style := "  ", toolStyle
+	if focused {
+		mark, style = "▸ ", sideTitleStyle
+	}
+	return mark + style.Width(w-2).Render(fmt.Sprintf("%s · %d", label, n))
+}
+
+// isBgRow reports whether one option row is a background choice rather
+// than a palette. The payload decides, so the two columns can never
+// disagree with the label.
+func isBgRow(d *Dialog, ri int) bool {
+	return strings.HasPrefix(payloadOf(d, ri), psecActBg)
+}
+
+// hubStepRow moves the hub cursor one row, staying inside the column it
+// is on (the Theme section has a palette column and a background
+// column). Wraps around, like the single-column walk it replaces.
+func hubStepRow(d *Dialog, down bool) int {
+	n := len(d.FIdx)
+	if n == 0 {
+		return 0
+	}
+	want := func(int) bool { return true }
+	if d.CurPsec() == PsecTheme {
+		want = func(ri int) bool { return isBgRow(d, ri) == d.BgFocus }
+	}
+	step := 1
+	if !down {
+		step = -1
+	}
+	cur := d.Cursor % n
+	for k := 1; k <= n; k++ {
+		if j := ((cur+step*k)%n + n) % n; want(d.FIdx[j]) {
+			return j
+		}
+	}
+	return cur
+}
+
+// rememberColRow stores where the cursor sits in the Theme column it is
+// on. d.Cursor is one shared pointer into FIdx, so without this each
+// column forgets its row as soon as you browse the other one.
+func rememberColRow(d *Dialog) {
+	if d.CurPsec() != PsecTheme {
+		return
+	}
+	if ri := psecCursor(d); ri >= 0 {
+		if d.BgFocus {
+			d.BgRow = ri
+		} else {
+			d.PalRow = ri
+		}
+	}
+}
+
+// gotoCol focuses one Theme column on the row it was last on (its first
+// row on a first visit, or when the filter has hidden that row).
+func gotoCol(d *Dialog, bg bool) {
+	ri := d.PalRow
+	if bg {
+		ri = d.BgRow
+	}
+	d.BgFocus = bg
+	if i := colFIdxIndex(d, ri); i >= 0 {
+		d.Cursor = i
+		return
+	}
+	palettes, backgrounds := themeCols(d)
+	rows := palettes
+	if bg {
+		rows = backgrounds
+	}
+	for _, first := range rows {
+		if i := colFIdxIndex(d, first); i >= 0 {
+			d.Cursor = i
+			return
+		}
+	}
+	if len(d.FIdx) > 0 {
+		d.Cursor = 0
+	}
+}
+
+// colFIdxIndex is the FIdx position of one Theme-column row (an option
+// index), or -1 when the filter has hidden it.
+func colFIdxIndex(d *Dialog, ri int) int {
+	if ri < 0 {
+		return -1
+	}
+	for i, x := range d.FIdx {
+		if x == ri {
+			return i
+		}
+	}
+	return -1
+}
+
+// themeCols splits the Theme section's filtered rows into its two
+// columns: the palettes first, then the background set.
+func themeCols(d *Dialog) (palettes, backgrounds []int) {
+	for _, ri := range d.FIdx {
+		if isBgRow(d, ri) {
+			backgrounds = append(backgrounds, ri)
+		} else {
+			palettes = append(palettes, ri)
+		}
+	}
+	return palettes, backgrounds
+}
+
+// hubRows builds one Theme-section column: the rows at idxs, windowed
+// around the cursor row, rendered listW cells wide and padded to the
+// hub's window height. bg renders the background look (colour swatch +
+// slug + ✓ on the picked one), otherwise a palette row with its desc.
+//
+// The cursor shows in both columns, but only the focused one is
+// highlighted: that is what tells the two columns apart while browsing.
+func (m Model) hubRows(d *Dialog, idxs []int, curRi, listW, win int, bg, focused bool) []string {
+	pos := 0
+	for i, ri := range idxs {
+		if ri == curRi {
+			pos = i
+			break
+		}
+	}
+	start, end, above, below := fixedWin(pos, len(idxs), win)
+	var lines []string
+	if above {
+		lines = append(lines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d above)", start)))
+	}
+	optW := 28
+	if listW-10 < optW {
+		optW = listW - 10
+	}
+	if optW < 10 {
+		optW = 10
+	}
+	for i := start; i < end; i++ {
+		ri := idxs[i]
+		mark, style := "  ", statusBarStyle
+		if ri == curRi {
+			mark = "▸ "
+			if focused {
+				style = rowHiStyle
+			} else {
+				style = lipgloss.NewStyle().Foreground(cMuted)
+			}
+		}
+		var row string
+		if bg {
+			// background rows use the whole column: the slug must not
+			// truncate before the swatch and the ✓
+			row = m.bgRow(d.Options[ri], payloadOf(d, ri) == psecActBg+m.currentBackground(), listW-4)
+		} else {
+			row = Fit(Short(d.Options[ri], optW), optW)
+			if desc := DescOf(d, ri); desc != "" {
+				row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
+			}
+		}
+		lines = append(lines, mark+style.Width(listW-2).Render(row))
+	}
+	if below {
+		lines = append(lines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", len(idxs)-end)))
+	}
+	if len(idxs) == 0 {
+		lines = append(lines, "  "+toolStyle.Width(listW-2).Render("— no match —"))
+	}
+	for len(lines) < win {
+		lines = append(lines, "  "+statusBarStyle.Width(listW-2).Render(""))
+	}
+	return lines
+}
+
+// bgRow is one background row: a two-cell swatch in the surface colour
+// (unpainted for transparent, which is the terminal's own), the slug,
+// and ✓ on the picked one.
+func (m Model) bgRow(name string, cur bool, w int) string {
+	sw := lipgloss.NewStyle().Render("  ")
+	if hex := theme.BackgroundHex(name, theme.Get(m.currentTheme()).Light); hex != "" {
+		sw = lipgloss.NewStyle().Background(lipgloss.Color(hex)).Render("  ")
+	}
+	mark := ""
+	if cur {
+		mark = " ✓"
+	}
+	nameW := w - lipgloss.Width(sw) - 1 - lipgloss.Width(mark)
+	if nameW < 4 {
+		nameW = 4
+	}
+	return sw + " " + Fit(Short(name, nameW), nameW) + mark
 }
 
 // payloadOf parallels DescOf for the right pane's per-row payload.
@@ -1183,13 +1395,17 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 			}
 		} else if n := len(d.FIdx); n > 0 {
 			if down {
-				d.Cursor = (d.Cursor + 1) % n
+				d.Cursor = hubStepRow(d, true)
 			} else {
-				d.Cursor = (d.Cursor - 1 + n) % n
+				d.Cursor = hubStepRow(d, false)
 			}
+			rememberColRow(d)
 			// Theme rows are the one hub section that previews while
-			// browsing, so ↑↓ repaints in the new palette.
-			m.previewTheme(d)
+			// browsing, so ↑↓ repaints in the new palette or surface.
+			m.previewRow(d)
+			if d.CurPsec() == PsecTheme {
+				m.refreshHubSection(PsecTheme)
+			}
 			// The marketplace hydrates GitHub stars for whatever the
 			// moved cursor brought into view (never from render).
 			if d.CurPsec() == PsecMarket {
@@ -1198,12 +1414,29 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		}
 		return m, nil
 	case tea.KeyLeft:
+		// In the Theme section the right pane has two columns: ← walks
+		// back out of the background column onto the row the palettes
+		// were left on, then to the sections.
+		if !d.ProvFocus && d.CurPsec() == PsecTheme && d.BgFocus {
+			gotoCol(d, false)
+			return m, nil
+		}
 		d.ProvFocus = true
 		return m, nil
 	case tea.KeyRight:
+		if !d.ProvFocus && d.CurPsec() == PsecTheme && !d.BgFocus {
+			gotoCol(d, true)
+			return m, nil
+		}
 		d.ProvFocus = false
 		return m, nil
 	case tea.KeyTab:
+		// Theme section: Tab cycles sections → palettes → backgrounds.
+		if !d.ProvFocus && d.CurPsec() == PsecTheme {
+			gotoCol(d, !d.BgFocus)
+			return m, nil
+		}
+		d.BgFocus = false
 		d.ProvFocus = !d.ProvFocus
 		return m, nil
 	case tea.KeyCtrlF:
@@ -1338,12 +1571,23 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	isPlugin := d.CurPsec() == PsecPlugin && len(m.Plugins) > 0
 	isMarket := d.CurPsec() == PsecMarket && len(m.Market) > 0
 	detailCol := boxW >= 110 && (isPlugin || isMarket)
+	// Theme section: a second column of backgrounds next to the
+	// palettes. Same width rule as the DETAILS column.
+	bgW := 30
+	bgCol := boxW >= 110 && d.CurPsec() == PsecTheme
 	listW := rightW
 	if detailCol {
 		listW = rightW - detW - 3
 		if listW < 20 {
 			listW = 20
 			detW = rightW - listW - 3
+		}
+	}
+	if bgCol {
+		listW = rightW - bgW - 3
+		if listW < 20 {
+			listW = 20
+			bgW = rightW - listW - 3
 		}
 	}
 	win := hubWindow(&m)
@@ -1391,62 +1635,73 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 	// right window (section rows): same fixed-win rule as the left pane.
 	// In plugin detail mode the middle column is name-only — the spec
 	// lives in the DETAILS column (like the /model picker's wide layout).
+	var rightLines, bgLines []string
+	bgCount := 0
 	total := len(d.FIdx)
-	start, end, rAbove, rBelow := fixedWin(d.Cursor, total, win)
-	var rightLines []string
-	if rAbove {
-		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d above)", start)))
-	}
-	optW := 28
-	if listW-10 < optW {
-		optW = listW - 10
-	}
-	if optW < 10 {
-		optW = 10
-	}
-	if detailCol {
-		optW = listW - 4
+	if bgCol {
+		// Theme section: the palettes and the background set each get
+		// their own window over their own rows, one shared cursor.
+		palRows, bgRows := themeCols(d)
+		curRi := psecCursor(d)
+		rightLines = m.hubRows(d, palRows, curRi, listW, win, false, !d.BgFocus)
+		bgLines = m.hubRows(d, bgRows, curRi, bgW, win, true, d.BgFocus)
+		total, bgCount = len(palRows), len(bgRows)
+	} else {
+		start, end, rAbove, rBelow := fixedWin(d.Cursor, total, win)
+		if rAbove {
+			rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d above)", start)))
+		}
+		optW := 28
+		if listW-10 < optW {
+			optW = listW - 10
+		}
 		if optW < 10 {
 			optW = 10
 		}
-	}
-	for fi := start; fi < end; fi++ {
-		ri := d.FIdx[fi]
-		mark := "  "
-		style := statusBarStyle
-		if fi == d.Cursor {
-			mark = "▸ "
-			if d.ProvFocus {
-				style = lipgloss.NewStyle().Foreground(cText)
-			} else {
-				style = rowHiStyle
+		if detailCol {
+			optW = listW - 4
+			if optW < 10 {
+				optW = 10
 			}
 		}
-		row := Fit(Short(d.Options[ri], optW), optW)
-		switch {
-		case !detailCol:
-			if desc := DescOf(d, ri); desc != "" {
-				row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
+		for fi := start; fi < end; fi++ {
+			ri := d.FIdx[fi]
+			mark := "  "
+			style := statusBarStyle
+			if fi == d.Cursor {
+				mark = "▸ "
+				if d.ProvFocus {
+					style = lipgloss.NewStyle().Foreground(cText)
+				} else {
+					style = rowHiStyle
+				}
 			}
-		case isMarket:
-			// the wide layout drops the desc column, so the star count
-			// rides the row itself ("" while still unknown)
-			chip := ""
-			if ri >= 0 && ri < len(m.Market) {
-				chip = marketChip(m.Market[ri])
+			row := Fit(Short(d.Options[ri], optW), optW)
+			switch {
+			case !detailCol:
+				if desc := DescOf(d, ri); desc != "" {
+					row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
+				}
+			case isMarket:
+				// the wide layout drops the desc column, so the star count
+				// rides the row itself ("" while still unknown)
+				chip := ""
+				if ri >= 0 && ri < len(m.Market) {
+					chip = marketChip(m.Market[ri])
+				}
+				row = marketRow(d.Options[ri], chip, optW)
 			}
-			row = marketRow(d.Options[ri], chip, optW)
+			rightLines = append(rightLines, mark+style.Width(listW-2).Render(row))
 		}
-		rightLines = append(rightLines, mark+style.Width(listW-2).Render(row))
-	}
-	if rBelow {
-		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
-	}
-	if total == 0 {
-		rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render("— no match —"))
-	}
-	for len(rightLines) < win {
-		rightLines = append(rightLines, "  "+statusBarStyle.Width(listW-2).Render(""))
+		if rBelow {
+			rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
+		}
+		if total == 0 {
+			rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render("— no match —"))
+		}
+		for len(rightLines) < win {
+			rightLines = append(rightLines, "  "+statusBarStyle.Width(listW-2).Render(""))
+		}
 	}
 
 	secName := d.CurPsec()
@@ -1454,7 +1709,38 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 		secName = d.Provs[d.ProvCursor]
 	}
 	sep := sepStyle.Render("│")
-	if !detailCol {
+	if bgCol {
+		b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("SECTIONS") + " │ " +
+			hubHead(strings.ToUpper(secName), total, listW, !d.BgFocus && !d.ProvFocus) + " │ " +
+			hubHead("BACKGROUND", bgCount, bgW, d.BgFocus && !d.ProvFocus) + "\n")
+
+		n := len(leftLines)
+		if len(rightLines) > n {
+			n = len(rightLines)
+		}
+		if len(bgLines) > n {
+			n = len(bgLines)
+		}
+		for i := 0; i < n; i++ {
+			l, r, bg := "", "", ""
+			if i < len(leftLines) {
+				l = leftLines[i]
+			} else {
+				l = "  " + statusBarStyle.Width(leftW-2).Render("")
+			}
+			if i < len(rightLines) {
+				r = rightLines[i]
+			} else {
+				r = "  " + statusBarStyle.Width(listW-2).Render("")
+			}
+			if i < len(bgLines) {
+				bg = bgLines[i]
+			} else {
+				bg = "  " + statusBarStyle.Width(bgW-2).Render("")
+			}
+			b.WriteString(l + " " + sep + " " + r + " " + sep + " " + bg + "\n")
+		}
+	} else if !detailCol {
 		b.WriteString("  " + sideTitleStyle.Width(leftW-2).Render("SECTIONS") + " │ " +
 			"  " + sideTitleStyle.Width(listW-2).Render(strings.ToUpper(secName)+" · "+fmt.Sprintf("%d", total)) + "\n")
 
@@ -1531,6 +1817,9 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 		if d.CurPsec() == PsecMarket {
 			// the filter is a remote npm search, not a local one
 			foot = "↑↓ select · ← sections · Tab switch · type to search npm · Enter install · Esc clears"
+		}
+		if bgCol {
+			foot = "↑↓ previews · ←/→ switch column · Enter applies · type filters · Esc close"
 		}
 	}
 	b.WriteString("\n" + toolStyle.Render(foot))

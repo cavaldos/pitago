@@ -263,6 +263,18 @@ func confirmPconfig(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		}
 		m.Refresh()
 		return m, nil
+	case strings.HasPrefix(p, app.PsecBgPrefix()):
+		// A background row in the hub's Theme section: paint that
+		// surface behind the frame, keep the hub open, reload rows so
+		// the ✓ follows.
+		m.SetBackground(strings.TrimPrefix(p, app.PsecBgPrefix()))
+		cur := d.Cursor
+		m.LoadPsecRows(d)
+		if cur < len(d.FIdx) {
+			d.Cursor = cur
+		}
+		m.Refresh()
+		return m, nil
 	case strings.HasPrefix(p, "tasks:"):
 		m.CycleTasksSetting(strings.TrimPrefix(p, "tasks:"))
 		cur := d.Cursor // cycle rebuilds rows: keep the cursor where it was
