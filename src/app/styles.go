@@ -75,7 +75,12 @@ var (
 			BorderForeground(cBorder).
 			Padding(0, 1).
 			Foreground(cText)
-	toolStyle     = lipgloss.NewStyle().Foreground(cMuted)
+	toolStyle = lipgloss.NewStyle().Foreground(cMuted)
+	// thinkStyle: reasoning is a faint aside. Italic marks it, and the border
+	// colour (a step below muted in every palette) keeps it quiet without the
+	// SGR 2 attribute, which plenty of terminals drop. Faint(true) if you
+	// want it weaker still and your terminal honours SGR 2.
+	thinkStyle    = lipgloss.NewStyle().Foreground(cBorder).Italic(true)
 	toolNameStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	codeStyle     = lipgloss.NewStyle().Foreground(cCode)
 	sideStyle     = lipgloss.NewStyle().
@@ -223,6 +228,7 @@ func ApplyTheme(raw theme.Theme) {
 		Padding(0, 1).
 		Foreground(cText)
 	toolStyle = lipgloss.NewStyle().Foreground(cMuted)
+	thinkStyle = lipgloss.NewStyle().Foreground(cBorder).Italic(true)
 	toolNameStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	codeStyle = lipgloss.NewStyle().Foreground(cCode)
 	sideStyle = lipgloss.NewStyle().

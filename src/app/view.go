@@ -341,7 +341,7 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 			t = t[:300] + "…"
 		}
 		icon = statusBarStyle.Render("○")
-		body = toolStyle.Render(Short(t, 160)) + "\n\n"
+		body = thinkStyle.Render(Short(t, 160)) + "\n\n"
 	case "tool":
 		// Every tool call is one bounded block: header, detail line and
 		// body preview inside a rounded frame with a background fill, so

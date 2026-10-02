@@ -1,6 +1,7 @@
 package app
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -97,6 +98,24 @@ func TestProseBlocksAreNotFramed(t *testing.T) {
 		if strings.ContainsAny(stripANSI(out), "╭╰│") {
 			t.Fatalf("%s block must not be framed: %q", bl.Kind, stripANSI(out))
 		}
+	}
+}
+
+// Reasoning text is italic: the block body carries SGR 3 next to the dim
+// colour. Needs a real color profile — the default Ascii profile drops it.
+func TestThinkingBlockIsItalic(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(prev)
+	out, skip := (&Model{}).renderOneBlock(Block{Kind: "thinking", Text: "considering"}, 60)
+	if skip {
+		t.Fatal("thinking block skipped")
+	}
+	if !regexp.MustCompile(`\x1b\[(?:[0-9]+;)*3[;m]`).MatchString(out) {
+		t.Fatalf("thinking not italic: %q", out)
+	}
+	if !strings.Contains(stripANSI(out), "considering") {
+		t.Fatalf("thinking lost text: %q", out)
 	}
 }
 
