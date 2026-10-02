@@ -1771,6 +1771,32 @@ func escDisarmCmd(gen int) tea.Cmd {
 	})
 }
 
+// stampTurnFoot records the opencode-style footer on the reply that closed
+// the turn: which model answered, at what thinking level, and how long the
+// prompt took (issue #15). Only blocks from the turn that just ran are
+// eligible: a turn that produced no prose (tool calls only) has nothing to
+// stamp, and the previous turn's reply keeps the footer it already earned.
+func (m *Model) stampTurnFoot() {
+	if m.turnStart.IsZero() {
+		return
+	}
+	parts := make([]string, 0, 3)
+	if lbl := m.ModelLbl; lbl != "" && lbl != "…" {
+		parts = append(parts, lbl)
+	}
+	if lvl := m.thinkLvl; lvl != "" {
+		parts = append(parts, lvl)
+	}
+	parts = append(parts, fmtTurnDur(time.Since(m.turnStart)))
+	foot := strings.Join(parts, " · ")
+	for i := len(m.blocks) - 1; i >= m.turnFrom && i >= 0; i-- {
+		if m.blocks[i].Kind == "assistant" {
+			m.blocks[i].Foot = foot
+			return
+		}
+	}
+}
+
 func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	var pcmd tea.Cmd
 	switch ev.Type {
@@ -1784,6 +1810,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.asstDelta, m.thinkDelta = false, false
 		m.turnStart = time.Now()
 		m.turnOutBase = m.Stats.Out
+		m.turnFrom = len(m.blocks)
 	case "message_update":
 		pcmd = m.applyDelta(ev.Raw)
 	case "message_end":
@@ -1870,6 +1897,7 @@ func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.thinking = false
 		m.escArm = time.Time{} // turn over: cancel arm no longer applies
 		m.Status = "ready"
+		m.stampTurnFoot()
 		m.pendSpeed = true
 		m.MCP = getMcpServers()
 		m.Plugins = getPlugins()

@@ -167,6 +167,7 @@ type Model struct {
 	session             string
 	sessStart           time.Time // session clock for sidebar "time"
 	turnStart           time.Time // last turn start (for "last" + speed)
+	turnFrom            int       // block index where the current turn began (bounds its duration stamp)
 	turnOutBase         int       // stats.Out at last turn_start
 	pendSpeed           bool      // compute last/speed on next statsMsg
 	lastDur             time.Duration
