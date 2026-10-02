@@ -76,6 +76,91 @@ func TestParseMcpListRejectsGarbage(t *testing.T) {
 	}
 }
 
+// The N/M column of the /mcp list: total is the tool count, direct is
+// the count of tools whose EFFECTIVE exposure is `direct` — the
+// per-tool override when pi reported one, the server's own exposure
+// otherwise. Everything the count needs comes from `pi mcp list
+// --json`, so nothing here is estimated.
+func TestToolCountsUsePerToolExposureOverride(t *testing.T) {
+	tests := []struct {
+		name   string
+		srv    McpServerInfo
+		direct int
+		total  int
+	}{
+		{
+			name:   "no tools",
+			srv:    McpServerInfo{Name: "empty", State: "failed"},
+			direct: 0, total: 0,
+		},
+		{
+			name: "server default direct: every tool is direct",
+			srv: McpServerInfo{Exposure: "direct",
+				Tools: []string{"a", "b", "c"}},
+			direct: 3, total: 3,
+		},
+		{
+			name:   "absent exposure is pi's default (codemode): nothing direct",
+			srv:    McpServerInfo{Tools: []string{"a", "b"}},
+			direct: 0, total: 2,
+		},
+		{
+			name: "a per-tool override promotes ONE tool of a codemode server",
+			srv: McpServerInfo{Exposure: "codemode", Tools: []string{"a", "b", "c"},
+				ToolExposure: map[string]string{"b": "direct"}},
+			direct: 1, total: 3,
+		},
+		{
+			name: "an override demotes a tool of a direct server",
+			srv: McpServerInfo{Exposure: "direct", Tools: []string{"a", "b"},
+				ToolExposure: map[string]string{"b": "codemode-deferred"}},
+			direct: 1, total: 2,
+		},
+		{
+			name: "an override for a tool pi never listed is not counted",
+			srv: McpServerInfo{Exposure: "codemode", Tools: []string{"a"},
+				ToolExposure: map[string]string{"ghost": "direct"}},
+			direct: 0, total: 1,
+		},
+		{
+			name: "an empty-string override is honoured (pi wrote it, so it is the value)",
+			srv: McpServerInfo{Exposure: "direct", Tools: []string{"a"},
+				ToolExposure: map[string]string{"a": ""}},
+			direct: 0, total: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			direct, total := tc.srv.ToolCounts()
+			if direct != tc.direct || total != tc.total {
+				t.Errorf("ToolCounts() = %d/%d, want %d/%d", direct, total, tc.direct, tc.total)
+			}
+		})
+	}
+}
+
+// The field must survive pi's own document: toolExposure is emitted at
+// dist/extensions/mcp/cli.js:376 for tools whose override differs from
+// the server default.
+func TestParseMcpListDecodesToolExposure(t *testing.T) {
+	raw := []byte(`{"servers":[{"name":"docs","enabled":true,"exposure":"codemode",
+		"tools":["search","fetch"],"toolExposure":{"fetch":"direct"}}],"errors":[]}`)
+	list, err := ParseMcpList(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Servers) != 1 {
+		t.Fatalf("servers = %d", len(list.Servers))
+	}
+	srv := list.Servers[0]
+	if srv.ToolExposure["fetch"] != "direct" {
+		t.Fatalf("toolExposure not decoded: %+v", srv.ToolExposure)
+	}
+	if direct, total := srv.ToolCounts(); direct != 1 || total != 2 {
+		t.Errorf("ToolCounts() = %d/%d, want 1/2", direct, total)
+	}
+}
+
 func TestValidMcpServerName(t *testing.T) {
 	tests := []struct {
 		name string

@@ -58,6 +58,50 @@ type McpServerInfo struct {
 	Resources         int      `json:"resources"`
 	ResourceTemplates int      `json:"resourceTemplates"`
 	Error             string   `json:"error"`
+	// ToolExposure carries the PER-TOOL exposure overrides pi prints
+	// (dist/extensions/mcp/cli.js:376, `report.toolExposure =
+	// Object.fromEntries(overrides)`): a tool whose own exposure
+	// differs from the server default. A tool that is absent here
+	// inherits the server's Exposure, exactly as pi resolves it.
+	ToolExposure map[string]string `json:"toolExposure"`
+	// DirectTokens is the adapter panel's per-server token estimate for
+	// its DIRECT tools (mcp-panel.ts estimateTokens), summed. The
+	// `pi mcp list` path cannot produce it — that CLI prints tool NAMES
+	// only, never a schema — so it stays 0 there and the renderer hides
+	// the ~N column rather than printing a made-up 0.
+	DirectTokens int `json:"-"`
+}
+
+// DefaultMcpExposure is pi's default exposure (config.js: an entry with
+// no `exposure` key is `codemode`).
+const DefaultMcpExposure = "codemode"
+
+// ToolCounts returns (direct, total): the number of tools the model
+// calls DIRECTLY and the number the server offers in all. total is
+// len(Tools) — the only count pi's list can prove. A tool is direct
+// when its EFFECTIVE exposure is `direct`, where the effective exposure
+// is the per-tool override in ToolExposure when pi reported one and
+// the server's own Exposure otherwise (default codemode).
+//
+// A tool listed in ToolExposure that is not in Tools is ignored: pi
+// only reports overrides for tools it discovered, and counting one
+// twice would inflate the column.
+func (s McpServerInfo) ToolCounts() (direct, total int) {
+	def := s.Exposure
+	if def == "" {
+		def = DefaultMcpExposure
+	}
+	total = len(s.Tools)
+	for _, t := range s.Tools {
+		exp := def
+		if over, ok := s.ToolExposure[t]; ok {
+			exp = over
+		}
+		if exp == "direct" {
+			direct++
+		}
+	}
+	return direct, total
 }
 
 // IsHTTP reports whether the server is a streamable-HTTP server: pi
@@ -137,11 +181,17 @@ var mcpIndentRe = regexp.MustCompile(`(?m)^([ \t]+)\S`)
 var ErrUnreadableMcpConfig = errors.New("pi mcp: refusing to rewrite an unreadable mcp.json")
 
 // McpConfigPatch is the part of a server entry /mcp edits. A nil
-// field is left untouched; pi's own rules for the two are mirrored in
-// applyMcpPatch (the default value removes the key instead of writing
-// it, so a server never carries redundant config).
+// field is left untouched; the default value removes the key instead of
+// writing it, so a server never carries redundant config.
+//
+// Enabled and Disabled are two spellings of the same switch, because
+// the two config dialects disagree: pi's mcp.json marks a server off
+// with `enabled: false`, while the pi-mcp-adapter file marks it off
+// with `disabled: true`. A caller sets exactly one of them, chosen by
+// which file owns the server (mcpTogglePatch).
 type McpConfigPatch struct {
 	Enabled  *bool
+	Disabled *bool
 	Exposure *string
 }
 
@@ -216,12 +266,26 @@ func SetMcpServerConfig(file, name string, patch McpConfigPatch) error {
 // (dist/extensions/mcp/config.js): `enabled: true` and the default
 // `exposure: "codemode"` DELETE the key instead of writing it, so the
 // file keeps carrying only what differs from the default.
+//
+// `disabled` follows the adapter's own persistServerDisabled
+// (pi-mcp-adapter/config.ts:1737), which is the mirror image: disable
+// writes the key, enable removes it. Writing pi's `enabled` into the
+// adapter's file would be silently ignored — the adapter only ever
+// looks at `disabled` — which is why the toggle has to pick the right
+// spelling rather than send both.
 func (o *orderedObject) applyMcpPatch(patch McpConfigPatch) {
 	if patch.Enabled != nil {
 		if *patch.Enabled {
 			o.del("enabled")
 		} else {
 			o.set("enabled", json.RawMessage("false"))
+		}
+	}
+	if patch.Disabled != nil {
+		if *patch.Disabled {
+			o.set("disabled", json.RawMessage("true"))
+		} else {
+			o.del("disabled")
 		}
 	}
 	if patch.Exposure != nil {

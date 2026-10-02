@@ -56,6 +56,7 @@ type Dialog struct {
 	Current           string                // the value in use, marked in the grid/list (pet: "●" cell)
 	Cursor            int
 	Filter            string // picker filter / secret buffer / rename buffer
+	SearchDesc        bool   // mcp: also match the filter against the row descriptions (the ? key)
 	Placeholder       string // free-text dialog: dim hint shown while the buffer is empty
 	FIdx              []int
 	FavSet            map[string]bool // model picker: starred provider\x00id (★ column, sorted first)

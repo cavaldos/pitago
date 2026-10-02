@@ -1131,7 +1131,7 @@ func All() []app.Builtin {
 				return app.PickerMsg{Kind: "model", Options: opts, Descs: descs, Providers: provs, Models: models, Current: m.ModelLbl}
 			}
 		}),
-		pi("mcp", "MCP servers: state, tools, exposure, sign-in (Enter manages the picked server)", "/mcp [login|logout|reconnect] [server]", func(m *app.Model, arg string) tea.Cmd {
+		pi("mcp", "MCP server manager: add, sign in, tools, reconnect, exposure, enable/disable", "/mcp [login|logout|reconnect|add|remove]", func(m *app.Model, arg string) tea.Cmd {
 			return openMcp(m, arg)
 		}),
 		{

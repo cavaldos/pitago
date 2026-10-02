@@ -323,12 +323,12 @@ func TestParseMcpArg(t *testing.T) {
 }
 
 func TestValidMcpAction(t *testing.T) {
-	for _, a := range []string{"login", "logout", "reconnect"} {
+	for _, a := range []string{"login", "logout", "reconnect", "add", "remove"} {
 		if !validMcpAction(a) {
-			t.Errorf("%q is one of pi's three subcommands", a)
+			t.Errorf("%q is one of pi's subcommands", a)
 		}
 	}
-	for _, a := range []string{"", "add", "remove", "list", "signin", "enable"} {
+	for _, a := range []string{"", "list", "signin", "enable", "del"} {
 		if validMcpAction(a) {
 			t.Errorf("%q is not a subcommand and must not run an action", a)
 		}
@@ -368,13 +368,23 @@ func TestOpenMcpRefusesInvalidServerName(t *testing.T) {
 }
 
 func TestOpenMcpUnknownActionPrintsUsage(t *testing.T) {
-	for _, arg := range []string{"add foo", "signin sentry", "login a b"} {
+	for _, arg := range []string{"signin sentry", "login a b"} {
 		m := &app.Model{}
 		if cmd := openMcp(m, arg); cmd != nil {
 			t.Errorf("/mcp %q must not run anything", arg)
 		}
 		if m.NoticeCount() == 0 || !strings.Contains(m.LastNotice(), "Usage: /mcp") {
 			t.Errorf("/mcp %q must print pi's usage line, got %q", arg, m.LastNotice())
+		}
+	}
+	// `add`/`remove` are real subcommands now, so they are not usage.
+	for _, arg := range []string{"add foo", "remove foo"} {
+		m := &app.Model{}
+		if cmd := openMcp(m, arg); cmd == nil {
+			t.Errorf("/mcp %q must run the verb", arg)
+		}
+		if strings.Contains(m.LastNotice(), "Usage: /mcp") {
+			t.Errorf("/mcp %q is a real verb, not a usage line", arg)
 		}
 	}
 }
@@ -414,6 +424,198 @@ func TestConfirmMcpOpensMenuOverList(t *testing.T) {
 	}
 	if m.Dialogs[0].Cursor != 1 {
 		t.Errorf("list cursor = %d, want the same row still selected", m.Dialogs[0].Cursor)
+	}
+}
+
+// The list's trailing row is the ONLY way to add a server from inside
+// the window (pi has no add UI, and dialog capture swallows every key
+// while the window is up), so it must exist on an empty list AND on a
+// populated one — and Options/Descs/McpServers must stay the same
+// length, because the row index reaches all three.
+func TestMcpAddRowIsAlwaysPresentAndIndexParallel(t *testing.T) {
+	tests := []struct {
+		name  string
+		srvs  []pirpc.McpServerInfo
+		opts  []string
+		descs []string
+		rows  int
+	}{
+		{name: "empty list is one add row, not zero rows", rows: 1},
+		{
+			name:  "populated list keeps the servers and adds one row",
+			rows:  2,
+			opts:  []string{"docs"},
+			descs: []string{"connected · 1 tool · codemode · global"},
+			srvs:  []pirpc.McpServerInfo{mcpSrv()},
+		},
+		{
+			name: "a short desc slice is padded so the rows stay parallel",
+			rows: 2,
+			opts: []string{"docs"},
+			srvs: []pirpc.McpServerInfo{mcpSrv()},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &app.Model{}
+			m.SetMcpRows(app.McpMsg{Options: tc.opts, Descs: tc.descs, Servers: tc.srvs})
+			if len(m.Dialogs) != 1 {
+				t.Fatalf("dialogs = %d, want the /mcp list", len(m.Dialogs))
+			}
+			d := m.Dialogs[0]
+			if len(d.Options) != tc.rows || len(d.Descs) != tc.rows || len(d.McpServers) != tc.rows {
+				t.Fatalf("rows must be parallel and %d long: options=%d descs=%d servers=%d",
+					tc.rows, len(d.Options), len(d.Descs), len(d.McpServers))
+			}
+			ri := tc.rows - 1
+			if d.Options[ri] != app.McpAddRow {
+				t.Fatalf("last row = %q, want %q", d.Options[ri], app.McpAddRow)
+			}
+			if d.SelMcpRow(ri).Name != "" {
+				t.Errorf("the add row names no server, got %q", d.SelMcpRow(ri).Name)
+			}
+			// The desc has to name BOTH forms: the form is one line of
+			// free text and the URL and command shapes are not guessable
+			// from each other.
+			for _, want := range []string{"--url", "--"} {
+				if !strings.Contains(d.Descs[ri], want) {
+					t.Errorf("add desc %q must mention %q", d.Descs[ri], want)
+				}
+			}
+		})
+	}
+}
+
+// Enter on the add row opens the free-text form IN FRONT of the list,
+// with both accepted shapes and a concrete example: the user is typing
+// into a buffer, so the buffer's contract has to be on screen.
+func TestConfirmMcpAddRowOpensFormOverList(t *testing.T) {
+	m := &app.Model{}
+	m.SetMcpRows(app.McpMsg{Options: []string{"docs"}, Descs: []string{"connected · codemode · global"},
+		Servers: []pirpc.McpServerInfo{mcpSrv()}})
+	list := m.Dialogs[0]
+	if _, cmd := confirmMcp(m, list, len(list.Options)-1); cmd != nil {
+		t.Error("opening the form is synchronous")
+	}
+	if len(m.Dialogs) != 2 || m.Dialogs[0].Kind != app.McpAddKind {
+		t.Fatalf("dialogs = %+v, want the add form in front of the list", m.Dialogs)
+	}
+	f := m.Dialogs[0]
+	if f.Title != "Add MCP server" {
+		t.Errorf("form title = %q", f.Title)
+	}
+	for _, want := range []string{"--url", "-- <command>", "-l"} {
+		if !strings.Contains(f.Message, want) {
+			t.Errorf("the form must document %q:\n%s", want, f.Message)
+		}
+	}
+	if !strings.Contains(f.Placeholder, "--url") {
+		t.Errorf("the placeholder must be a concrete example, got %q", f.Placeholder)
+	}
+	// The list is still underneath, untouched: Esc comes back here.
+	if m.Dialogs[1] != list {
+		t.Error("the list must survive under the form")
+	}
+}
+
+// mcpAddShim is a fake `pi` that records the argv it was given, so a
+// test can assert the EXACT `pi mcp add …` line the form produced —
+// argv, not a shell string, because that is how RunMcp passes it.
+func mcpAddShim(t *testing.T) (bin, record string) {
+	t.Helper()
+	dir := t.TempDir()
+	record = filepath.Join(dir, "argv")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n"
+	bin = filepath.Join(dir, "pi")
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_BIN", bin)
+	return bin, record
+}
+
+// Submitting the form runs `pi mcp add` with the typed line split into
+// argv, and never through a shell: the URL form, the stdio form (whose
+// command carries its own flags) and the -l flag all arrive intact.
+func TestConfirmMcpAddRunsTheAddWithRightArgv(t *testing.T) {
+	tests := []struct {
+		line string
+		want []string
+	}{
+		{line: "docs --url https://mcp.example.com/mcp",
+			want: []string{"mcp", "add", "docs", "--url", "https://mcp.example.com/mcp"}},
+		{line: "  local  --  npx -y @scope/pkg ",
+			want: []string{"mcp", "add", "local", "--", "npx", "-y", "@scope/pkg"}},
+		{line: "proj -l --url https://x.dev/mcp",
+			// -l is hoisted out of the tail and passed on
+			// after the name, where the existing `/mcp add`
+			// parser puts it (pi's flag position).
+			want: []string{"mcp", "add", "proj", "-l", "--url", "https://x.dev/mcp"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.line, func(t *testing.T) {
+			_, record := mcpAddShim(t)
+			m := &app.Model{}
+			f := McpAddForm()
+			f.Filter = tc.line
+			m.Dialogs = []*app.Dialog{f}
+			_, cmd := confirmMcpAdd(m, f, 0)
+			if cmd == nil {
+				t.Fatal("submitting the form must schedule the add")
+			}
+			msg, ok := cmd().(app.McpActionMsg)
+			if !ok {
+				t.Fatalf("the add must report app.McpActionMsg so the list re-reads, got %T", msg)
+			}
+			if msg.Err != nil {
+				t.Fatal(msg.Err)
+			}
+			if msg.Action != "add" {
+				t.Errorf("action = %q, want add", msg.Action)
+			}
+			got, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if argv := strings.Fields(string(got)); strings.Join(argv, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("pi argv = %v, want %v", argv, tc.want)
+			}
+		})
+	}
+}
+
+// A name pi's CLI would reject never reaches it: the form reuses the
+// same pre-exec check as `/mcp add`, so a pasted `; touch …` is refused
+// with the same wording and no process is started.
+func TestConfirmMcpAddRefusesInvalidNameBeforeExec(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "must-not-exist")
+	_, record := mcpAddShim(t)
+	for _, bad := range []string{"a;touch " + marker, "../x --url https://x.dev/mcp"} {
+		m := &app.Model{}
+		f := McpAddForm()
+		f.Filter = bad
+		m.Dialogs = []*app.Dialog{f}
+		if _, cmd := confirmMcpAdd(m, f, 0); cmd != nil {
+			t.Errorf("%q must not schedule any command", bad)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("the name reached the shell")
+		}
+		if !strings.Contains(m.LastNotice(), "is not an MCP server name") {
+			t.Errorf("refusal for %q = %q", bad, m.LastNotice())
+		}
+		if _, err := os.Stat(record); err == nil {
+			t.Errorf("%q reached the pi CLI", bad)
+		}
+	}
+	// An empty buffer is not a submit: the form has nothing to run.
+	m := &app.Model{}
+	f := McpAddForm()
+	f.Filter = "   "
+	m.Dialogs = []*app.Dialog{f}
+	if _, cmd := confirmMcpAdd(m, f, 0); cmd != nil {
+		t.Error("an empty buffer must not run anything")
 	}
 }
 
@@ -653,9 +855,235 @@ func TestMcpIsInterceptedNotSentAsPrompt(t *testing.T) {
 	if _, ok := Confirmers()["mcp"]; !ok {
 		t.Error("the mcp list needs an Enter handler")
 	}
-	for _, kind := range []string{"mcpAction", "mcpExposure", "mcpTools"} {
+	for _, kind := range []string{"mcpAction", "mcpExposure", "mcpTools", "mcpAdd"} {
 		if _, ok := Confirmers()[kind]; !ok {
 			t.Errorf("%s has no Enter handler, so Enter would do nothing", kind)
 		}
+	}
+}
+
+// `-l` is pi's scope flag only in the LEADING position. Everywhere else
+// it belongs to whatever follows `--`, and belongs to the server's own
+// command line. Two bugs this pins:
+//   - `add -l docs …` used to take "-l" as the server NAME (it passes
+//     pi's name regex, so nothing rejected it — the notice simply said
+//     "added MCP server -l").
+//   - `add foo -- npx -l /tmp` used to have the stdio command's OWN -l
+//     deleted by a substring scan of the tail, rewriting the command.
+func TestConfirmMcpAddOnlyTreatsLeadingDashLAsScopeFlag(t *testing.T) {
+	tests := []struct {
+		verb string
+		line string
+		want []string
+	}{
+		{verb: "add", line: "-l docs --url https://x.dev/mcp", // leading: the scope flag
+			want: []string{"mcp", "add", "-l", "docs", "--url", "https://x.dev/mcp"}},
+		{verb: "add", line: "--local docs --url https://x.dev/mcp",
+			want: []string{"mcp", "add", "-l", "docs", "--url", "https://x.dev/mcp"}},
+		{verb: "add", line: "docs -l --url https://x.dev/mcp", // after the name: pi reads it there too
+			want: []string{"mcp", "add", "docs", "-l", "--url", "https://x.dev/mcp"}},
+		{verb: "add", line: "foo -- npx -l /tmp", // the stdio command's own flag, untouched
+			want: []string{"mcp", "add", "foo", "--", "npx", "-l", "/tmp"}},
+		{verb: "remove", line: "-l docs",
+			want: []string{"mcp", "remove", "-l", "docs"}},
+		{verb: "remove", line: "docs",
+			want: []string{"mcp", "remove", "docs"}},
+	}
+	for _, tc := range tests {
+		_, record := mcpAddShim(t)
+		m := &app.Model{}
+		m.UseBuiltins(All(), Confirmers())
+		cmd := openMcp(m, tc.verb+" "+tc.line)
+		if cmd == nil {
+			t.Errorf("/mcp %s %q refused: %q", tc.verb, tc.line, m.LastNotice())
+			continue
+		}
+		msg, ok := cmd().(app.McpActionMsg)
+		if !ok || msg.Err != nil {
+			t.Errorf("/mcp %s %q did not run: %#v", tc.verb, tc.line, msg)
+			continue
+		}
+		// The notice names the SERVER, so a flag parsed as a name shows up here.
+		if strings.Contains(msg.Done(), "-l ") {
+			t.Errorf("/mcp %s %q reported the flag as the server name: %q", tc.verb, tc.line, msg.Done())
+		}
+		got, err := os.ReadFile(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if argv := strings.Fields(string(got)); strings.Join(argv, " ") != strings.Join(tc.want, " ") {
+			t.Errorf("/mcp %s %q → pi %v, want %v", tc.verb, tc.line, argv, tc.want)
+		}
+	}
+}
+
+// The root list's one-key arms go through the SAME writers and the SAME
+// pi commands the action menu uses: there is no second implementation
+// of enable/disable, sign-in or reconnect anywhere in the tree.
+func TestMcpRootKeysRunTheSameCommandsAsTheMenu(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(file, []byte(`{"mcpServers":{"srv":{"command":"npx"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := mcpSrv(func(s *pirpc.McpServerInfo) { s.Source = file })
+	// The row key acts on the DIALOG's row record, exactly as Enter does.
+	list := func(s pirpc.McpServerInfo) *app.Dialog {
+		d := &app.Dialog{Kind: "mcp", Options: []string{s.Name}, McpServers: []pirpc.McpServerInfo{s}}
+		d.Reindex()
+		return d
+	}
+
+	// space / ^D: the enable toggle, both ways, through mcpSaveCmd.
+	for _, key := range []string{app.McpKeySpace, app.McpKeyToggle} {
+		t.Run(key+" disables", func(t *testing.T) {
+			m := &app.Model{Dialogs: []*app.Dialog{list(srv)}}
+			cmd := mcpRowKeyCmd(m, m.Dialogs[0], 0, key)
+			if cmd == nil {
+				t.Fatal("the toggle must schedule a write")
+			}
+			msg, ok := cmd().(app.McpConfigMsg)
+			if !ok || msg.Err != nil {
+				t.Fatalf("write failed: %+v", msg)
+			}
+			entry := mcpEntryAt(t, file, "srv")
+			if entry["enabled"] != false {
+				t.Errorf("enabled:false not written: %v", entry)
+			}
+		})
+		t.Run(key+" enables", func(t *testing.T) {
+			off := srv
+			off.Enabled = false
+			m := &app.Model{Dialogs: []*app.Dialog{list(off)}}
+			cmd := mcpRowKeyCmd(m, m.Dialogs[0], 0, key)
+			if cmd == nil {
+				t.Fatal("the toggle must schedule a write")
+			}
+			msg, ok := cmd().(app.McpConfigMsg)
+			if !ok || msg.Err != nil {
+				t.Fatalf("write failed: %+v", msg)
+			}
+			// pi's rule: enabling REMOVES the key rather than writing true.
+			if _, has := mcpEntryAt(t, file, "srv")["enabled"]; has {
+				t.Errorf("enabling must drop the key, not write true")
+			}
+		})
+	}
+
+	// ^A: the login command, with the browser-wait status line.
+	auth := srv
+	auth.State = "needs-auth"
+	m := &app.Model{Dialogs: []*app.Dialog{list(auth)}}
+	if cmd := mcpRowKeyCmd(m, m.Dialogs[0], 0, app.McpKeySignIn); cmd == nil {
+		t.Fatal("ctrl+a must schedule the login")
+	}
+	if !strings.Contains(m.Status, "signing in to") {
+		t.Errorf("status = %q, want the browser-wait line", m.Status)
+	}
+
+	// ^R: a second `pi mcp list` through the hidden builtin (whose
+	// status line is the "loading" one; the exec happens in the Cmd,
+	// which this test never runs).
+	m2 := &app.Model{}
+	m2.UseBuiltins(All(), Confirmers())
+	l := list(srv)
+	m2.Dialogs = []*app.Dialog{l}
+	if cmd := mcpRowKeyCmd(m2, l, 0, app.McpKeyReconn); cmd == nil {
+		t.Fatal("ctrl+r must schedule a re-read")
+	}
+	if !strings.Contains(m2.Status, "loading MCP servers") {
+		t.Errorf("status = %q, want the list re-read", m2.Status)
+	}
+}
+
+// The menu rows and the one-key arms are gated by the SAME predicates,
+// so a key the hint block offers can never be a key the menu hides.
+func TestMcpMenuRowsAndRootKeyGatingAgree(t *testing.T) {
+	states := []struct {
+		name     string
+		mut      func(*pirpc.McpServerInfo)
+		wantSign bool
+		wantConn bool
+	}{
+		{name: "connected", mut: func(s *pirpc.McpServerInfo) { s.State = "connected" }, wantConn: true},
+		{name: "needs-auth", mut: func(s *pirpc.McpServerInfo) { s.State = "needs-auth" }, wantSign: true, wantConn: true},
+		{name: "failed", mut: func(s *pirpc.McpServerInfo) { s.State = "failed" }, wantConn: true},
+		{name: "disconnected", mut: func(s *pirpc.McpServerInfo) { s.State = "disconnected" }, wantConn: true},
+		{name: "starting", mut: func(s *pirpc.McpServerInfo) { s.State = "" }},
+		{name: "disabled", mut: func(s *pirpc.McpServerInfo) { s.Enabled = false; s.State = "needs-auth" }},
+	}
+	for _, tc := range states {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mcpSrv(tc.mut)
+			if got := app.McpCanSignIn(srv); got != tc.wantSign {
+				t.Errorf("McpCanSignIn = %v, want %v", got, tc.wantSign)
+			}
+			if got := app.McpCanReconnect(srv); got != tc.wantConn {
+				t.Errorf("McpCanReconnect = %v, want %v", got, tc.wantConn)
+			}
+			opts, _ := mcpMenuRows(srv)
+			has := func(label string) bool {
+				for _, o := range opts {
+					if o == label {
+						return true
+					}
+				}
+				return false
+			}
+			// A disabled server offers Enable and nothing else, so both
+			// predicates must be false there.
+			if tc.wantSign && !has(McpActSignIn) {
+				t.Errorf("Sign in must be on the menu: %v", opts)
+			}
+			if !tc.wantSign && has(McpActSignIn) {
+				t.Errorf("Sign in must not be on the menu: %v", opts)
+			}
+			if tc.wantConn && !has(McpActReconnect) {
+				t.Errorf("Reconnect must be on the menu: %v", opts)
+			}
+			if !tc.wantConn && has(McpActReconnect) {
+				t.Errorf("Reconnect must not be on the menu: %v", opts)
+			}
+		})
+	}
+}
+
+// mcpEntryAt reads one mcp.json server entry, for the write assertions.
+func mcpEntryAt(t *testing.T, file, name string) map[string]any {
+	t.Helper()
+	root := pirpc.ReadPiSettingsAt(file)
+	servers, _ := pirpc.GetPiSetting(root, "mcpServers").(map[string]any)
+	entry, _ := servers[name].(map[string]any)
+	if entry == nil {
+		t.Fatalf("%s has no entry for %q", file, name)
+	}
+	return entry
+}
+
+// Which spelling of the enable/disable switch the toggle sends. The
+// reported bug was exactly this choice: sending pi's `enabled` into the
+// pi-mcp-adapter file, which the adapter never reads, so the write
+// succeeded, the reload saw the old state, and the row's dot did not
+// move. Both arms are asserted because getting either one wrong is the
+// same silent no-op.
+func TestMcpTogglePatchSpellsTheOwningFile(t *testing.T) {
+	adapter := pirpc.McpServerInfo{Name: "notion", Scope: pirpc.AdapterScope}
+	if p := mcpTogglePatch(adapter, false); p.Disabled == nil || !*p.Disabled {
+		t.Errorf("disabling an adapter server must send `disabled:true`, got %+v", p)
+	}
+	if p := mcpTogglePatch(adapter, true); p.Disabled == nil || *p.Disabled {
+		t.Errorf("enabling an adapter server must send `disabled:false`, got %+v", p)
+	}
+	pi := pirpc.McpServerInfo{Name: "docs", Scope: "global"}
+	if p := mcpTogglePatch(pi, false); p.Enabled == nil || *p.Enabled {
+		t.Errorf("disabling a pi server must send `enabled:false`, got %+v", p)
+	}
+	// Never both: they are the same switch in two dialects, and sending
+	// both at once would have the two keys fight.
+	if p := mcpTogglePatch(adapter, false); p.Enabled != nil {
+		t.Errorf("an adapter server must not also be sent `enabled`, got %+v", p)
+	}
+	if p := mcpTogglePatch(pi, false); p.Disabled != nil {
+		t.Errorf("a pi server must not also be sent `disabled`, got %+v", p)
 	}
 }
