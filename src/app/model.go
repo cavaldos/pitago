@@ -42,6 +42,8 @@ type Dialog struct {
 	ProvConn          map[string]bool       // model picker: connected providers (green dot)
 	ProvCursor        int                   // model picker: left-pane cursor
 	ProvFocus         bool                  // model picker: true = providers focused
+	BgFocus           bool                  // hub Theme section: the background column has focus (not the palettes)
+	PalRow, BgRow     int                   // hub Theme section: last row per column (-1 = not visited yet); d.Cursor is shared
 	PsecIDs           []string              // pitago-setting: section id parallel to Provs (left pane)
 	Paths             []string              // sessions picker: parallel session file per option
 	Scope             string                // sessions picker: "current" | "all" (Tab toggles)
@@ -232,6 +234,7 @@ type Model struct {
 	SuggestPlugins      []string          // user's own suggested plugin names (hub Plugins tab ★ rows, Ctrl+F adds, persisted in prefs)
 	Tidy                bool              // tidy mode: tool blocks render header-only (global pref, all projects)
 	ThemeName           string            // active TUI theme (/theme, --theme flag)
+	Background          string            // app surface behind the frame (opencode background slug, "" = terminal background)
 	themePath           string            // persisted theme ("" = don't persist)
 	PetName             string            // pinned sidebar ASCII pet (/pet, prefs.json)
 	PetStyle            string            // sidebar pet look: pet.StyleASCII (default) | pet.StyleClassic
@@ -1378,6 +1381,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
+	m.Background = prefs.Background
 	m.CurAgent = prefs.CurrentSubagent
 	// Resolve, not raw read: a hand-edited or stale prefs.json must still
 	// yield a drawable pet, never an empty sidebar block.

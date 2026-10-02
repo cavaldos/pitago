@@ -3129,7 +3129,45 @@ func teamRowsHidden(blocks [][]string, selected int) int {
 	return rows
 }
 
+// View paints one frame: the layout from view(), then the opaque
+// background when the user turned it on.
 func (m Model) View() string {
+	return m.paintBG(m.view())
+}
+
+// paintBG fills the whole terminal with the picked background surface
+// (hub → Theme → background column). Every row is padded to the frame
+// width and to the frame height, so the fill reaches the edges.
+//
+// Each row is re-styled segment by segment: every inner lipgloss style
+// ends in a reset, which clears the background again, so one style over
+// the whole row would leave the text past the first reset unpainted.
+func (m Model) paintBG(s string) string {
+	bg := m.bgColor()
+	if bg == "" || m.winW <= 0 || m.winH <= 0 {
+		return s
+	}
+	st := lipgloss.NewStyle().Background(lipgloss.Color(bg))
+	rows := strings.Split(s, "\n")
+	for len(rows) < m.winH {
+		rows = append(rows, "")
+	}
+	for i, row := range rows {
+		if pad := m.winW - displayWidth(row); pad > 0 {
+			row += spaces(pad)
+		}
+		segs := strings.Split(row, "\x1b[0m")
+		for j, seg := range segs {
+			if seg != "" {
+				segs[j] = st.Render(seg)
+			}
+		}
+		rows[i] = strings.Join(segs, "\x1b[0m")
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m Model) view() string {
 	if !m.ready {
 		return "starting…"
 	}
