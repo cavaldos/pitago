@@ -76,8 +76,7 @@ go run ./src --update               # self-update to the latest GitHub release
 ```
 
 
-<details>
-<summary><b>Commands &amp; keybindings</b> (full list)</summary>
+## Commands &amp; keybindings
 
 ### Commands
 
@@ -145,8 +144,6 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial
 drag selection copies visible text without ANSI/OSC sequences.
 
-</details>
-
 ## Development
 
 ```bash
@@ -173,4 +170,7 @@ the backend edges. `script/check-layers.sh` enforces the one-way import graph.
 | [resources/doc/CONTRIBUTING.md](resources/doc/CONTRIBUTING.md) | Dev workflow, layers, tests |
 | [docs/design.md](docs/design.md) | Design notes: why each decision looks the way it does |
 | [docs/subagent-surface-hosts.md](docs/subagent-surface-hosts.md) | Subagent surface hosts |
-| [pirust/README.md](pirust/README.md) | Rust port of the same UI (`ratatui` + `crossterm`) |
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=cavaldos/pitago&type=Date)](https://star-history.com/#cavaldos/pitago&Date)
