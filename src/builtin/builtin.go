@@ -1320,7 +1320,7 @@ func All() []app.Builtin {
 			},
 		},
 		{
-			Name: "pet", Desc: "Pick the sidebar pet (18 animals + the ascii/classic looks — /pet lists all)", Usage: "/pet [name|ascii|classic]",
+			Name: "pet", Desc: fmt.Sprintf("Pick the sidebar pet (%d animals + the ascii/classic looks — /pet lists all)", len(pet.Names())), Usage: "/pet [name|ascii|classic]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
 				if arg == "" {

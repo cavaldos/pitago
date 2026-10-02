@@ -1,9 +1,15 @@
 package pet
 
 // Sidebar ASCII pets — the drawn creatures, not the status state machine
-// (that stays in pet.go). 18 animals, each a name + two frames: the resting
-// drawing and one movement beat (a blink, or a sway for the eyeless ones),
-// so the sidebar pet is alive instead of a static sticker.
+// (that stays in pet.go). 25 entries: 18 drawn animals + 7 pixel sprites,
+// each a name + two frames: the resting drawing and one movement beat (a
+// blink, or a sway for the eyeless ones), so the sidebar pet is alive instead
+// of a static sticker.
+//
+// The pixel sprites ("px-*" names) are 1-bit sprites drawn with half blocks:
+// one cell is a pixel wide and two pixels tall, so a frame still holds
+// ArtRows lines but twice the vertical resolution. Same table, same frames —
+// nothing else in the package knows the difference.
 //
 // Every frame is normalized to ArtRows lines with blank lines padded on TOP,
 // so switching pets never changes the sidebar block height: the bottom line
@@ -112,6 +118,37 @@ var pets = []Pet{
 	{"chonk", [][]string{
 		{" /\\   /\\", "( ·   · )", "(  ..  )", " `------'"},
 		{" /\\   /\\", "( -   - )", "(  --  )", " `------'"},
+	}},
+	{"px-cat", [][]string{
+		{"  ▄█    █▄", "  █▀█▀▀█▀█", "  ▀█▀▀▀▀█▀", "  █▀▀██▀▀█"},
+		{"  ▄█    █▄", "  ████████", "  ▀█▀▀▀▀█▀", "  █▀▀██▀▀█"},
+	}},
+	{"px-frog", [][]string{
+		{"  ▄▄    ▄▄", " █▀▄    ▄▀█", " █▀██████▀█", " ▀▀▀▀▀▀▀▀▀▀"},
+		{"  ▄▄    ▄▄", " █▀      ▀█", " █▀██████▀█", " ▀▀▀▀▀▀▀▀▀▀"},
+	}},
+	{"px-bee", [][]string{
+		{" ▄▄      ▄▄", "█  █ ██ █  █", "█  █▀██▀█  █", "▀▄▄▀ ▀▀ ▀▄▄▀"},
+		{" ▄  ▄  ▄  ▄", "█  █ ██ █  █", "█  █▀██▀█  █", "▀▄ ▀▄▀▀▄▀ ▄▀"},
+	}},
+	// px-crab: GitHub's crab, traced off the mascot sprite (a lookalike, not
+	// the logo itself). px-capybara: the charm.sh capybara, minus its
+	// sparkles and status line.
+	{"px-crab", [][]string{
+		{"  ██        ██", "   █▄▄▄▄▄▄▄▄█", "  ███▄▄██▄▄███", " ▄█▀  ▀██▀  ▀█▄"},
+		{"  ██        ██", "   █▄▄▄▄▄▄▄▄█", "  ████████████", " ▄█▀  ▀██▀  ▀█▄"},
+	}},
+	{"px-capybara", [][]string{
+		{"     ▄███▄", " ▄████████████▄", " █▄████████████", "  ██  ██  ██"},
+		{"     ▄███▄", " ▄████████████▄", " ██████████████", "  ██  ██  ██"},
+	}},
+	{"px-slime", [][]string{
+		{"  ▄██████▄  ", " ███▄▄▄▄███ ", " ██████████ ", " ▀███▀▀███▀ "},
+		{"  ▄██████▄  ", " █▄██▄▄██▄█ ", " ██████████ ", " ▀███▀▀███▀ "},
+	}},
+	{"px-ghost", [][]string{
+		{" ▄████████▄ ", " ██▄████▄██ ", " ██████████ ", " ██▀██▀██▀█▄"},
+		{" ▄████████▄ ", " ██████████ ", " ██████████ ", " ██▀██▀██▀█▄"},
 	}},
 }
 
