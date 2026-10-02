@@ -1642,6 +1642,35 @@ func inputBox(title string, lines []string, innerW int, border lipgloss.Color) s
 	return b.String()
 }
 
+// inputBoxCentered is inputBox with the title CENTRED in the top border
+// and ruled on both sides — the /mcp server list's frame. Same border
+// characters, same width math and the same per-line padding, so the two
+// cannot drift apart: only the placement of the title differs.
+func inputBoxCentered(title string, lines []string, innerW int, border lipgloss.Color) string {
+	frame := lipgloss.NewStyle().Foreground(border)
+	var b strings.Builder
+	t := Short(title, innerW-4)
+	left := (innerW - lipgloss.Width(t)) / 2
+	if left < 1 {
+		left = 1
+	}
+	right := innerW - lipgloss.Width(t) - left
+	if right < 1 {
+		right = 1
+	}
+	b.WriteString(frame.Render("╭"+strings.Repeat("─", left)+" ") +
+		statusBarStyle.Render(t) +
+		frame.Render(" "+strings.Repeat("─", right)+"╮") + "\n")
+	wrap := lipgloss.NewStyle().Width(innerW)
+	for _, ln := range lines {
+		for _, wln := range strings.Split(wrap.Render(ln), "\n") {
+			b.WriteString(frame.Render("│ ") + wln + frame.Render(" │") + "\n")
+		}
+	}
+	b.WriteString(frame.Render("╰" + strings.Repeat("─", innerW+2) + "╯"))
+	return b.String()
+}
+
 func (m Model) renderDialog() string {
 	d := m.Dialogs[0]
 	if d.Kind == "pet" {
@@ -1685,6 +1714,12 @@ func (m Model) renderDialog() string {
 	}
 	if d.Kind == "subagent-herd" || d.Kind == "subagents-steer" {
 		return m.renderSubagentsDialog(d)
+	}
+	// The /mcp manager is a window, not the chat input box: it floats
+	// over the transcript like the panels above, so the conversation
+	// behind it stays readable and the editor is not replaced by it.
+	if mcpWindowKind(d.Kind) {
+		return m.renderMcpOverlay(d)
 	}
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
@@ -3171,6 +3206,9 @@ func (m Model) view() string {
 	if !m.ready {
 		return "starting…"
 	}
+	// The /mcp screens are a floating window over the transcript, like
+	// every other dialog here (see renderMcpOverlay), so they take the
+	// normal frame composition and never stand in for the editor.
 	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" {
 		if m.Dialogs[0].Kind == "team" {
 			return m.renderFloatingTeamDashboard()

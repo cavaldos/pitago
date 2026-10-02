@@ -2728,6 +2728,23 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if d.Kind == "subagent-herd" || d.Kind == "subagents-steer" {
 		return m.updateSubagentsDialog(km, d)
 	}
+	// The /mcp ROOT list is the one picker with keys of its own on the
+	// selected row (space toggles enabled, ^A signs in, ^R reconnects,
+	// ^D toggles, ? widens the search, ^C closes). Everything it does
+	// not claim — ↑↓, Enter, typing, Backspace, Esc — is the ordinary
+	// list behaviour, so it falls through untouched.
+	if d.Kind == "mcp" {
+		if nm, cmd, handled := m.updateMcpList(km, d); handled {
+			return nm, cmd
+		}
+	}
+	return m.updateListDialog(km, d)
+}
+
+// updateListDialog is the generic one-pane list: ↑↓ moves, typing
+// filters, Enter confirms, Esc/^C dismisses. Every dialog kind that
+// has no handler of its own ends up here.
+func (m Model) updateListDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 	n := len(d.FIdx)
 	switch km.Type {
 	case tea.KeyUp:
@@ -3157,6 +3174,25 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, nil
 	}
+	if d.Kind == McpAddKind {
+		// The /mcp add form: the typed buffer is the whole input, so
+		// Enter hands it to the verb and pops back to the list, which
+		// then re-reads itself when the write reports back. An empty
+		// buffer is not a submit — the user opened the form and simply
+		// has not typed yet, so the form stays open rather than
+		// vanishing on the way to a usage notice.
+		line := strings.TrimSpace(d.Filter)
+		if line == "" {
+			return m, nil
+		}
+		m.Dialogs = m.Dialogs[1:]
+		m.drainQueuedDialogs()
+		m.Refresh()
+		if fn, ok := m.confirm[McpAddKind]; ok {
+			return fn(&m, d, 0)
+		}
+		return m, nil
+	}
 	if len(d.FIdx) == 0 {
 		return m, nil
 	}
@@ -3347,6 +3383,16 @@ func (d *Dialog) selProv() string {
 	return d.Provs[d.ProvCursor]
 }
 
+// descSearchable reports whether the filter should also be matched
+// against the row descriptions. Every picker has always done so, and
+// keeps it; the /mcp list is the exception, because a server's
+// description carries its state ("connected · 12 tools · codemode"),
+// so matching it by default would make a one-letter filter match half
+// the list. Its `?` key (d.SearchDesc) turns it back on.
+func (d *Dialog) descSearchable() bool {
+	return d.Kind != "mcp" || d.SearchDesc
+}
+
 // reindex recomputes the visible list from Filter.
 // Scope follows the focused pane: on the providers pane a non-empty
 // Filter searches globally across all providers (the provider id itself
@@ -3417,8 +3463,14 @@ func (d *Dialog) Reindex() {
 		if len(d.Providers) > 0 {
 			provHay = strings.ToLower(normProv(providerAt(d.Providers, i)))
 		}
+		// /mcp searches NAMES by default and the row descriptions only
+		// when ? is on (d.SearchDesc): a server's description carries its
+		// state, so always matching it would make one "n" select every
+		// "connected" server. Every other picker keeps matching both, as
+		// before — the toggle is scoped to the kind that advertises it.
+		descHay := strings.ToLower(DescOf(d, i))
 		if f == "" || strings.Contains(strings.ToLower(d.Options[i]), f) ||
-			(i < len(d.Descs) && strings.Contains(strings.ToLower(d.Descs[i]), f)) ||
+			(d.descSearchable() && strings.Contains(descHay, f)) ||
 			strings.Contains(provHay, f) ||
 			strings.Contains(d.specHay(i), f) {
 			d.FIdx = append(d.FIdx, i)

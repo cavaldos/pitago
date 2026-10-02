@@ -39,6 +39,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"mcpAction":    confirmMcpAction,
 		"mcpExposure":  confirmMcpExposure,
 		"mcpTools":     confirmMcpBack,
+		"mcpAdd":       confirmMcpAdd,
 	}
 }
 

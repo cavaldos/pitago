@@ -92,7 +92,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `/pet [name\|ascii\|classic]` | Sidebar pet: picker dialog, or apply directly |
 | `/plugins` | Collapse/expand installed pi plugins in the sidebar |
 | `/thinking` | Toggle thinking level |
-| `/mcp` | MCP server manager: per-server login, tools, reconnect, exposure, enable/disable |
+| `/mcp` | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable |
 | `/tree` | Session tree with jump-to-message, copy entry, fork from here |
 | `/trajectory [all\|tools\|messages]` | Harness-style run trace window |
 | `/notification [filter]` | Notification history (time + info/error, newest first) |
