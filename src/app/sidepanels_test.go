@@ -434,3 +434,52 @@ func TestPiTaskAnswerDialogRefreshesAfterClearAll(t *testing.T) {
 		t.Fatalf("dialog not popped: %+v", m.Dialogs)
 	}
 }
+
+// The MCP / Todos / WORKSPACE headers fold like PLUGINS: header survives,
+// body rows go away, second toggle restores them.
+func TestSidebarFoldMcpTodosWorkspace(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Side = map[string]bool{SideMCP: true, SideTodos: true, SideWorkspace: true}
+	m.MCP = []McpServer{{Name: "alpha", Direct: 1, Total: 2, Connected: true}}
+	m.Todos = []TodoItem{{ID: "1", Content: "Write code", Status: TodoInProgress}}
+	m.ws = wsData{ok: true, branch: "main", files: []wsFile{{path: "go.mod", add: 1, del: 0}}}
+
+	for _, key := range []string{SideMCP, SideTodos, SideWorkspace} {
+		m.ToggleSideFold(key)
+	}
+	out := stripANSI(m.buildSidebarContent())
+	for _, want := range []string{"MCP Servers (1) ▸", "Todos (0/1) ▸", "WORKSPACE · main ▸"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("folded sidebar missing %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"alpha", "Write code", "go.mod"} {
+		if strings.Contains(out, gone) {
+			t.Fatalf("folded sidebar must hide %q:\n%s", gone, out)
+		}
+	}
+
+	for _, key := range []string{SideMCP, SideTodos, SideWorkspace} {
+		m.ToggleSideFold(key)
+	}
+	out = stripANSI(m.buildSidebarContent())
+	for _, want := range []string{"alpha", "Write code", "go.mod"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("second toggle must restore %q:\n%s", want, out)
+		}
+	}
+}
+
+// A hidden section is revealed expanded by its first toggle instead of
+// flipping blind fold state (same contract as TogglePlugins).
+func TestToggleSideFoldRevealsHiddenSection(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.MCP = []McpServer{{Name: "alpha", Connected: true}}
+	m.ToggleSideFold(SideMCP) // hidden by default
+	if !m.SideVisible(SideMCP) || SideFolded(SideMCP) {
+		t.Fatalf("first toggle must reveal the section expanded")
+	}
+	if !strings.Contains(m.buildSidebarContent(), "alpha") {
+		t.Fatal("revealed section must render its rows")
+	}
+}

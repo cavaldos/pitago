@@ -1427,6 +1427,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.TogglePlugins()
 				return m, nil
 			}
+			// MCP Servers / Todos / WORKSPACE headers fold like PLUGINS.
+			if key := m.sideFoldAt(msg.X, msg.Y); key != "" {
+				m.ToggleSideFold(key)
+				return m, nil
+			}
 			// SUBAGENTS truncation line → herd overlay (RECENT MODELS
 			// style: click the affordance, not a command name).
 			if m.subagentsMoreAt(msg.X, msg.Y) {

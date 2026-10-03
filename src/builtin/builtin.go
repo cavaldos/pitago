@@ -1301,6 +1301,24 @@ func All() []app.Builtin {
 			},
 		},
 		{
+			// No /mcp fold command: that name is pi's MCP server manager.
+			// The MCP sidebar section folds by clicking its header.
+			Name: "todos", Desc: "Collapse/expand the todo list in the sidebar", Usage: "/todos",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				m.ToggleSideFold(app.SideTodos)
+				return nil
+			},
+		},
+		{
+			Name: "workspace", Desc: "Collapse/expand the workspace file list in the sidebar", Usage: "/workspace",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				m.ToggleSideFold(app.SideWorkspace)
+				return nil
+			},
+		},
+		{
 			Name: "mouse", Desc: "Toggle mouse — Alt+M · off for native text selection", Usage: "/mouse [on|off]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
