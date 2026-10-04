@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -1101,9 +1102,84 @@ func (m Model) renderPluginsSection(inner int) string {
 	return b.String()
 }
 
+// Fold state (▸ closed / ▾ open) for the sidebar sections that fold on a
+// header click, mirroring PLUGINS/LSP: open by default. atomic because View
+// and Update both read them.
+var (
+	mcpFolded  atomic.Bool
+	todoFolded atomic.Bool
+	wsFolded   atomic.Bool
+)
+
+// sideFold returns the fold flag of a foldable section key (nil when the
+// section has no fold, e.g. SESSION or TOOLS).
+func sideFold(key string) *atomic.Bool {
+	switch key {
+	case SideMCP:
+		return &mcpFolded
+	case SideTodos:
+		return &todoFolded
+	case SideWorkspace:
+		return &wsFolded
+	}
+	return nil
+}
+
+// SideFolded reports whether a foldable sidebar section is folded (▸).
+func SideFolded(key string) bool {
+	f := sideFold(key)
+	return f != nil && f.Load()
+}
+
+// foldMark is the ▾/▸ glyph every foldable sidebar header carries.
+func foldMark(key string) string {
+	if SideFolded(key) {
+		return "▸"
+	}
+	return "▾"
+}
+
+// foldHeaders maps each foldable section to the rendered prefix of its
+// header row, so a header click resolves against the text already on screen
+// instead of counting the rows above it (those shift with visibility,
+// scroll and section content).
+var foldHeaders = []struct{ key, prefix string }{
+	{SideMCP, "MCP Servers"},
+	{SideTodos, "Todos ("},
+	{SideWorkspace, "WORKSPACE"},
+}
+
+// sideFoldAt returns the section key of the foldable sidebar header under
+// (x, y), or "" when the click misses. Same screen→content mapping as
+// recentAt (box border 1, plus YOffset when scrolled).
+func (m Model) sideFoldAt(x, y int) string {
+	if !m.ready || !m.Mouse || !m.showSide() || len(m.Dialogs) > 0 {
+		return ""
+	}
+	if x < m.mainW() || x > m.winW {
+		return ""
+	}
+	row := y - 1 + m.sideVp.YOffset
+	lines := strings.Split(m.sideCache, "\n")
+	if row < 0 || row >= len(lines) {
+		return ""
+	}
+	plain := strings.TrimSpace(stripANSI(lines[row]))
+	for _, h := range foldHeaders {
+		if strings.HasPrefix(plain, h.prefix) {
+			return h.key
+		}
+	}
+	return ""
+}
+
 func (m Model) renderMcpSection(inner int) string {
 	var b strings.Builder
-	b.WriteString(sideTitleStyle.Render("MCP Servers") + "\n")
+	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("MCP Servers (%d) %s", len(m.MCP), foldMark(SideMCP))) + "\n")
+	if SideFolded(SideMCP) {
+		b.WriteString(sep() + "\n")
+		return b.String()
+	}
 	for _, s := range m.MCP {
 		var dot string
 		switch {
@@ -1155,7 +1231,11 @@ func (m Model) renderTodosSection(inner int) string {
 			done++
 		}
 	}
-	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("Todos (%d/%d)", done, len(m.Todos))) + "\n")
+	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("Todos (%d/%d) %s", done, len(m.Todos), foldMark(SideTodos))) + "\n")
+	if SideFolded(SideTodos) {
+		b.WriteString(sep() + "\n")
+		return b.String()
+	}
 	if len(m.Todos) == 0 {
 		b.WriteString(toolStyle.Render(" (no todos)") + "\n")
 	} else {

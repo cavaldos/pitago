@@ -1330,8 +1330,9 @@ func (m Model) buildSidebarContent() string {
 		b.WriteString(m.renderSubagentsSection(inner))
 	}
 	if m.SideVisible(SideWorkspace) {
-		if m.ws.ok {
-			b.WriteString(sideTitleStyle.Render(Short("WORKSPACE · "+m.ws.branch, inner)) + "\n")
+		folded := SideFolded(SideWorkspace)
+		b.WriteString(sideTitleStyle.Render(Short("WORKSPACE · "+m.ws.branch+" "+foldMark(SideWorkspace), inner)) + "\n")
+		if !folded && m.ws.ok {
 			for _, f := range m.ws.files {
 				stat := fmt.Sprintf("+%d -%d", f.add, f.del)
 				gap := inner - lipgloss.Width(f.path) - lipgloss.Width(stat)
