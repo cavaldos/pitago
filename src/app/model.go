@@ -1164,6 +1164,27 @@ func (m *Model) TogglePlugins() {
 	m.Refresh()
 }
 
+// ToggleSideFold collapses/expands a foldable sidebar section (MCP servers,
+// todos, workspace) from its header click or its command. When the section is
+// hidden (Sidebar tab default) the first toggle reveals it expanded instead
+// of flipping blind state — same contract as TogglePlugins.
+func (m *Model) ToggleSideFold(key string) {
+	f := sideFold(key)
+	if f == nil {
+		return
+	}
+	if m.SideVisible(key) {
+		f.Store(!f.Load())
+	} else {
+		m.setSideVisible(key, true)
+		f.Store(false)
+	}
+	if !m.ready {
+		return
+	}
+	m.Refresh()
+}
+
 // ToggleLspSection collapses/expands the sidebar LSP diagnostics list (/lsp).
 // When the section is hidden (Sidebar tab default) the first toggle reveals it
 // expanded instead of flipping blind state — same contract as TogglePlugins.
