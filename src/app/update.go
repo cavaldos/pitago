@@ -1400,6 +1400,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.RespawnPi(), pluginTickCmd())
 
 	case tea.MouseMsg:
+		// Jump-to-latest chip: a click on the floating chip pulls the
+		// transcript back to the newest message. Checked before the selector
+		// because the chip floats over a transcript row — a press there would
+		// otherwise start a drag selection instead of hitting the button.
+		if m.jumpLatestAt(msg) {
+			m.JumpToLatest()
+			return m, nil
+		}
 		// App-owned chat drag selection (left press/motion/release).
 		// Sidebar clicks/wheel/dialogs fall through untouched.
 		if m2, cmd, handled := m.updateSelection(msg); handled {
@@ -1723,7 +1731,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// so input cursor and chat don't move together.
 	if km, ok := msg.(tea.KeyMsg); ok && !strings.Contains(m.ta.Value(), "\n") {
 		switch km.Type {
-		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		case tea.KeyEnd:
+			// Jump back to the newest message. Wired here rather than left to
+			// the viewport: bubbles v1's viewport keymap has no End binding at
+			// all (Page/Up/Down only), so End was silently doing nothing. It
+			// is the key the jump-to-latest chip advertises, so the chip and
+			// this case have to land in the same place.
+			m.JumpToLatest()
+			return m, nil
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome:
 			m.vp, cmd = m.vp.Update(msg)
 			return m, cmd
 		}
