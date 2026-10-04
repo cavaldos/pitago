@@ -125,6 +125,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `Tab` | Complete `/command` or `@file` |
 | `@` | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision) |
 | `↑↓ PgUp PgDn` | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat |
+| `End` | Jump to the latest message — a hint chip with the same shortcut floats over the transcript while you are scrolled up (click it to jump too) |
 | `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar |
 | `Mouse wheel` | Hover sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
 

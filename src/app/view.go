@@ -3242,7 +3242,16 @@ func (m Model) view() string {
 	// highlighting m.vp instead would highlight different pixels than the
 	// ones being drawn.
 	chatView := func() string {
-		return padToHeight(overlaySelection(chatVp.View(), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
+		chat := padToHeight(overlaySelection(chatVp.View(), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
+		// Jump-to-latest chip: drawn only while the newest line is off-frame,
+		// so it never nags a reader already sitting at the tail. Overlaid on
+		// an existing transcript row, never appended — the frame's row
+		// arithmetic (chatFrameRows) stays exact.
+		if chip, ok := m.jumpLatestChip(chatVp); ok {
+			rows := overlayJumpLatest(strings.Split(chat, "\n"), chip, m.mainW())
+			chat = strings.Join(rows, "\n")
+		}
+		return chat
 	}
 
 	input := m.renderInput()
