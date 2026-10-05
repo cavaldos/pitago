@@ -322,7 +322,7 @@ func TestTeamWidgetPlacementWithPopup(t *testing.T) {
 			t.Fatalf("%s placement overflowed terminal: %d > %d\n%s", placement, h, m.winH, view)
 		}
 		team := strings.Index(view, "w1 running")
-		input := strings.Index(view, "ready ·")
+		input := strings.Index(view, "↵ send")
 		if team < 0 || input < 0 || (placement == "aboveEditor" && team > input) || (placement == "belowEditor" && team < input) {
 			t.Fatalf("%s placement wrong: team=%d input=%d", placement, team, input)
 		}

@@ -109,7 +109,7 @@ func TestTaskWidgetStaysAboveInputAndFitsBudget(t *testing.T) {
 	m.Todos = []TodoItem{{ID: "1", Content: "Active", Status: TodoInProgress}}
 	m.syncTaskRuntime()
 	view := stripANSI(m.View())
-	taskAt, inputAt := strings.Index(view, "1 tasks"), strings.Index(view, "ready ·")
+	taskAt, inputAt := strings.Index(view, "1 tasks"), strings.Index(view, "↵ send")
 	if taskAt < 0 || inputAt < 0 || taskAt > inputAt {
 		t.Fatalf("task block must sit above input: task=%d input=%d\n%s", taskAt, inputAt, view)
 	}
