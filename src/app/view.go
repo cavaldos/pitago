@@ -1459,7 +1459,7 @@ func (m Model) renderInput() string {
 		innerW = 10
 	}
 	border, title := cInput, ""
-	left := "○ ready · ↵ send · / commands · @ files · Tab plan · ^P model · ^R recents · ^C quit"
+	left := "↵ send · / commands · @ files · ^P model · ^C quit"
 	plan := m.isPlanMode()
 	agentTag := ""
 	if m.CurAgent != "" {
