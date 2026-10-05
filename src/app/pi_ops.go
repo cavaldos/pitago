@@ -185,7 +185,9 @@ func (m *Model) addBashBlock(msg PiOpMsg) {
 	}
 	body := header
 	if msg.Bash != nil {
-		if out := strings.TrimRight(msg.Bash.Output, "\n"); out != "" {
+		// Same boundary strip as shell mode and bashExecution: a
+		// "!cmd" can colour its own output too (see shell.go).
+		if out := strings.TrimRight(stripANSI(msg.Bash.Output), "\n"); out != "" {
 			body += "\n" + out
 		}
 		switch {

@@ -52,6 +52,13 @@ func (m *Model) atCandidates(raw string, quoted bool) []mention.Item {
 
 // refreshAt recomputes the @ popup from the token before the cursor.
 func (m *Model) refreshAt() {
+	// Shell mode owns the editor: "@" is a shell word (or a GitHub
+	// shorthand), not a file mention, so the popup must never open — see
+	// cmdPrefix for the "/" twin.
+	if m.shellOn {
+		m.closeAt()
+		return
+	}
 	row, col := m.cursorPos()
 	lines := strings.Split(m.ta.Value(), "\n")
 	var line []rune

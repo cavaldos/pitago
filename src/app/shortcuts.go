@@ -56,6 +56,10 @@ var shortcutsDb = []ShortcutItem{
 	// Input / Tray
 	{"Alt+Enter", "Queue message as follow-up (waits for the turn to finish)", "Input"},
 	{"!cmd", "Run a shell command through pi (!!cmd keeps output out of context)", "Input"},
+	{"! (empty input)", "Enter shell mode — a local shell that keeps cd/env, nothing is sent to pi", "Input"},
+	{"↵ (shell mode)", "Run the line in the local shell; output lands as a bash block", "Input"},
+	{"↑↓ / Shift+↑↓ (shell mode)", "Recall an earlier shell command (Esc clears)", "Input"},
+	{"Esc (shell mode)", "Leave shell mode and kill the shell", "Input"},
 	{"↓ (last input line)", "Move into image tray", "Input"},
 	{"←→ (tray)", "Select image chip", "Input"},
 	{"⌫ (tray empty)", "Delete last image chip", "Input"},
