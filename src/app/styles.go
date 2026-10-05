@@ -33,6 +33,7 @@ var (
 	cYellow   = lipgloss.Color(defaultPalette.Yellow) // warning (quit arm)
 	cCyan     = lipgloss.Color(defaultPalette.Cyan)   // command names in the / popup
 	cPlan     = lipgloss.Color(defaultPalette.Plan)   // plan mode input border (purple)
+	cShell    = lipgloss.Color(defaultPalette.Cyan)   // shell mode input border (see shell.go)
 	cSide     = lipgloss.Color(defaultPalette.Border) // unused now, kept subtle
 	cInput    = lipgloss.Color(defaultPalette.Input)  // input focus: white, not cyan
 	cInputDim = lipgloss.Color(defaultPalette.InputDim)
@@ -199,6 +200,7 @@ func ApplyTheme(raw theme.Theme) {
 	cYellow = lipgloss.Color(t.Yellow)
 	cCyan = lipgloss.Color(t.Cyan)
 	cPlan = lipgloss.Color(t.Plan)
+	cShell = lipgloss.Color(t.Cyan)
 	cSide = lipgloss.Color(t.Border)
 	cInput = lipgloss.Color(t.Input)
 	cInputDim = lipgloss.Color(t.InputDim)

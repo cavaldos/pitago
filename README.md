@@ -125,9 +125,33 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `Tab` | Complete `/command` or `@file` |
 | `@` | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision) |
 | `↑↓ PgUp PgDn` | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat |
+| `Tab` | Toggle plan mode (`/`complete in the palette, `@`complete files) |
 | `End` | Jump to the latest message — a hint chip with the same shortcut floats over the transcript while you are scrolled up (click it to jump too) |
 | `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar |
 | `Mouse wheel` | Hover sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
+
+### Shell mode
+
+Type `!` on an **empty** input to switch the editor into a local shell: `Enter` runs the line, `Esc`
+leaves the mode and kills the process. Nothing typed in shell mode ever reaches pi — no turn, no
+session entry — so the command is yours, not the model's. (`!cmd` still goes to pi, unchanged.)
+
+| Key | Action |
+| --- | --- |
+| `!` (empty input) | Enter shell mode |
+| `Enter` | Run the line; output lands in the chat as a bash block (stderr included, non-zero exit marked) |
+| `↑↓` / `Shift+↑↓` | Recall an earlier shell command (`Esc` clears) — never a message sent to pi |
+| `Esc` | Leave shell mode, kill the shell, drop a recalled command |
+| `Ctrl+V` | Paste a command (the editor's other keys keep working: chat scroll, `Ctrl+C` clear/quit, sidebar) |
+
+One long-lived shell runs every line with the session cwd, so `cd`, `export` and shell variables
+persist between commands. The program is `$SHELL` (see `/settings` → Pitago → **Shell binary** for
+an override: `$SHELL` or an absolute path). Commands run one at a time; `Ctrl+C` clears the line
+rather than interrupting a running command — the command keeps going until it finishes. A block
+keeps the first 2000 bytes of a command's output (the budget pi uses for its own `!cmd`, and far
+more than the transcript ever renders), so one chatty command cannot slow down typing afterwards.
+
+pi's own `!cmd` escape (a fresh process per command, output visible to the model) is untouched.
 
 ### Copying text and messages
 

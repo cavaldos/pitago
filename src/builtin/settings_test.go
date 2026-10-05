@@ -155,3 +155,50 @@ func TestFileSettingValsDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The "Shell binary" row is a real knob: it lives in the Pitago group, it
+// cycles on the stored pref (an unset pref shows as "$SHELL", so the cycle
+// keeps its position), and Enter applies it to the model + prefs.json
+// without touching pi's settings.json.
+func TestShellBinaryRowCyclesAndApplies(t *testing.T) {
+	st := app.SettingsState{}
+	row := -1
+	for i, fr := range fileSettings {
+		if fr.label == "Shell binary" {
+			row = i
+		}
+	}
+	if row < 0 {
+		t.Fatal("no \"Shell binary\" row in /settings")
+	}
+	fr := fileSettings[row]
+	if !fr.local || fr.group != "Pitago" {
+		t.Errorf("row must be pitago-local in the Pitago group, got local=%v group=%q", fr.local, fr.group)
+	}
+	if fr.path != "" {
+		t.Errorf("a local row must not write settings.json, got path %q", fr.path)
+	}
+	if got := localSettingVal(fr.label, st); got != shellEnvSetting {
+		t.Errorf("unset pref shows as %q, want %q", got, shellEnvSetting)
+	}
+	if got := nextVal(fr.vals, localSettingVal(fr.label, st)); got != "/bin/sh" {
+		t.Errorf("Enter must cycle to the next value, got %q", got)
+	}
+
+	// Applying: no Cmd, no settings.json write, just the model + prefs.
+	// Configure reads prefs from the real home; HOME is redirected so the
+	// test never touches the developer's prefs.json.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	m := &app.Model{}
+	m.Configure(pirpc.Options{}, "")
+	if cmd := applyLocalSetting(m, fr, "/bin/bash"); cmd != nil {
+		t.Error("a local row applies in-process: no Cmd expected")
+	}
+	if m.ShellBinaryPref() != "/bin/bash" {
+		t.Errorf("model pref = %q, want /bin/bash", m.ShellBinaryPref())
+	}
+	if got := app.LoadPrefs(filepath.Join(dir, ".config", "pitago", "prefs.json")).ShellBinary; got != "/bin/bash" {
+		t.Errorf("prefs.json shellBinary = %q, want /bin/bash", got)
+	}
+}

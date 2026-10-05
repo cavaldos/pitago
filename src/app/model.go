@@ -101,6 +101,7 @@ type SettingsState struct {
 	HideThinking           bool              // pitago-local "Hide thinking" row
 	Tidy                   bool              // tidy mode: tool blocks render header-only (global pref, all projects)
 	AutocompleteMax        int               // pitago-local "Autocomplete max" row
+	ShellBinary            string            // pitago-local "Shell binary" row ("$SHELL" = follow the login shell)
 }
 
 // RecentModel is one entry of the sidebar list (see components/recent).
@@ -284,6 +285,19 @@ type Model struct {
 	// was unlinked by 'Clear all'", which is an authoritative empty list.
 	piTaskSeen    bool
 	piTaskSeenFor string // session file the flag was armed for; a switch invalidates it
+
+	// Shell mode: a lone "!" on an empty editor swaps the editor for a
+	// local, long-lived sh (see shell.go). Local only — nothing here ever
+	// reaches pi. shell is that process, nil until the first command
+	// starts one.
+	shellOn      bool // shell mode is latched
+	shellRunning bool // a line is in flight (one at a time)
+	shell        *shellProc
+	shellGen     int      // bumped on exit: in-flight results from the old shell are dropped
+	shellBin     string   // resolved program (prefs override, else $SHELL, else sh)
+	shellBinPref string   // stored spelling of the "Shell binary" prefs row ($SHELL by default)
+	shellHist    []string // commands run in this session, oldest→newest (shell-mode ↑↓)
+	shellHistIdx int      // -1 = live line, else index into shellHist while browsing
 }
 
 // quitArmWindow is the double-press window for Ctrl+C quit.
@@ -562,9 +576,13 @@ type SettingWrittenMsg struct {
 	Err               error
 }
 
+// promptPlaceholder is the editor hint while the editor talks to pi. Shell
+// mode swaps it for shellPlaceholder (see shell.go).
+const promptPlaceholder = "Type a message… (/ commands · ^V paste)"
+
 func New(pi *pirpc.Client, cwd string) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message… (/ commands · ^V paste)"
+	ta.Placeholder = promptPlaceholder
 	ta.Focus()
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
@@ -595,11 +613,16 @@ func New(pi *pirpc.Client, cwd string) Model {
 		curThink:      -1,
 		jumpBlock:     -1, // no "jumped here" mark until JumpToEntry sets one
 		histIdx:       -1,
-		Status:        "connecting to pi…",
-		cwd:           cwd,
-		ModelLbl:      "…",
-		showPlugins:   true, // PLUGINS starts expanded
-		imgRender:     newImageRenderState(),
+		// Shell mode defaults to the environment ($SHELL, else sh);
+		// Configure re-resolves it from the "Shell binary" prefs row
+		// once prefs.json has been read (see shell.go).
+		shellBin:     resolveShellBinary(""),
+		shellHistIdx: -1,
+		Status:       "connecting to pi…",
+		cwd:          cwd,
+		ModelLbl:     "…",
+		showPlugins:  true, // PLUGINS starts expanded
+		imgRender:    newImageRenderState(),
 	}
 }
 
@@ -1404,6 +1427,10 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
+	// Resolved once here: $SHELL is read from the environment, and a Cmd
+	// must never read the model it was built from.
+	m.shellBinPref = prefs.ShellBinary
+	m.shellBin = resolveShellBinary(prefs.ShellBinary)
 	m.Background = prefs.Background
 	m.CurAgent = prefs.CurrentSubagent
 	// Resolve, not raw read: a hand-edited or stale prefs.json must still

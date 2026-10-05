@@ -14,6 +14,12 @@ import (
 // Matching + window size live in components/palette; this file keeps the
 // popup wiring on Model.
 func (m *Model) cmdPrefix() (string, bool) {
+	// Shell mode: a leading "/" is a path, not a command. The gate lives
+	// here (not at the call sites) because refreshCmds runs on every key:
+	// "ls /tmp" would otherwise pop the /command list over the shell.
+	if m.shellOn {
+		return "", false
+	}
 	v := m.ta.Value()
 	if !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \n") {
 		return "", false
@@ -23,6 +29,13 @@ func (m *Model) cmdPrefix() (string, bool) {
 
 func (m *Model) refreshCmds() {
 	m.cmdItems = m.cmdItems[:0]
+	// Shell mode owns the editor: never leave the /command popup open
+	// (or opening) behind it — see cmdPrefix.
+	if m.shellOn {
+		m.cmdOpen = false
+		m.applyPopupH()
+		return
+	}
 	if p, ok := m.cmdPrefix(); ok {
 		names := make([]string, len(m.Cmds))
 		fallbacks := make([]string, len(m.Cmds))

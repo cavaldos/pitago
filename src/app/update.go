@@ -238,6 +238,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.WindowSizeMsg, pasteDoneMsg, orcaTermDoneMsg, quitDisarmMsg, escDisarmMsg,
 			clearCopyHintMsg,
 			petTickMsg, petFlashMsg, streamFlushMsg,
+			// A shell line that finished while a dialog opened: its output
+			// is already on its way to the transcript, so swallowing it
+			// would lose it and leave the shell latched as running.
+			shellOutMsg,
 			LoginKeyMsg, RenameKeyMsg, respawnMsg, connectedMsg, CmdsRefreshMsg,
 			SettingsMsg, SettingsRefreshMsg, MarketMsg, MarketSearchMsg,
 			MarketStarsMsg, MarketSortMsg, PluginChangeMsg, PluginTickMsg,
@@ -513,6 +517,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PiOpMsg:
 		return m.handlePiOp(msg)
+
+	case shellOutMsg:
+		// One shell line finished: rendered as a chat block. A result
+		// from a shell we already dropped is discarded (handleShellOut).
+		return m.handleShellOut(msg)
 
 	case escAbortMsg:
 		// Queued steer/follow-up text goes back above whatever the user
@@ -1502,6 +1511,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		// Shell mode owns the input box: pi's own bindings must not fire
+		// under a half-typed command (see piKeyTakenByShell). Sits above
+		// the Alt+digit / hub-Alt blocks, which they also cover, and
+		// below Alt+M — selecting the shell output needs the mouse on.
+		if m.shellOn && piKeyTakenByShell(msg) {
+			return m, nil
+		}
 		// Alt+↑↓ PgUp PgDn Home End, or Ctrl+↑↓ PgUp PgDn Home End:
 		// scroll sidebar without a mouse. Wheel needs --mouse; Alt is
 		// broken on some terminals (macOS Option), so Ctrl is the
@@ -1566,6 +1582,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// session file after the window is gone is a leak, not a
 				// feature.
 				m.StopLiveTransport()
+				m.stopShell() // a leaked `sh` must not outlive pitago
 				return m, tea.Quit
 			}
 			m.quitArm = time.Now()
@@ -1587,11 +1604,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Explicit recall: terminals never emit Shift+↑↓ for wheel
 			// (with mouse reporting off wheel arrives as plain ↑↓), so
 			// this is wheel-proof in both mouse modes.
-			if m.tryHistPrev() {
+			if m.shellOn {
+				// The shell's own history, never the messages sent to pi:
+				// Enter here runs the line (see shell.go).
+				if m.tryShellHistPrev() {
+					return m, nil
+				}
+			} else if m.tryHistPrev() {
 				return m, nil
 			}
 		case tea.KeyShiftDown:
-			if m.tryHistNext() {
+			if m.shellOn {
+				if m.tryShellHistNext() {
+					return m, nil
+				}
+			} else if m.tryHistNext() {
 				return m, nil
 			}
 		case tea.KeyUp:
@@ -1600,14 +1627,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Mouse-off guard: with reporting off the terminal turns
 			// wheel scrolls into plain ↑↓ (indistinguishable from keys),
 			// which must scroll the chat, never rewrite the input.
-			if m.Mouse && m.tryHistPrev() {
+			// Shell mode recalls commands instead (shell.go), with the
+			// same mouse-off guard.
+			if m.shellOn {
+				if m.Mouse && m.tryShellHistPrev() {
+					return m, nil
+				}
+			} else if m.Mouse && m.tryHistPrev() {
 				return m, nil
 			}
 		case tea.KeyDown:
 			// While browsing, ↓ goes newer (tray waits — history wins).
 			// Empty input + tray → cursor moves into the [Image N] row.
 			// Same mouse-off guard as ↑ (plain ↓ may be a wheel scroll).
-			if m.histBrowsing() {
+			if m.shellOn {
+				// No tray and no pi history in shell mode: a plain ↓
+				// must never fall through to either, or a recalled
+				// prompt would land in a shell line.
+				if m.Mouse && m.tryShellHistNext() {
+					return m, nil
+				}
+			} else if m.histBrowsing() {
 				if m.Mouse && m.tryHistNext() {
 					return m, nil
 				}
@@ -1623,6 +1663,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.imgAtts = m.imgAtts[:len(m.imgAtts)-1]
 				m.applyPopupH()
 				m.Refresh()
+				return m, nil
+			}
+		case tea.KeyRunes:
+			// "!" alone on an empty editor opens shell mode (see
+			// shell.go). Only a lone bang on an empty line: "!ls" is pi's
+			// own bash escape (which the model sees), and once shell mode
+			// is on "!" is just another character of the command.
+			if !msg.Alt && !msg.Paste && !m.shellOn && len(msg.Runes) == 1 &&
+				msg.Runes[0] == '!' && m.ta.Value() == "" && len(m.imgAtts) == 0 {
+				m.enterShellMode()
 				return m, nil
 			}
 		case tea.KeyTab:
@@ -1661,6 +1711,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ModelCycleMsg{Label: label, Err: err}
 			}
 		case tea.KeyEsc:
+			// Shell mode owns Esc while it is on: leave the local shell
+			// (killing the process) instead of arming a turn cancel. No
+			// turn can be running from a shell line, so nothing else in
+			// this switch applies.
+			if m.shellOn {
+				m.exitShellMode()
+				return m, nil
+			}
 			// History browse wins even mid-turn: first Esc leaves the
 			// recalled message, it never aborts the turn.
 			if m.histBrowsing() {
@@ -1715,6 +1773,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.KeyEnter:
+			// Shell mode: Enter runs the line in the local persistent
+			// shell. Nothing is sent to pi.
+			if m.shellOn {
+				return m, m.submitShell()
+			}
 			// Alt+Enter queues a follow-up while pi is streaming, exactly
 			// like pi (prompt(text,{streamingBehavior:'followUp'}),
 			// interactive-mode.js:3546); idle, it is a plain submit.
@@ -2245,7 +2308,11 @@ func (m *Model) applyMessageEnd(raw []byte) tea.Cmd {
 			}
 		}
 	case "bashExecution":
-		out := msg.Output
+		// Strip before the cut: truncating first could slice an escape
+		// sequence in half and leave the dangling bytes in the block.
+		// Same reason as shell mode (see shell.go): coloured output must
+		// never reach the chroma lexer that renders bash blocks.
+		out := stripANSI(msg.Output)
 		if len(out) > 2000 {
 			out = out[:2000] + "…"
 		}

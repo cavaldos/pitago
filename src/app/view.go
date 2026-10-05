@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"hash/fnv"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1465,7 +1466,29 @@ func (m Model) renderInput() string {
 	if m.CurAgent != "" {
 		agentTag = " · @" + Short(m.CurAgent, 20)
 	}
-	if m.followRemote {
+	if m.shellOn {
+		// Shell mode replaces the editor's chrome wholesale: every hint
+		// below is a lie inside this box (nothing typed here is sent,
+		// "/" is a path, Tab is not plan mode), and the border/title
+		// have to say so at a glance — the placeholder alone only shows
+		// while the line is empty. Checked FIRST so a running turn or an
+		// attached external session cannot paint pi's chrome over the
+		// shell (the shell is local either way).
+		border = cShell
+		title = "SHELL"
+		if m.shellBin != "" {
+			title += " · " + filepath.Base(m.shellBin)
+		}
+		if agentTag != "" {
+			title += agentTag
+		}
+		if m.shellRunning {
+			// The command line itself is the status: it names the shell
+			// and what it is running (inputStatus reads m.Status).
+			title = "SHELL · " + m.inputStatus()
+		}
+		left = "↵ run · ↑↓ history · ^V paste · ^C clear/quit · Esc exit"
+	} else if m.followRemote {
 		border = cInputDim
 		title = "EXTERNAL · READ-ONLY"
 		left = "Ctrl+D detach · read-only"

@@ -41,6 +41,7 @@ type Prefs struct {
 	Tidy            bool              `json:"tidy,omitempty"`            // tidy mode: tool blocks collapse to their header (no args detail, no result/diff/output)
 	Background      string            `json:"background,omitempty"`      // app surface: an opencode background slug, "" = the terminal's own
 	TaskWidgetOff   bool              `json:"taskWidgetOff,omitempty"`   // hide the above-editor task widget
+	ShellBinary     string            `json:"shellBinary,omitempty"`     // shell mode program: "$SHELL" (default) or an absolute path; "" = follow $SHELL
 }
 
 // TaskWidgetVisible reports whether the above-editor task widget should paint.

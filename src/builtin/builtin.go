@@ -329,6 +329,7 @@ func loadSettingsState(m *app.Model) (app.SettingsState, error) {
 		HideThinking:    m.HideThinking,
 		Tidy:            m.Tidy,
 		AutocompleteMax: palette.Win,
+		ShellBinary:     m.ShellBinaryPref(),
 	}
 	return sst, nil
 }
@@ -411,6 +412,8 @@ var fileSettings = []fileSetting{
 		toVal: func(d string) any { return d == "on" }},
 	{label: "Autocomplete max", group: "Pitago", path: "", vals: []string{"3", "5", "7", "10", "15", "20"}, local: true,
 		toVal: func(d string) any { return atoiOr(d, 10) }},
+	{label: "Shell binary", group: "Pitago", path: "", vals: []string{"$SHELL", "/bin/sh", "/bin/bash"}, local: true,
+		toVal: func(d string) any { return d }},
 	{label: "Tree filter mode", group: "Pitago", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
 		toVal: func(d string) any { return d }},
 }
@@ -496,6 +499,13 @@ func localSettingVal(label string, st app.SettingsState) string {
 		return onoff(st.Tidy)
 	case "Autocomplete max":
 		return itoa(st.AutocompleteMax)
+	case "Shell binary":
+		// "" and "$SHELL" both mean "follow the login shell"; the row
+		// shows the stored spelling so the cycle keeps its position.
+		if st.ShellBinary == "" {
+			return shellEnvSetting
+		}
+		return st.ShellBinary
 	}
 	return "—"
 }
@@ -648,6 +658,7 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 		save := applyLocalSetting(m, fr, next)
 		st.HideThinking = m.HideThinking
 		st.AutocompleteMax = palette.Win
+		st.ShellBinary = m.ShellBinaryPref()
 		opts, descs, cats := settingsOptions(st)
 		d.Options, d.Descs, d.Providers, d.Settings = opts, descs, cats, st
 		d.Reindex()
@@ -714,6 +725,11 @@ func applyLocalSetting(m *app.Model, fr fileSetting, next string) tea.Cmd {
 		// SetTidy flips the live render and persists the global pref; the
 		// work is in-process only, so no Cmd and no settings.json write.
 		m.SetTidy(next == "on")
+		return nil
+	case "Shell binary":
+		// The resolved program is re-read by shell mode's next start; a
+		// shell already running is left alone (see app.SetShellBinary).
+		m.SetShellBinary(next)
 		return nil
 	case "Tree filter mode":
 		return func() tea.Msg {
@@ -1079,6 +1095,10 @@ func treeNorm(s string) string {
 
 // Origin marks where a builtin feature comes from.
 const (
+	// shellEnvSetting is the "Shell binary" row's "follow the login shell"
+	// value. app owns the resolution (it reads $SHELL); the row only needs
+	// the spelling to cycle on and to write into prefs.json.
+	shellEnvSetting = "$SHELL"
 	// OriginPi re-implements one of pi's TUI-level builtins over RPC.
 	// pi's own builtins never arrive via get_commands, so pitago intercepts
 	// them locally instead of leaking "/..." text into the chat.
