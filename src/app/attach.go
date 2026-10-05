@@ -27,7 +27,7 @@ type imgAttach struct {
 	path  string // as typed; resolved against cwd at send
 }
 
-// attachPaths adds refs to the tray (dedupe by resolved path, cap MaxCount).
+// attachPaths adds refs to the tray (dedupe by resolved path).
 func (m *Model) attachPaths(refs []string) {
 	for _, ref := range refs {
 		abs := image.Resolve(m.cwd, ref)
@@ -39,10 +39,6 @@ func (m *Model) attachPaths(refs []string) {
 			}
 		}
 		if dup {
-			continue
-		}
-		if len(m.imgAtts) >= image.MaxCount {
-			m.AddBlock(Block{Kind: "notice", Text: "chỉ gửi được " + strconv.Itoa(image.MaxCount) + " ảnh/lần — bỏ qua " + filepath.Base(ref)})
 			continue
 		}
 		m.imgSeq++
@@ -87,9 +83,10 @@ func (m *Model) collectDrops() {
 //
 // The order is deterministic and matches what the user sees: tray chips
 // in chip order first, then @refs in the order they appear in the text.
-// Dedupe and the MaxCount budget are shared across both sources
-// (image.Loader), so the same picture named twice — `@shot.png` plus a
-// dropped chip of that very file — is sent once instead of twice.
+// Dedupe is shared across both sources (image.Loader), so the same picture
+// named twice — `@shot.png` plus a dropped chip of that very file — is
+// sent once instead of twice. There is no count cap: the user attaches as
+// many images as they want.
 //
 // A tray image that fails to load aborts (nil images): the tray is kept
 // so nothing half-broken is sent, and the chip's path is no longer in
@@ -101,25 +98,13 @@ func (m *Model) takeImages(text string) ([]pirpc.ImageContent, []string) {
 		tray = append(tray, a.path)
 	}
 	l := image.NewLoader(m.cwd)
-	atts, notes, over := l.Load(tray)
-	// Cap skips are not load failures, so they never make a send fatal —
-	// but the wording has to be honest: a chip's path was stripped from
-	// the input, so that picture is neither sent nor readable as text.
-	var overNotes []string
-	for _, ref := range over {
-		overNotes = append(overNotes, "chỉ gửi được "+strconv.Itoa(image.MaxCount)+" ảnh/lần — "+ref+" không được gửi và đường dẫn đã bị xoá khỏi ô nhập, dán lại dạng @text nếu muốn gửi")
-	}
+	atts, notes := l.Load(tray)
 	if len(tray) > 0 && len(notes) > 0 {
-		return nil, append(notes, overNotes...)
+		return nil, notes
 	}
-	notes = append(notes, overNotes...)
-	ex, exNotes, exOver := image.Extract(l, text)
+	ex, exNotes := image.Extract(l, text)
 	atts = append(atts, ex...)
 	notes = append(notes, exNotes...)
-	for _, ref := range exOver {
-		// @refs stay in the text, so "left as text" is literally true.
-		notes = append(notes, "chỉ gửi được "+strconv.Itoa(image.MaxCount)+" ảnh/lần — "+ref+" để lại dạng @text")
-	}
 	out := make([]pirpc.ImageContent, 0, len(atts))
 	for _, a := range atts {
 		out = append(out, pirpc.ImageContent{Type: "image", Data: a.Data, MimeType: a.Mime})
@@ -139,17 +124,17 @@ func (m *Model) chipH() int {
 	return 1
 }
 
-// chipRow renders the tray: 📷 [Image 1] shot.png · [Image 2] pic.jpg.
-// The selected chip highlights while trayFocus.
+// chipRow renders the tray: 📷 [Image 1] · [Image 2] · [Image 3].
+// No filenames: a chip is the number, and the number is what Backspace
+// removes. The selected chip highlights while trayFocus.
 func (m Model) chipRow(w int) string {
 	parts := make([]string, 0, len(m.imgAtts))
 	for i, a := range m.imgAtts {
-		name := toolStyle.Render(Short(a.name, 28))
 		lbl := fmt.Sprintf("[Image %d]", a.label)
 		if m.trayFocus && i == m.imgCursor {
-			parts = append(parts, cmdHiStyle.Render(lbl+" "+a.name))
+			parts = append(parts, cmdHiStyle.Render(lbl))
 		} else {
-			parts = append(parts, lbl+" "+name)
+			parts = append(parts, lbl)
 		}
 	}
 	hint := "(↓ Pick · ⌫ Delete)"
