@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"pitago/src/components/image"
 	"pitago/src/components/mention"
 )
 
@@ -47,8 +46,11 @@ func TestCollectDrops(t *testing.T) {
 		t.Fatal("chipH must reserve one row")
 	}
 	row := m.chipRow(80)
-	if !strings.Contains(row, "[Image 1]") || !strings.Contains(row, "shot.png") {
+	if !strings.Contains(row, "[Image 1]") {
 		t.Fatalf("chip row = %q", row)
+	}
+	if strings.Contains(row, "shot.png") {
+		t.Fatalf("chip row must not show filenames: %q", row)
 	}
 }
 
@@ -155,33 +157,29 @@ func TestTakeImagesOrder(t *testing.T) {
 	}
 }
 
-// More tray chips than the cap: send what fits and say plainly that the
-// rest was not sent (old code aborted the whole message).
-func TestTakeImagesTrayOverflowNotFatal(t *testing.T) {
+// No cap: a tray may hold as many images as the user attached, and all
+// of them ride the message.
+func TestTakeImagesTrayNoCap(t *testing.T) {
 	m, dir := attachModel(t)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 'x'}
 	names := []string{"shot.png", "a.png", "b.png", "c.png", "d.png", "e.png", "f.png"}
 	for _, n := range names {
 		_ = os.WriteFile(filepath.Join(dir, n), png, 0o644)
 	}
-	for _, a := range names { // bypass the tray cap to exercise send-side
+	for _, a := range names {
 		m.imgAtts = append(m.imgAtts, imgAttach{label: len(m.imgAtts) + 1, name: a, path: a})
 	}
 	imgs, notes := m.takeImages("hi")
-	if imgs == nil {
-		t.Fatalf("overflow must not abort the send: %q", notes)
-	}
-	if len(imgs) != image.MaxCount {
-		t.Fatalf("images = %d, want %d", len(imgs), image.MaxCount)
-	}
-	if len(notes) != 2 || !strings.Contains(notes[0], "e.png") || !strings.Contains(notes[0], "@text") {
+	if len(notes) != 0 {
 		t.Fatalf("notes = %q", notes)
+	}
+	if len(imgs) != len(names) {
+		t.Fatalf("images = %d, want %d", len(imgs), len(names))
 	}
 }
 
-// An @ref over the cap keeps its text — the notice is informational only,
-// and a failing @ref next to it is reported once, not twice.
-func TestTakeImagesTextOverflowKeepsRef(t *testing.T) {
+// An @ref over the old 5-image cap still loads and keeps its text.
+func TestTakeImagesTextNoCap(t *testing.T) {
 	m, dir := attachModel(t)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 'x'}
 	var refs []string
@@ -191,10 +189,10 @@ func TestTakeImagesTextOverflowKeepsRef(t *testing.T) {
 	}
 	refs = append(refs, "@gone.png")
 	imgs, notes := m.takeImages(strings.Join(refs, " "))
-	if len(imgs) != image.MaxCount {
-		t.Fatalf("images = %d, want %d", len(imgs), image.MaxCount)
+	if len(imgs) != 6 {
+		t.Fatalf("images = %d, want 6", len(imgs))
 	}
-	if len(notes) != 2 || !strings.Contains(notes[0], "f.png") || !strings.Contains(notes[1], "gone.png") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "gone.png") {
 		t.Fatalf("notes = %q", notes)
 	}
 }
@@ -354,17 +352,17 @@ func TestCompleteAtChipsImage(t *testing.T) {
 		t.Fatalf("@token left in input: %q", got)
 	}
 }
-func TestAttachDedupeCap(t *testing.T) {
+func TestAttachDedupe(t *testing.T) {
 	m, dir := attachModel(t)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
 	for _, n := range []string{"a.png", "b.png", "c.png", "d.png", "e.png", "f.png"} {
 		_ = os.WriteFile(filepath.Join(dir, n), png, 0o644)
 	}
 	m.attachPaths([]string{"shot.png", "shot.png", "a.png", "b.png", "c.png", "d.png", "e.png", "f.png"})
-	if len(m.imgAtts) != 5 {
-		t.Fatalf("tray capped at 5, got %+v", m.imgAtts)
+	if len(m.imgAtts) != 7 {
+		t.Fatalf("tray = %+v, want 7 (dup dropped, nothing capped)", m.imgAtts)
 	}
-	if len(m.toasts) == 0 {
-		t.Fatal("cap overflow must leave a toast")
+	if len(m.toasts) != 0 {
+		t.Fatalf("no toast expected: %d", len(m.toasts))
 	}
 }

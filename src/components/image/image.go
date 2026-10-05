@@ -23,14 +23,9 @@ import (
 	"strings"
 )
 
-const (
-	// MaxCount caps attachments per message (RPC JSONL has no hard limit,
-	// but every image rides every subsequent provider request).
-	MaxCount = 5
-	// MaxBytes caps one file (base64 inflates ~33%; pi resizes server-side
-	// only for tool results, not user images, so stay conservative).
-	MaxBytes = 8 << 20
-)
+// MaxBytes caps one file (base64 inflates ~33%; pi resizes server-side
+// only for tool results, not user images, so stay conservative).
+const MaxBytes = 8 << 20
 
 // Attach is one loaded vision attachment.
 type Attach struct {
@@ -305,15 +300,15 @@ func skipRef(r []rune, i int) int {
 
 // Loader turns image refs into attachments for ONE outgoing message.
 //
-// It owns the dedupe set and the per-message budget, so a caller can feed
-// refs from several sources (tray chips, then the @refs sitting in the
-// text) and still get a single deterministic order, one dedupe and one
-// MaxCount cap across all of them. Order is exactly the call order —
-// the model sees images in the order we hand them to pi.
+// It owns the dedupe set, so a caller can feed refs from several sources
+// (tray chips, then the @refs sitting in the text) and still get a single
+// deterministic order and one dedupe across all of them. Order is exactly
+// the call order — the model sees images in the order we hand them to pi.
+// There is no per-message count cap: every attached image rides every
+// subsequent provider request, so the user, not a magic number, decides.
 type Loader struct {
 	cwd  string
 	seen map[string]bool // resolved path -> already offered
-	n    int             // attachments handed out so far
 }
 
 // NewLoader returns a Loader resolving refs under cwd.
@@ -321,36 +316,27 @@ func NewLoader(cwd string) *Loader {
 	return &Loader{cwd: cwd, seen: map[string]bool{}}
 }
 
-// Load loads refs in order and returns the attachments, one notice per ref
-// that could not be loaded (missing/oversize/unsupported/unreadable), and
-// the refs skipped because the cap was already reached.
+// Load loads refs in order and returns the attachments plus one notice per
+// ref that could not be loaded (missing/oversize/unsupported/unreadable).
 //
 // Two refs naming the same file (`@shot.png` plus a dropped chip of the
 // same picture, or `shot.png` and `./shot.png`) load once: the second is
 // dropped silently, because a duplicate payload buys the model nothing.
-// Cap skips are reported separately from failures: a caller whose cap is
-// soft (an @ref that stays in the text) words them differently than one
-// whose refs were consumed.
-func (l *Loader) Load(refs []string) (atts []Attach, notes []string, overflow []string) {
+func (l *Loader) Load(refs []string) (atts []Attach, notes []string) {
 	for _, ref := range refs {
 		abs := Resolve(l.cwd, ref)
 		if l.seen[abs] {
 			continue
 		}
 		l.seen[abs] = true
-		if l.n >= MaxCount {
-			overflow = append(overflow, ref)
-			continue
-		}
 		a, note := l.loadOne(ref, abs)
 		if note != "" {
 			notes = append(notes, note)
 			continue
 		}
 		atts = append(atts, a)
-		l.n++
 	}
-	return atts, notes, overflow
+	return atts, notes
 }
 
 // loadOne reads one file; the second result is "" on success.
@@ -388,6 +374,6 @@ func ImageRefs(text string) []string {
 // in the order they appear in the text. Missing/oversize/unsupported refs
 // only produce notices, never an error: the "@path" text stays in the
 // message so the model still reads it with its tools.
-func Extract(l *Loader, text string) ([]Attach, []string, []string) {
+func Extract(l *Loader, text string) ([]Attach, []string) {
 	return l.Load(ImageRefs(text))
 }
