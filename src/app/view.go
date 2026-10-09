@@ -1126,6 +1126,52 @@ func renderToolResultExpanded(tool, status, s string, expanded bool) string {
 	return strings.Join(rows, "\n")
 }
 
+// thinkLevelLines renders the thinking-level list that sits directly under
+// the "model · <name> - <level>" row. The levels run HORIZONTALLY across the
+// sidebar so a 7-level model costs two rows instead of seven, and the one in
+// use is the only thing that stands out: bold text colour (thinkPickStyle)
+// against the muted run, with no ●/○ markers to burn sidebar cells. Cells
+// wrap onto the next row when the run passes the sidebar width, because a
+// truncated level name would silently misreport what the model offers.
+//
+// It is the single source of both the rows and the sidebar row budget
+// (m.sideModelRows), so the click mapping never drifts from the render. An
+// empty list renders nothing (levels not fetched yet, or the model has
+// none). Pi precedent: pi's model block shows the level list under the name.
+func (m Model) thinkLevelLines(inner int) []string {
+	if len(m.thinkLevels) == 0 {
+		return nil
+	}
+	var rows []string
+	var cur strings.Builder
+	w := 0
+	flush := func() {
+		rows = append(rows, cur.String())
+		cur.Reset()
+		w = 0
+	}
+	for _, l := range m.thinkLevels {
+		style := statusBarStyle
+		if l == m.thinkLvl {
+			style = thinkPickStyle
+		}
+		cw := lipgloss.Width(l)
+		if w > 0 && w+1+cw > inner {
+			flush()
+		}
+		if w > 0 {
+			cur.WriteString(" ")
+			w++
+		}
+		cur.WriteString(style.Render(l))
+		w += cw
+	}
+	if w > 0 {
+		flush()
+	}
+	return rows
+}
+
 // renderSidebar mirrors pi's session panel: SESSION, model+ctx, STATS,
 // RECENT MODELS (clickable), COMMANDS, TOOLS, SKILLS, WORKSPACE, cwd. Content
 // is built by buildSidebarContent and shown through sideVp, so a tall sidebar
@@ -1174,6 +1220,9 @@ func (m Model) buildSidebarContent() string {
 		}
 		modelName := Short(m.ModelLbl+" - "+lvl, inner-8)
 		b.WriteString(statusBarStyle.Render("model · ") + lipgloss.NewStyle().Foreground(cText).Render(modelName) + "\n")
+		for _, ln := range m.thinkLevelLines(inner) {
+			b.WriteString(ln + "\n")
+		}
 		barW := inner - len("ctx ") - len(" 100%")
 		if barW < 4 {
 			barW = 4

@@ -159,12 +159,13 @@ type Model struct {
 	baseVpH             int
 	cwd                 string
 	ModelLbl            string
-	CurAgent            string // last-picked /subagents entry (shown on the input bar)
-	AppVersion          string // pitago build version for the welcome header ("" = omit)
-	UpdateAvail         string // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
-	thinkLvl            string // thinking level from get_state
-	autoCompact         bool   // auto-compaction from get_state
-	ctxWindow           int    // model context window from get_state/stats
+	CurAgent            string   // last-picked /subagents entry (shown on the input bar)
+	AppVersion          string   // pitago build version for the welcome header ("" = omit)
+	UpdateAvail         string   // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
+	thinkLvl            string   // thinking level from get_state
+	thinkLevels         []string // available levels of the current model (sidebar list)
+	autoCompact         bool     // auto-compaction from get_state
+	ctxWindow           int      // model context window from get_state/stats
 	session             string
 	sessStart           time.Time // session clock for sidebar "time"
 	turnStart           time.Time // last turn start (for "last" + speed)
@@ -1346,6 +1347,26 @@ func (m *Model) CycleThinking() tea.Cmd {
 		// Toast, not chat: rapid Ctrl+T replaces one popup instead of
 		// spamming one line per press — same Notice path as /thinking.
 		return SettingsRefreshMsg{Notice: "thinking → " + level, Level: level}
+	}
+}
+
+// ThinkLevelsMsg carries get_available_thinking_levels for the sidebar list.
+type ThinkLevelsMsg struct {
+	Levels []string
+	Err    error
+}
+
+// FetchLevels asks pi for the thinking levels of the current model. Fire
+// and forget (unlike the blocking render path): the list is filled in when
+// the message lands, and a failure just leaves it empty. Same shape as
+// OpenThinking's fetch, without the dialog.
+func (m *Model) FetchLevels() tea.Cmd {
+	if m.Pi == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		levels, err := m.Pi.GetLevels()
+		return ThinkLevelsMsg{Levels: levels, Err: err}
 	}
 }
 

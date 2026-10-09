@@ -405,7 +405,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planOn = false // fresh connect: plan latch is live-only
 		m.clearTeamWidgetState()
 		m.RefreshFollow()
-		return m, m.ensureTaskTick()
+		// Fresh pi: the sidebar's thinking-level list is model-specific and
+		// was just thrown away with the old process.
+		return m, tea.Batch(m.ensureTaskTick(), m.FetchLevels())
 
 	case piEventMsg:
 		if m.followRemote {
@@ -444,15 +446,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.followRemote {
 			return m, nil
 		}
+		var levelsCmd tea.Cmd // refetched below only if model/level moved
 		if msg.err == nil {
 			lbl := msg.state.Model.ID
 			if lbl == "" {
 				lbl = msg.state.Model.Name
 			}
+			prevLbl, prevLvl := m.ModelLbl, m.thinkLvl
 			if lbl != "" {
 				m.ModelLbl = lbl
 			}
 			m.thinkLvl = msg.state.ThinkingLevel
+			// The level list belongs to the model: refetch when either the
+			// model or the active level changed. stateRefreshMsg fires on
+			// every poll, so an unconditional fetch would spam pi with RPC.
+			if lbl != prevLbl || m.thinkLvl != prevLvl {
+				levelsCmd = m.FetchLevels()
+			}
 			m.autoCompact = msg.state.AutoCompaction
 			m.reconcileCompacting(msg.state)
 			if msg.state.Model.ContextWindow > 0 {
@@ -474,11 +484,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.thinking = false
 				m.Status = "ready"
 				m.Refresh()
-				return m, m.petSettled()
+				return m, tea.Batch(m.petSettled(), levelsCmd)
 			}
 			m.Refresh()
 		}
-		return m, nil
+		return m, levelsCmd
 
 	case wsTickMsg:
 		return m, tea.Batch(m.wsRefresh(), m.pollWs())
@@ -734,8 +744,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// fetchStateOnce re-reads get_state because setModel also
 			// adjusts the thinking level for the new model (pi parity):
 			// the footer and /thinking picker must not keep the old one.
-			return m, m.fetchStateOnce()
+			// The list itself is refreshed here too: fetchStateOnce only
+			// refetches on a model/level *change*, and SetModelByID already
+			// moved both.
+			return m, tea.Batch(m.fetchStateOnce(), m.FetchLevels())
 		}
+
+	case ThinkLevelsMsg:
+		// Sidebar level list. A failure is silent on purpose: the list is
+		// decoration next to the model row, and the /thinking picker still
+		// surfaces the same RPC error when the user asks for it.
+		if msg.Err == nil {
+			m.thinkLevels = msg.Levels // empty is a real answer: model has none
+			m.Refresh()
+		}
+		return m, nil
 
 	case PickerMsg:
 		m.Status = "ready"

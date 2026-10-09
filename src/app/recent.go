@@ -16,9 +16,17 @@ import (
 // guarded by TestRecentAtMatchesRender.
 const (
 	sideSessionRows = 5 // SESSION header + first + sess + file + sep
-	sideModelRows   = 4 // model + ctx + toks + sep
+	sideModelRows   = 4 // model + ctx + toks + sep (before the level list)
 	sideStatsRows   = 9 // header + 7 stat lines + sep
 )
+
+// sideModelRows is the SideModel row budget: the fixed four rows plus one
+// row per thinking level rendered under the model row. It is derived, not
+// fixed, because the level list arrives asynchronously (GetLevels) and is
+// empty until it does — an empty list simply means no extra rows.
+func (m Model) sideModelRows() int {
+	return sideModelRows + len(m.thinkLevelLines(sideInnerW))
+}
 
 // sideRowsBeforeRecent counts the sidebar content rows above the RECENT
 // MODELS header from the sections currently visible.
@@ -31,7 +39,7 @@ func (m Model) sideRowsBeforeRecent() int {
 		n += sideSessionRows
 	}
 	if m.SideVisible(SideModel) {
-		n += sideModelRows
+		n += m.sideModelRows()
 	}
 	if m.SideVisible(SideStats) {
 		n += sideStatsRows

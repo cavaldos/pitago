@@ -89,6 +89,11 @@ var (
 			BorderForeground(cBorder).
 			Padding(0, 1)
 	sideTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
+	// thinkPickStyle marks the thinking level in use in the sidebar level
+	// strip. Bold + the full text colour is the same emphasis toolNameStyle
+	// uses, so the active level reads as "lit" against the muted run without
+	// a ● marker eating a cell of the 30-wide sidebar.
+	thinkPickStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	sepStyle       = lipgloss.NewStyle().Foreground(cBorder)
 	cmdPopStyle    = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -238,6 +243,7 @@ func ApplyTheme(raw theme.Theme) {
 		BorderForeground(cBorder).
 		Padding(0, 1)
 	sideTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
+	thinkPickStyle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	sepStyle = lipgloss.NewStyle().Foreground(cBorder)
 	cmdPopStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
