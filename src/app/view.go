@@ -339,7 +339,7 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		// ticks in the transcript; it rides on the turn's last reply, where
 		// it reads as the cost of everything above it.
 		if bl.Foot != "" {
-			body += "\n\n" + toolStyle.Render(Short(bl.Foot, cw))
+			body += "\n\n" + lipgloss.NewStyle().Foreground(cAccent).Render("▣") + " " + toolStyle.Render(Short(bl.Foot, cw))
 		}
 		body += "\n\n"
 		// Table/fence-led replies render as aligned rows: keep the 2-cell
