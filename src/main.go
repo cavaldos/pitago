@@ -125,7 +125,7 @@ func main() {
 	// instead of through the frame, so both must be the same writer.
 	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithOutput(os.Stdout), tea.WithFilter(app.ScrollEventFilter)}
 	if *mouse {
-		progOpts = append(progOpts, tea.WithMouseCellMotion())
+		progOpts = append(progOpts, tea.WithMouseAllMotion())
 	}
 	prog := tea.NewProgram(m, progOpts...)
 	app.ProgRef = prog

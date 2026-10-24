@@ -275,6 +275,9 @@ type Model struct {
 	LastPressLine       int       // line of last single-click
 	jumpBlock           int       // block index carrying the "jumped here" mark (-1 = no mark; New sets it, a Model literal without it would mark block 0)
 	chatContent         string    // transcript string currently loaded into vp (setChatContent skips an unchanged re-measure)
+	hoverOn             bool      // pointer rests on a clickable sidebar row
+	hoverBlock          int       // 1 + index of the tool/thinking block under the pointer, 0 none
+	hoverY              int       // screen row of that pointer
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
 	sideCacheAt         time.Time // last sidebar rebuild
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
@@ -1241,7 +1244,7 @@ func (m *Model) ToggleMouse(arg string) tea.Cmd {
 	}
 	m.Refresh()
 	if on {
-		return tea.EnableMouseCellMotion
+		return tea.EnableMouseAllMotion
 	}
 	return tea.DisableMouse
 }

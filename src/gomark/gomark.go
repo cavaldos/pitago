@@ -33,6 +33,8 @@ func darkNoErrorBg() ansi.StyleConfig {
 		chroma.Error.BackgroundColor = nil
 		cfg.CodeBlock.Chroma = &chroma
 	}
+	// Inline code: colored text only, no backdrop block.
+	cfg.Code.BackgroundColor = nil
 	return cfg
 }
 

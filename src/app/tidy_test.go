@@ -30,7 +30,7 @@ func tidyWriteBlock() Block {
 
 func tidyShellBlock() Block {
 	return Block{
-		Kind: "tool", ToolName: "bash", ToolStatus: "done",
+		Kind: "tool", ToolName: "bash", Expanded: true, ToolStatus: "done",
 		ToolArgs:   "go test ./...",
 		ToolResult: strings.Repeat("ok  pitago/src/app  5.5s\n", 12),
 	}
@@ -49,32 +49,16 @@ func tidyModel(t *testing.T) Model {
 // diff, no result, no preview.
 func TestTidyCollapsesToolBlocks(t *testing.T) {
 	m := tidyModel(t)
-	bl := tidyEditBlock()
-
-	full := m.renderToolBlock(bl, 90)
-	if !strings.Contains(full, "src/app/view.go") {
-		t.Fatalf("untidy block should name the file, got:\n%s", full)
-	}
-	if !strings.Contains(full, "new line") {
-		t.Fatalf("untidy block should show the diff body, got:\n%s", full)
-	}
-
 	m.Tidy = true
-	tidy := stripANSI(m.renderToolBlock(bl, 90))
-	if !strings.Contains(tidy, "src/app/view.go") {
-		t.Errorf("tidy must still say which file was edited, got:\n%s", tidy)
+	bl := tidyEditBlock()
+	got := stripANSI(m.renderToolBlock(bl, 90))
+	if !strings.Contains(got, "src/app/view.go") || strings.Contains(got, "new line") ||
+		strings.Count(got, "\n") != 0 {
+		t.Fatalf("collapsed edit must be one header line, got:\n%s", got)
 	}
-	if strings.Contains(tidy, "new line") || strings.Contains(tidy, "old line") ||
-		strings.Contains(tidy, "@@") {
-		t.Errorf("tidy must drop the diff, got:\n%s", tidy)
-	}
-	// One content row between the frame's top and bottom rule.
-	n := tidyContentLines(tidy)
-	if n != 1 {
-		t.Errorf("tidy block should be one line, got %d:\n%s", n, tidy)
-	}
-	if fullN := tidyContentLines(stripANSI(full)); fullN <= n {
-		t.Errorf("tidy should be shorter than untidy (%d vs %d)", n, fullN)
+	bl.Expanded = true
+	if got := stripANSI(m.renderToolBlock(bl, 90)); !strings.Contains(got, "new line") {
+		t.Fatalf("clicked edit must show the diff, got:\n%s", got)
 	}
 }
 
@@ -158,6 +142,7 @@ func TestTidyLeavesPlainTextAlone(t *testing.T) {
 // The render cache must key on Tidy, or flipping it would repaint stale rows.
 func TestTidyInvalidatesRenderCache(t *testing.T) {
 	bl := tidyEditBlock()
+	bl.Expanded = true
 	k1 := blockKey(bl, 90, false, false, "default", false)
 	k2 := blockKey(bl, 90, false, false, "default", true)
 	if k1 == k2 {
@@ -208,5 +193,20 @@ func TestTidyLoadedFromPrefs(t *testing.T) {
 	m2.Configure(pirpc.Options{}, filepath.Join(home2, "keys.json"))
 	if m2.Tidy {
 		t.Error("tidy should default to off when the pref is absent")
+	}
+}
+
+// Tidy hides tool output, but a clicked-open block still shows it.
+func TestTidyClickedBlockShowsDetail(t *testing.T) {
+	m := tidyModel(t)
+	m.Tidy = true
+	bl := Block{Kind: "tool", ToolName: "read", ToolStatus: "done",
+		ToolArgs: "test.go:1-80", ToolResult: "package main\nfunc main() {}"}
+	if got := stripANSI(m.renderToolBlock(bl, 90)); strings.Contains(got, "package main") {
+		t.Fatalf("tidy must hide output until clicked: %q", got)
+	}
+	bl.Expanded = true
+	if got := stripANSI(m.renderToolBlock(bl, 90)); !strings.Contains(got, "package main") {
+		t.Fatalf("clicked block must show output in tidy mode: %q", got)
 	}
 }

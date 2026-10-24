@@ -276,6 +276,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sideVp, c = m.sideVp.Update(msg)
 		} else {
 			m.vp, c = m.vp.Update(msg)
+			// Reports the filter coalesced away still count.
+			if n := takeWheelCarry(); n > 0 {
+				m.vp.ScrollDown(n * 3)
+			} else if n < 0 {
+				m.vp.ScrollUp(-n * 3)
+			}
 		}
 		// No Refresh here: a wheel report only moves an offset, so the
 		// transcript and sidebar are still current. Re-rendering them per
@@ -645,6 +651,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// not wander, so rotation is skipped (the anchor stays put).
 		if m.petLooping() {
 			m.pet.tick++
+			setBlink(m.pet.tick%2 == 0)
 			// Lazily seed the rotation clock: a hand-built Model (tests) has
 			// a zero at, and time.Since on it is a huge bogus duration.
 			if m.pet.shown == "" {
@@ -1432,6 +1439,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.RespawnPi(), pluginTickCmd())
 
 	case tea.MouseMsg:
+		// Hover highlight: the filter forwards motion only when the
+		// clickable row under the pointer changed.
+		if msg.Action == tea.MouseActionMotion && !m.sel.Active {
+			m.setHover(msg)
+			return m, nil
+		}
 		// Jump-to-latest chip: a click on the floating chip pulls the
 		// transcript back to the newest message. Checked before the selector
 		// because the chip floats over a transcript row — a press there would
@@ -1879,8 +1892,8 @@ func escDisarmCmd(gen int) tea.Cmd {
 }
 
 // stampTurnFoot records the opencode-style footer on the reply that closed
-// the turn: which model answered, at what thinking level, and how long the
-// prompt took (issue #15). Only blocks from the turn that just ran are
+// the turn: which model answered, at what thinking level, how long the
+// prompt took, and the wall-clock time it finished (issue #15). Only blocks from the turn that just ran are
 // eligible: a turn that produced no prose (tool calls only) has nothing to
 // stamp, and the previous turn's reply keeps the footer it already earned.
 func (m *Model) stampTurnFoot() {
@@ -1895,6 +1908,7 @@ func (m *Model) stampTurnFoot() {
 		parts = append(parts, lvl)
 	}
 	parts = append(parts, fmtTurnDur(time.Since(m.turnStart)))
+	parts = append(parts, "done "+time.Now().Format("15:04:05"))
 	foot := strings.Join(parts, " · ")
 	for i := len(m.blocks) - 1; i >= m.turnFrom && i >= 0; i-- {
 		if m.blocks[i].Kind == "assistant" {

@@ -1,7 +1,9 @@
 package app
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -91,6 +93,7 @@ func TestFilterKeepsLiveScroll(t *testing.T) {
 		t.Fatal("wheel down mid-scroll must pass the filter")
 	}
 	m.vp.SetYOffset(m.vp.YOffset + 10)
+	time.Sleep(2 * wheelBurst) // past the burst window of the report above
 	if !filterKeeps(t, m, wheelAt(10, 10, false)) {
 		t.Fatal("wheel up mid-scroll must pass the filter")
 	}
@@ -151,5 +154,50 @@ func TestFilterKeepsMotionDuringDrag(t *testing.T) {
 	m.sel = Selection{Active: true, Anchor: Point{Line: 0, Col: 0}, Focus: Point{Line: 0, Col: 0}}
 	if !filterKeeps(t, m, ev) {
 		t.Fatal("motion must pass while a drag selection is active")
+	}
+}
+
+// Reports inside the burst window are dropped but their distance carries to
+// the next report that goes through.
+func TestWheelCoalesceCarriesDistance(t *testing.T) {
+	takeWheelCarry()
+	time.Sleep(2 * wheelBurst)
+	mm := wheelAt(10, 10, true)
+	if wheelCoalesce(mm, false) == nil {
+		t.Fatal("first report after a pause must pass")
+	}
+	if wheelCoalesce(mm, false) != nil || wheelCoalesce(mm, false) != nil {
+		t.Fatal("reports inside the burst window must be dropped")
+	}
+	if got := takeWheelCarry(); got != 2 {
+		t.Fatalf("carry = %d, want 2", got)
+	}
+}
+
+// Motion over a clickable sidebar row is forwarded once (to light the row);
+// motion elsewhere stays dropped.
+func TestFilterForwardsHoverChange(t *testing.T) {
+	m := sideModel(t)
+	m.Mouse = true
+	m.hoverOn = true
+	m.hoverY = 3
+	away := tea.MouseMsg{X: 2, Y: 5, Action: tea.MouseActionMotion}
+	if !filterKeeps(t, m, away) {
+		t.Fatal("leaving a hovered row must repaint")
+	}
+	m.hoverOn = false
+	if filterKeeps(t, m, away) {
+		t.Fatal("motion over nothing clickable must stay dropped")
+	}
+}
+
+func TestApplyChatHoverBrightensOnlyHoveredBlock(t *testing.T) {
+	m := Model{blocks: []Block{{Kind: "tool"}, {Kind: "thinking"}}, blockRows: []int{0, 2}, hoverBlock: 2}
+	out := strings.Split(m.applyChatHover("a\nb\nc\nd", 0), "\n")
+	if strings.Contains(out[0], "\x1b[22;1m") || strings.Contains(out[1], "\x1b[22;1m") {
+		t.Fatalf("rows of the other block must stay plain: %q", out)
+	}
+	if !strings.Contains(out[2], "\x1b[22;1m") || !strings.Contains(out[3], "\x1b[22;1m") {
+		t.Fatalf("hovered block rows must be bold: %q", out)
 	}
 }

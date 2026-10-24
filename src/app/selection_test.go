@@ -654,3 +654,39 @@ func TestHighlightKeepsEscapesOutsideSelectedRange(t *testing.T) {
 		t.Errorf("inverse span covers %q, want %q", inside, "selected text")
 	}
 }
+
+// A plain click on a tool block in history opens it in place: the block
+// toggles and the view stays where the reader is (no jump to bottom).
+func TestClickTogglesToolBlockWithoutScrolling(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.ready = true
+	m.Mouse = true
+	m.winW, m.winH = 100, 30
+	m.vp.Width, m.vp.Height = 80, 10
+	for i := 0; i < 8; i++ {
+		m.blocks = append(m.blocks, Block{Kind: "assistant", Text: fmt.Sprintf("reply %d", i)})
+	}
+	bash := len(m.blocks)
+	m.blocks = append(m.blocks, Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
+		ToolArgs: "ls -la", ToolResult: "a\nb\nc\nd\ne\nf"})
+	for i := 0; i < 8; i++ {
+		m.blocks = append(m.blocks, Block{Kind: "assistant", Text: fmt.Sprintf("later %d", i)})
+	}
+	m.Refresh()
+	m.vp.SetYOffset(m.blockRows[bash] - 2)
+	off := m.vp.YOffset
+	y := m.blockRows[bash] - m.chatViewport().YOffset + 1
+
+	m, _, _ = m.updateSelection(tea.MouseMsg{X: 5, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m, _, _ = m.updateSelection(tea.MouseMsg{X: 5, Y: y, Action: tea.MouseActionRelease})
+
+	if !m.blocks[bash].Expanded {
+		t.Fatal("click on the bash block must open it")
+	}
+	if m.vp.YOffset != off {
+		t.Fatalf("click must not scroll: offset %d → %d", off, m.vp.YOffset)
+	}
+	if !strings.Contains(stripANSI(strings.Join(m.chatLines, "\n")), "f") {
+		t.Fatal("opened block must show more output")
+	}
+}

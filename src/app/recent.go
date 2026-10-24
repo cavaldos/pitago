@@ -161,11 +161,24 @@ func (m Model) recentAt(x, y int) (int, bool) {
 	if !m.SideVisible(SideRecent) {
 		return 0, false
 	}
-	if x < m.mainW() || x > m.winW || y < 1+m.recentContentRow() {
+	if x < m.mainW() || x > m.winW {
+		return 0, false
+	}
+	// Anchor on the rendered header instead of summed section budgets: those
+	// drift whenever a section above (pet, model thinking levels) changes
+	// height, which left the first rows unclickable.
+	head := -1
+	for i, ln := range strings.Split(m.sideCache, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(stripANSI(ln)), "RECENT MODELS") {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
 		return 0, false
 	}
 	// visible rows start at YOffset when the sidebar is scrolled
-	idx := y - (1 + m.recentContentRow()) + m.sideVp.YOffset
+	idx := y - 1 + m.sideVp.YOffset - head - 1
 	if idx < 0 || idx >= len(m.recentModels) {
 		return 0, false
 	}

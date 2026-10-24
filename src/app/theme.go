@@ -42,16 +42,19 @@ func (m *Model) setBackground(name string, persist bool) {
 	if name != "" {
 		name = strings.ToLower(strings.TrimSpace(name))
 	}
-	if m.Background == name {
-		return
-	}
+	changed := m.Background != name
 	m.Background = name
 	if persist {
-		prefs := LoadPrefs(m.prefsPath)
-		prefs.Background = name
-		_ = SavePrefs(m.prefsPath, prefs)
+		// Previewing already set m.Background, so Enter on the same row
+		// is "unchanged" in memory: compare against the saved prefs.
+		if prefs := LoadPrefs(m.prefsPath); prefs.Background != name {
+			prefs.Background = name
+			_ = SavePrefs(m.prefsPath, prefs)
+		}
 	}
-	m.Refresh()
+	if changed {
+		m.Refresh()
+	}
 }
 
 // bgColor is the surface paintBG fills the frame with, or "" when the

@@ -1,6 +1,9 @@
 package app
 
 import (
+	"sync"
+	"time"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -54,6 +57,11 @@ func ScrollEventFilter(m tea.Model, msg tea.Msg) tea.Msg {
 		if md.sel.Active {
 			return msg
 		}
+		// Hover highlight reads motion, but only a change in which
+		// clickable row is under the pointer repaints anything.
+		if md.hoverChanged(mm.X, mm.Y) {
+			return msg
+		}
 		return nil
 	}
 	if mm.Shift {
@@ -75,7 +83,46 @@ func ScrollEventFilter(m tea.Model, msg tea.Msg) tea.Msg {
 	if pinnedAtEdge(&md.vp, up) {
 		return nil
 	}
-	return msg
+	return wheelCoalesce(mm, up)
+}
+
+// wheelBurst is the minimum gap between two chat wheel reports that each get
+// their own frame. A trackpad flick delivers reports far faster than the
+// 60fps renderer paints, so the extras only queue Update/View work whose
+// frames are discarded. Reports inside the gap are dropped and their
+// distance is carried (wheelCarry) into the next one that goes through, so
+// the total scroll is unchanged — it just lands in fewer, smoother frames.
+const wheelBurst = 8 * time.Millisecond
+
+var (
+	wheelMu    sync.Mutex
+	wheelLast  time.Time
+	wheelCarry int // signed pending reports: + down, - up
+)
+
+func wheelCoalesce(mm tea.MouseMsg, up bool) tea.Msg {
+	wheelMu.Lock()
+	defer wheelMu.Unlock()
+	d := 1
+	if up {
+		d = -1
+	}
+	now := time.Now()
+	if now.Sub(wheelLast) < wheelBurst {
+		wheelCarry += d
+		return nil
+	}
+	wheelLast = now
+	return mm
+}
+
+// takeWheelCarry returns and clears the distance dropped by wheelCoalesce.
+func takeWheelCarry() int {
+	wheelMu.Lock()
+	defer wheelMu.Unlock()
+	c := wheelCarry
+	wheelCarry = 0
+	return c
 }
 
 // pinnedAtEdge reports whether a vertical wheel report in direction up can no

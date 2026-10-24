@@ -238,6 +238,8 @@ func TestPluginsSectionToggle(t *testing.T) {
 
 func TestSidebarHasMcpTodos(t *testing.T) {
 	m := New(nil, t.TempDir())
+	mcpFolded.Store(false) // folded by default
+	t.Cleanup(func() { mcpFolded.Store(true) })
 	m.Side = map[string]bool{SideMCP: true} // hidden by default
 	m.MCP = []McpServer{{Name: "alpha", Direct: 1, Total: 2, Tokens: 1234, Connected: true}}
 	m.Todos = []TodoItem{{ID: "1", Content: "Write code", Status: TodoInProgress}}
@@ -444,6 +446,10 @@ func TestSidebarFoldMcpTodosWorkspace(t *testing.T) {
 	m.Todos = []TodoItem{{ID: "1", Content: "Write code", Status: TodoInProgress}}
 	m.ws = wsData{ok: true, branch: "main", files: []wsFile{{path: "go.mod", add: 1, del: 0}}}
 
+	// MCP and WORKSPACE start folded; Todos starts open. Normalize to open.
+	mcpFolded.Store(false)
+	wsFolded.Store(false)
+	t.Cleanup(func() { mcpFolded.Store(true); wsFolded.Store(true) })
 	for _, key := range []string{SideMCP, SideTodos, SideWorkspace} {
 		m.ToggleSideFold(key)
 	}

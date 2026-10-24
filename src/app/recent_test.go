@@ -39,6 +39,7 @@ func TestRecentAt(t *testing.T) {
 	m := Model{winW: 120, winH: 30, ready: true} // mainW=86, sidebar x>=86
 	m.recentModels = []RecentModel{{ID: "a"}, {ID: "b"}}
 	m.ModelLbl = "a"
+	m.sideCache = m.buildSidebarContent()
 	y0 := 1 + m.recentContentRow() // first model row
 	if idx, ok := m.recentAt(86, y0); !ok || idx != 0 {
 		t.Fatalf("row 0: got %d,%v", idx, ok)

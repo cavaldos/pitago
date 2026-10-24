@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -299,8 +300,12 @@ func blockKey(bl Block, cw int, hide, expand bool, theme string, tidy bool) uint
 	} else {
 		h.Write([]byte{0})
 	}
-	fmt.Fprintf(h, "\x00images\x00%d", len(bl.Images))
+	fmt.Fprintf(h, "\x00images\x00%d\x00%v", len(bl.Images), bl.Expanded)
 	fmt.Fprintf(h, "\x00%d\x00%v\x00%v\x00%v\x00%s", cw, hide, expand, tidy, theme)
+	// A running tool's dot blinks, so each phase is its own cache entry.
+	if bl.Kind == "tool" && format.ToolStatusClass(bl.ToolStatus) == format.StatusRunning {
+		fmt.Fprintf(h, "\x00blink\x00%v", blinkOn())
+	}
 	return h.Sum64()
 }
 
@@ -346,6 +351,11 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		// gutter so "● " doesn't push the first row 2 cells past the rest.
 		boxed = startsPreformatted(bl.Text)
 	case "thinking":
+		if bl.Expanded {
+			icon = statusBarStyle.Render("○")
+			body = thinkStyle.Width(max(cw-2, 10)).Render(strings.TrimSpace(bl.Text)) + "\n\n"
+			break
+		}
 		t := bl.Text
 		if len(t) > 300 {
 			t = t[:300] + "…"
@@ -551,7 +561,7 @@ func toolBullet(bl Block) string {
 	case format.StatusNeutral:
 		return toolStyle.Render("·")
 	}
-	return statusBarStyle.Render("○")
+	return runningBullet()
 }
 
 // renderToolBlock frames one tool call — header row, detail line, body
@@ -563,24 +573,17 @@ func toolBullet(bl Block) string {
 // A shell call is the same block in a different shape (see
 // renderShellBlock): command line, divider, output.
 func (m Model) renderToolBlock(bl Block, w int) string {
-	if isShell(bl.ToolName) {
-		return m.renderShellBlock(bl, w)
+	// Claude Code style, three levels, never framed:
+	//   default → one header line, click → a few detail lines,
+	//   ctrl+g → everything.
+	level := toolCollapsed
+	switch {
+	case m.expandTools:
+		level = toolFull
+	case bl.Expanded:
+		level = toolOpened
 	}
-	inner := blockInner(w)
-	rows := []string{toolHeaderRow(bl, toolHead(bl), inner)}
-	// Tidy mode: the header IS the block. A tool call reads as
-	// "● edit src/app/view.go" with no args line and no result, diff or
-	// preview underneath — the whole point of the mode.
-	if m.Tidy {
-		return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
-	}
-	if d := toolDetail(bl); d != "" {
-		rows = append(rows, toolStyle.Render(d))
-	}
-	if r := m.renderToolBody(bl); r != "" {
-		rows = append(rows, r)
-	}
-	return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
+	return compactToolBlock(bl, w, level)
 }
 
 // toolHead is the header text after the tool name: the pretty args, plus
@@ -626,6 +629,8 @@ func toolHeaderRow(bl Block, head string, inner int) string {
 // still rendered while the call runs, holding just the command, so a
 // long command does not pop into existence with its output.
 func (m Model) renderShellBlock(bl Block, w int) string {
+	// Collapsed by default (Claude Code style): one colored line, the
+	// full command and output appear on click (or ctrl+g for all).
 	rows := []string{shellCommandRow(bl)}
 	// Tidy mode keeps the command line (that IS the call) and drops the
 	// output section, so a long transcript of shell calls stays scannable.
@@ -641,6 +646,205 @@ func (m Model) renderShellBlock(bl Block, w int) string {
 		rows = append(rows, dividerRow(inner, label), out)
 	}
 	return framedBlock(rows, w, blockThemeFor(format.ToolStatusClass(bl.ToolStatus)))
+}
+
+// Detail levels for a tool block.
+const (
+	toolCollapsed = iota // header line only
+	toolOpened           // clicked: header + first lines
+	toolFull             // ctrl+g: header + everything
+)
+
+// compactToolBlock renders a tool call Claude Code style:
+//
+//	● Bash(go test ./...)
+//	  ⎿ ok  pitago 0.5s
+//	    … +4 lines
+//
+// The dot is green on success, red on error, dim while running.
+func compactToolBlock(bl Block, w int, level int) string {
+	class := format.ToolStatusClass(bl.ToolStatus)
+	dot := runningDot()
+	switch class {
+	case format.StatusSuccess:
+		dot = okStyle.Render("●")
+	case format.StatusError:
+		dot = errStyle.Render("●")
+	}
+	name := strings.TrimSpace(bl.ToolName)
+	if name == "" {
+		name = "tool"
+	}
+	name = strings.ToUpper(name[:1]) + name[1:]
+	nameSt := lipgloss.NewStyle().Bold(true).Foreground(cText)
+	args := strings.Join(strings.Fields(bl.ToolArgs), " ")
+
+	if level == toolCollapsed {
+		avail := max(w-lipgloss.Width(name)-6, 8)
+		return dot + " " + nameSt.Render(name) + toolStyle.Render("("+Short(args, avail)+")")
+	}
+
+	// Opened: the whole call, wrapped, continuation rows indented.
+	wrapped := strings.Split(lipgloss.NewStyle().Width(max(w-2, 8)).Render(name+"("+args+")"), "\n")
+	for k, ln := range wrapped {
+		ln = strings.TrimRight(ln, " ")
+		if k == 0 {
+			wrapped[k] = dot + " " + nameSt.Render(name) + toolStyle.Render(strings.TrimPrefix(ln, name))
+		} else {
+			wrapped[k] = "  " + toolStyle.Render(ln)
+		}
+	}
+	rows := wrapped
+
+	if diff := compactDiffRows(bl, w, level); diff != nil {
+		return strings.Join(append(rows, diff...), "\n")
+	}
+
+	var lines []string
+	if class == format.StatusRunning {
+		lines = []string{"Running…"}
+	} else {
+		out := strings.TrimRight(bl.ToolResult, "\n")
+		lines = strings.Split(out, "\n")
+		if strings.TrimSpace(out) == "" {
+			lines = []string{"(No output)"}
+		}
+		if level == toolOpened && len(lines) > 15 {
+			extra := len(lines) - 15
+			lines = append(lines[:15:15], fmt.Sprintf("… +%d lines (ctrl+g to see all)", extra))
+		}
+	}
+	st := toolStyle
+	if class == format.StatusError {
+		st = errStyle
+	}
+	for k, ln := range lines {
+		pre := "    "
+		if k == 0 {
+			pre = "  ⎿ "
+		}
+		rows = append(rows, toolStyle.Render(pre)+st.Render(Short(strings.ReplaceAll(ln, "\t", "    "), max(w-4, 8))))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// Diff row backgrounds for the compact edit/write view (Claude Code style).
+var (
+	diffAddStyle = lipgloss.NewStyle().Background(lipgloss.Color("#1f3d24")).Foreground(lipgloss.Color("#d6f5dc"))
+	diffDelStyle = lipgloss.NewStyle().Background(lipgloss.Color("#4a2026")).Foreground(lipgloss.Color("#f8d7da"))
+)
+
+// compactDiffRows renders a successful edit/write as
+//
+//	⎿ Updated path (+2 -1)
+//	   12  context
+//	   13 +added        (green background)
+//
+// It returns nil for any other tool so the caller falls back to the
+// plain output summary.
+func compactDiffRows(bl Block, w int, level int) []string {
+	if format.ToolStatusClass(bl.ToolStatus) != format.StatusSuccess {
+		return nil
+	}
+	tool := strings.ToLower(bl.ToolName)
+	var lines []string
+	var title string
+	switch tool {
+	case "edit", "multiedit":
+		diff := bl.ToolDiff
+		if diff == "" {
+			diff = format.EditDiffFallback(bl.ToolArgsRaw)
+		}
+		if strings.TrimSpace(diff) == "" {
+			return nil
+		}
+		add, del := 0, 0
+		for _, ln := range strings.Split(strings.TrimRight(diff, "\n"), "\n") {
+			if strings.HasPrefix(ln, "---") || strings.HasPrefix(ln, "+++") || strings.HasPrefix(ln, "@@") {
+				continue
+			}
+			switch diffMarker(ln) {
+			case '+':
+				add++
+			case '-':
+				del++
+			}
+			lines = append(lines, ln)
+		}
+		title = fmt.Sprintf("Updated %s (+%d -%d)", toolPath(bl), add, del)
+	case "write":
+		content, ok := format.WriteContent(bl.ToolArgsRaw)
+		if !ok || strings.TrimSpace(content) == "" {
+			return nil
+		}
+		src := strings.Split(strings.TrimRight(content, "\n"), "\n")
+		for n, ln := range src {
+			lines = append(lines, fmt.Sprintf("%4d +%s", n+1, ln))
+		}
+		title = fmt.Sprintf("Wrote %d lines to %s", len(src), toolPath(bl))
+	default:
+		return nil
+	}
+	rows := []string{toolStyle.Render("  ⎿ ") + lipgloss.NewStyle().Foreground(cText).Render(Short(title, max(w-4, 8)))}
+	keep := 40
+	extra := 0
+	if level == toolOpened && len(lines) > keep {
+		extra = len(lines) - keep
+		lines = lines[:keep]
+	}
+	inner := max(w-4, 8)
+	for _, ln := range lines {
+		ln = strings.ReplaceAll(ln, "\t", "    ")
+		cell := Short(ln, inner)
+		pad := inner - lipgloss.Width(cell)
+		if pad > 0 {
+			cell += strings.Repeat(" ", pad)
+		}
+		var st lipgloss.Style
+		switch diffMarker(ln) {
+		case '+':
+			st = diffAddStyle
+		case '-':
+			st = diffDelStyle
+		default:
+			st = codeStyle
+		}
+		rows = append(rows, "    "+st.Render(cell))
+	}
+	if extra > 0 {
+		rows = append(rows, toolStyle.Render(fmt.Sprintf("    … +%d lines (ctrl+g to see all)", extra)))
+	}
+	return rows
+}
+
+// diffMarker returns '+', '-' or 0 for one diff row, with or without
+// pi's leading line-number gutter.
+func diffMarker(ln string) byte {
+	b := strings.TrimLeft(ln, " ")
+	if b == "" {
+		return 0
+	}
+	if b[0] == '+' || b[0] == '-' {
+		return b[0]
+	}
+	if f := strings.SplitN(b, " ", 2); len(f) == 2 && isDigits(f[0]) && f[1] != "" {
+		if f[1][0] == '+' || f[1][0] == '-' {
+			return f[1][0]
+		}
+	}
+	return 0
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // shellCommandRow is the box's first row: the bare prompt plus the
@@ -1424,7 +1628,7 @@ func (m Model) invokedTools() []Block {
 // covers padding, not the border: sideInnerW+2 lands the box on sideW.
 func (m Model) renderSidebar() string {
 	h := m.sideContentH()
-	body := m.sideVp.View()
+	body := m.applyHover(m.sideVp.View())
 	if !m.quitArmed() {
 		return sideStyle.Width(sideInnerW + 2).Height(h).Render(body)
 	}
@@ -3259,12 +3463,42 @@ func (m Model) View() string {
 // Each row is re-styled segment by segment: every inner lipgloss style
 // ends in a reset, which clears the background again, so one style over
 // the whole row would leave the text past the first reset unpainted.
+var sgrResetRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// sgrClearsBG reports whether an SGR sequence wipes the background: a full
+// reset ("\x1b[m", "0", "0;…") or the default-background code 49.
+func sgrClearsBG(seq string) bool {
+	params := strings.Split(seq[2:len(seq)-1], ";")
+	for i := 0; i < len(params); i++ {
+		switch params[i] {
+		case "", "0", "49":
+			return true
+		case "38", "48": // colour operand: skip "5;n" or "2;r;g;b"
+			if i+1 < len(params) && params[i+1] == "5" {
+				i += 2
+			} else {
+				i += 4
+			}
+		}
+	}
+	return false
+}
+
 func (m Model) paintBG(s string) string {
 	bg := m.bgColor()
 	if bg == "" || m.winW <= 0 || m.winH <= 0 {
 		return s
 	}
-	st := lipgloss.NewStyle().Background(lipgloss.Color(bg))
+	// The surface's own escape, taken from a probe render so it follows
+	// the colour profile (truecolor / 256 / none).
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(bg)).Render("x")
+	on := strings.TrimSuffix(probe, "x")
+	if i := strings.Index(probe, "x"); i >= 0 {
+		on = probe[:i]
+	}
+	if on == "" {
+		return s
+	}
 	rows := strings.Split(s, "\n")
 	for len(rows) < m.winH {
 		rows = append(rows, "")
@@ -3273,13 +3507,12 @@ func (m Model) paintBG(s string) string {
 		if pad := m.winW - displayWidth(row); pad > 0 {
 			row += spaces(pad)
 		}
-		segs := strings.Split(row, "\x1b[0m")
-		for j, seg := range segs {
-			if seg != "" {
-				segs[j] = st.Render(seg)
+		rows[i] = on + sgrResetRe.ReplaceAllStringFunc(row, func(seq string) string {
+			if sgrClearsBG(seq) {
+				return seq + on
 			}
-		}
-		rows[i] = strings.Join(segs, "\x1b[0m")
+			return seq
+		}) + "\x1b[0m"
 	}
 	return strings.Join(rows, "\n")
 }
@@ -3314,7 +3547,7 @@ func (m Model) view() string {
 	// highlighting m.vp instead would highlight different pixels than the
 	// ones being drawn.
 	chatView := func() string {
-		chat := padToHeight(overlaySelection(chatVp.View(), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
+		chat := padToHeight(overlaySelection(m.applyChatHover(chatVp.View(), chatVp.YOffset), chatVp.YOffset, m.sel, m.gutterCols), chatVp.Height)
 		// Jump-to-latest chip: drawn only while the newest line is off-frame,
 		// so it never nags a reader already sitting at the tail. Overlaid on
 		// an existing transcript row, never appended — the frame's row

@@ -1103,13 +1103,18 @@ func (m Model) renderPluginsSection(inner int) string {
 }
 
 // Fold state (▸ closed / ▾ open) for the sidebar sections that fold on a
-// header click, mirroring PLUGINS/LSP: open by default. atomic because View
+// header click, mirroring PLUGINS/LSP: folded by default for MCP/WORKSPACE. atomic because View
 // and Update both read them.
 var (
 	mcpFolded  atomic.Bool
 	todoFolded atomic.Bool
 	wsFolded   atomic.Bool
 )
+
+func init() {
+	mcpFolded.Store(true)
+	wsFolded.Store(true)
+}
 
 // sideFold returns the fold flag of a foldable section key (nil when the
 // section has no fold, e.g. SESSION or TOOLS).

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func frameRows(t *testing.T, out string) []string {
 
 func readBlock(status string) Block {
 	return Block{
-		Kind: "tool", ToolName: "read", ToolStatus: status,
+		Kind: "tool", ToolName: "read", Expanded: true, ToolStatus: status,
 		ToolArgs:    "src/app/view.go",
 		ToolArgsRaw: `{"file_path":"src/app/view.go"}`,
 		ToolResult:  "package app\n",
@@ -39,48 +40,9 @@ func readBlock(status string) Block {
 
 func bashBlock(status, result string) Block {
 	return Block{
-		Kind: "tool", ToolName: "bash", ToolStatus: status,
+		Kind: "tool", ToolName: "bash", Expanded: true, ToolStatus: status,
 		ToolArgs:   "go build ./...",
 		ToolResult: result,
-	}
-}
-
-// A tool call is visually bounded: the frame opens on the first row,
-// closes on the last, and every framed row is exactly the render width.
-func TestToolBlockIsFramed(t *testing.T) {
-	for _, bl := range []Block{
-		readBlock("done"),
-		readBlock("running"),
-		readBlock("error"),
-		bashBlock("done", "ok  \tpitago\t0.5s\n"),
-		{Kind: "tool", ToolName: "cd", ToolStatus: "done", ToolArgs: "src/components"},
-		{Kind: "tool", ToolName: "fetch", ToolStatus: "done", ToolArgs: "https://example.test"},
-		{Kind: "tool", ToolName: "subagent_launch", ToolStatus: "running", ToolArgs: "explorer"},
-		{Kind: "bash", Text: "$ ls src"},
-	} {
-		const cw = 60
-		out, skip := (&Model{}).renderOneBlock(bl, cw)
-		if skip {
-			t.Fatalf("%s/%s: block was skipped", bl.Kind, bl.ToolName)
-		}
-		rows := frameRows(t, out)
-		first, last := stripANSI(rows[0]), stripANSI(rows[len(rows)-1])
-		if !strings.HasPrefix(first, "╭─") {
-			t.Fatalf("%s/%s: first row must open the frame: %q", bl.Kind, bl.ToolName, first)
-		}
-		if !strings.HasPrefix(last, "╰─") || !strings.HasSuffix(last, "╯") {
-			t.Fatalf("%s/%s: last row must close the frame: %q", bl.Kind, bl.ToolName, last)
-		}
-		for i, r := range rows {
-			if got := lipgloss.Width(r); got != cw {
-				t.Fatalf("%s/%s: row %d is %d cells, want %d: %q",
-					bl.Kind, bl.ToolName, i, got, cw, stripANSI(r))
-			}
-		}
-		// A shell block leads with the prompt, not the tool name.
-		if bl.Kind == "tool" && !isShell(bl.ToolName) && !strings.Contains(stripANSI(out), bl.ToolName) {
-			t.Fatalf("%s: tool name must stay readable inside the frame", bl.ToolName)
-		}
 	}
 }
 
@@ -94,7 +56,7 @@ func TestProseBlocksAreNotFramed(t *testing.T) {
 		{Kind: "thinking", Text: "considering the block layout"},
 		{Kind: "notice", Text: "model reloaded"},
 	} {
-		out, _ := (&Model{}).renderOneBlock(bl, 60)
+		out, _ := (&Model{expandTools: true}).renderOneBlock(bl, 60)
 		if strings.ContainsAny(stripANSI(out), "╭╰│") {
 			t.Fatalf("%s block must not be framed: %q", bl.Kind, stripANSI(out))
 		}
@@ -130,7 +92,7 @@ func TestToolBlockNeverExceedsWidth(t *testing.T) {
 		if want < blockMinW {
 			want = blockMinW
 		}
-		out, _ := (&Model{}).renderOneBlock(bl, cw)
+		out, _ := (&Model{expandTools: true}).renderOneBlock(bl, cw)
 		for i, r := range frameRows(t, out) {
 			if got := lipgloss.Width(r); got > want {
 				t.Fatalf("cw=%d: row %d is %d cells, over the %d-cell column: %q",
@@ -255,94 +217,36 @@ func TestFillRowRearmsAfterEveryReset(t *testing.T) {
 	}
 }
 
-// With a color profile that has a background, the fill actually reaches
-// every row of a highlighted body, and the frame is unaffected.
-func TestToolBlockFillUnderColorProfile(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(prev)
-
-	seq := fillSeq(cToolSuccess)
-	if seq == "" {
-		t.Fatal("a truecolor profile must produce a fill sequence")
-	}
-	if got := fillSeq(lipgloss.Color("")); got != "" {
-		t.Fatalf("an unset fill must produce no sequence, got %q", got)
-	}
-	bl := readBlock("done")
-	bl.ToolResult = "package app\n\nfunc main() { fmt.Println(\"hi\") }\n"
-	m := Model{expandTools: true}
-	out, _ := m.renderOneBlock(bl, 60)
-	rows := frameRows(t, out)
-	content := 0
-	for i, r := range rows {
-		if got := lipgloss.Width(r); got != 60 {
-			t.Fatalf("row %d is %d cells with a fill, want 60", i, got)
-		}
-		// The fill must reach every content row; the top/bottom frame
-		// glyphs are painted by lipgloss's border pass, which is out of
-		// scope for this assertion.
-		if !strings.Contains(stripANSI(r), "│") {
-			continue
-		}
-		content++
-		if !strings.Contains(r, seq) {
-			t.Fatalf("content row %d lost the block fill: %q", i, stripANSI(r))
-		}
-	}
-	if content == 0 {
-		t.Fatal("expected at least one content row inside the frame")
-	}
-}
-
-// A block under a color-less profile keeps its frame and text and simply
-// drops the fill, instead of collapsing into flat raw rows.
-func TestToolBlockDegradesWithoutColor(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(prev)
-
-	if seq := fillSeq(cToolSuccess); seq != "" {
-		t.Fatalf("an ascii profile must produce no fill sequence, got %q", seq)
-	}
-	out, _ := (&Model{}).renderOneBlock(bashBlock("done", "ok\n"), 60)
-	plain := stripANSI(out)
-	if !strings.HasPrefix(plain, "╭─") || !strings.Contains(plain, "╰") {
-		t.Fatalf("the frame must survive a color-less terminal: %q", plain)
-	}
-	if strings.Contains(out, "\x1b[48;") {
-		t.Fatalf("a color-less terminal must not receive a background: %q", out)
-	}
-}
-
-// Both the collapsed and the expanded (ctrl+g) path keep their hint
-// inside the box, and both still close the frame.
-func TestToolBlockCollapseHintsStayInside(t *testing.T) {
+// Tool blocks have three levels, all unframed: one header line by
+// default, a few lines when clicked, everything with ctrl+g.
+func TestToolBlockThreeLevels(t *testing.T) {
 	var out strings.Builder
 	for i := 1; i <= 30; i++ {
-		out.WriteString("output line\n")
+		fmt.Fprintf(&out, "row%02d\n", i)
 	}
-	bl := bashBlock("done", out.String())
-	for _, expanded := range []bool{false, true} {
-		m := Model{expandTools: expanded}
-		got, _ := m.renderOneBlock(bl, 60)
-		plain := stripANSI(got)
-		rows := frameRows(t, got)
-		first, last := stripANSI(rows[0]), stripANSI(rows[len(rows)-1])
-		if !strings.HasPrefix(first, "╭─") || !strings.HasPrefix(last, "╰─") {
-			t.Fatalf("expanded=%v: frame must stay closed", expanded)
-		}
-		wantHint := expandHint
-		if expanded {
-			wantHint = collapseHint
-		}
-		idx := strings.Index(plain, wantHint)
-		if idx < 0 {
-			t.Fatalf("expanded=%v: missing %q hint", expanded, wantHint)
-		}
-		line := plain[strings.LastIndex(plain[:idx], "\n")+1:]
-		if !strings.HasPrefix(line, "│") {
-			t.Fatalf("expanded=%v: hint must render inside the box: %q", expanded, line)
+	bl := Block{Kind: "tool", ToolName: "read", ToolStatus: "done",
+		ToolArgs: "test.go:1-30", ToolResult: out.String()}
+
+	collapsed := stripANSI((&Model{}).renderToolBlock(bl, 80))
+	if collapsed != "● Read(test.go:1-30)" {
+		t.Fatalf("default must be one header line, got %q", collapsed)
+	}
+
+	bl.Expanded = true
+	opened := stripANSI((&Model{}).renderToolBlock(bl, 80))
+	if !strings.Contains(opened, "row01") || strings.Contains(opened, "row30") ||
+		!strings.Contains(opened, "+15 lines") {
+		t.Fatalf("clicked must show the first lines only, got:\n%s", opened)
+	}
+
+	bl.Expanded = false
+	full := stripANSI((&Model{expandTools: true}).renderToolBlock(bl, 80))
+	if !strings.Contains(full, "row30") {
+		t.Fatalf("ctrl+g must show everything, got:\n%s", full)
+	}
+	for _, s := range []string{opened, full} {
+		if strings.ContainsAny(s, "╭╰│") {
+			t.Fatalf("tool blocks must never be framed:\n%s", s)
 		}
 	}
 }

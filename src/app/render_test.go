@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -111,6 +110,7 @@ func TestRenderToolBodyWriteAlwaysDetailed(t *testing.T) {
 		sb.WriteString(fmt.Sprintf("line%d\n", i))
 	}
 	bl := writeBlock(sb.String())
+	bl.Expanded = true
 	for _, expanded := range []bool{false, true} {
 		m := Model{expandTools: expanded}
 		got := m.renderToolBody(bl)
@@ -120,14 +120,6 @@ func TestRenderToolBodyWriteAlwaysDetailed(t *testing.T) {
 		if strings.Contains(got, "ctrl+g") {
 			t.Fatalf("write expanded=%v should not offer collapse: %q", expanded, got)
 		}
-	}
-
-	// full block header carries pi's "+N lines" suffix
-	mFull := Model{blocks: []Block{bl}, jumpBlock: -1} // -1 = no "jumped here" mark
-	mFull.vp = viewport.New(120, 20)
-	full := stripANSI(mFull.renderBlocks())
-	if !strings.Contains(full, "write game.js +15") {
-		t.Fatalf("write header missing +N suffix: %q", full)
 	}
 }
 
@@ -475,94 +467,6 @@ func TestRenderToolBodyEditReceiptOnly(t *testing.T) {
 	}
 }
 
-// oh-my-pi look: a tool block is never a full-bleed Background fill
-// (terminals without truecolor drop Background and used to leave flat raw
-// rows). A shell call is one flush-left framed box — command, divider,
-// A tool block is a bordered box with a background fill, pi style: the
-// frame replaces the old full-bleed Background() so a terminal that
-// drops the fill still shows a clean outline. A shell call frames
-// command + output in one box, flush left, with no status bullet: the
-// border color carries the status instead. Every other tool keeps the
-// bullet + bold name header (now inside the frame) over a tree body.
-func TestToolBlockRestyle(t *testing.T) {
-	bash := Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
-		ToolArgs: "go test ./src/app/", ToolResult: "ok  \tpitago/src/app\t3.4s\nFAIL"}
-	read := Block{Kind: "tool", ToolName: "read", ToolStatus: "done",
-		ToolArgs: "game.js", ToolArgsRaw: `{"path":"game.js"}`,
-		ToolResult: "const a = 1;\nconst b = 2;\nconst c = 3;"}
-	// Both kinds render inside a closed frame, flush left, whatever the
-	// tool — the frame is now the block's left edge, so no gutter bullet
-	// may push the border past its column.
-	for _, bl := range []Block{bash, read} {
-		m := Model{blocks: []Block{bl}, jumpBlock: -1}
-		m.vp = viewport.New(62, 20) // cw = 60
-		rows := strings.Split(strings.TrimRight(stripANSI(m.renderBlocks()), "\n"), "\n")
-		if !strings.HasPrefix(rows[0], "╭─") {
-			t.Fatalf("%s block must open the frame: %q", bl.ToolName, rows[0])
-		}
-		if !strings.HasPrefix(rows[len(rows)-1], "╰─") {
-			t.Fatalf("%s block must close the frame: %q", bl.ToolName, rows[len(rows)-1])
-		}
-	}
-
-	// A shell call frames command + output in one box, flush left, with no
-	// status bullet: the border color carries the status instead.
-	bm := Model{blocks: []Block{bash}, vp: viewport.New(62, 20), jumpBlock: -1}
-	plain := stripANSI(bm.renderBlocks())
-	if strings.HasPrefix(plain, "●") {
-		t.Fatalf("shell box must be flush left with no bullet: %q", plain)
-	}
-	if !strings.HasPrefix(plain, "╭─") {
-		t.Fatalf("shell block must open the frame immediately: %q", plain)
-	}
-	if !strings.Contains(plain, "│ $ go test ./src/app/ ") {
-		t.Fatalf("command must sit inside the box: %q", plain)
-	}
-	if !strings.Contains(plain, "│ ─── Output ") {
-		t.Fatalf("missing inline Output divider: %q", plain)
-	}
-	if !strings.HasSuffix(strings.TrimRight(plain, "\n"), strings.Repeat("╰", 1)+strings.Repeat("─", 58)+"╯") {
-		t.Fatalf("shell box missing bottom border: %q", plain)
-	}
-	for _, row := range strings.Split(plain, "\n") {
-		if strings.HasPrefix(row, "╭") || strings.HasPrefix(row, "│") || strings.HasPrefix(row, "╰") {
-			if lipgloss.Width(row) != 60 {
-				t.Fatalf("box row is %d cells, want 60: %q", lipgloss.Width(row), row)
-			}
-		}
-	}
-	if toolBorder("error") != cRed || toolBorder("done") != cBorder {
-		t.Fatalf("border must carry the status the bullet gave up")
-	}
-
-	// Every other tool is framed too, with the status bullet + bold name
-	// as the header row inside the box.
-	rm0 := Model{blocks: []Block{read}, vp: viewport.New(62, 20), jumpBlock: -1}
-	plain = stripANSI(rm0.renderBlocks())
-	rows := strings.Split(strings.TrimRight(plain, "\n"), "\n")
-	if !strings.HasPrefix(rows[0], "╭─") {
-		t.Fatalf("read block must open the frame: %q", plain)
-	}
-	if !strings.Contains(rows[1], "● read ") {
-		t.Fatalf("read block header = %q, want \"● read …\" inside the box", rows[1])
-	}
-	// Styling is dropped when no color profile is set (the case this
-	// restyle targets), so assert the style itself, not its escape.
-	if !toolNameStyle.GetBold() {
-		t.Fatalf("toolNameStyle must render the tool name bold")
-	}
-
-	// a multi-line generic result renders as a box-drawing tree
-	rm := Model{expandTools: true, blocks: []Block{read}, vp: viewport.New(62, 20)}
-	plain = stripANSI(rm.renderBlocks())
-	if !strings.Contains(plain, "├── const a = 1;") {
-		t.Fatalf("multi-line result missing ├─ tree row: %q", plain)
-	}
-	if !strings.Contains(plain, "└── const c = 3;") {
-		t.Fatalf("last result row missing └─ prefix: %q", plain)
-	}
-}
-
 func TestRenderResultRows(t *testing.T) {
 	// Tree rows carry no indent of their own: gutterBox is the single
 	// source of the 2-cell block indent, so indenting here too would push
@@ -589,7 +493,7 @@ func TestRenderResultRows(t *testing.T) {
 // case that breaks, since the label alone can outgrow the inner column.
 func TestShellBoxDividerFillsInnerWidth(t *testing.T) {
 	for _, w := range []int{8, 20, 24, 60, 94, 200} {
-		bl := Block{Kind: "tool", ToolName: "bash", ToolStatus: "done",
+		bl := Block{Kind: "tool", ToolName: "bash", Expanded: true, ToolStatus: "done",
 			ToolArgs: "ls src", ToolResult: "a\nb"}
 		for _, row := range strings.Split((Model{}).renderShellBlock(bl, w), "\n") {
 			// lipgloss.Width is ANSI-aware; StripANSI is not, and it eats

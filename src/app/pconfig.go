@@ -106,9 +106,9 @@ func (m *Model) OpenPconfig() {
 		Provs:     []string{"Agent", "Commands", "Shortcuts", "Skills", "Prompts", "Extensions", "Plugins", "Marketplace", "MCP", "Tools", "Tasks", "Sidebar", "Theme", "Login"},
 		PsecIDs:   []string{PsecAgent, PsecCmd, PsecKeys, PsecSkill, PsecPrompt, PsecExt, PsecPlugin, PsecMarket, PsecMCP, PsecTool, PsecTasks, PsecSide, PsecTheme, PsecLogin},
 		ProvFocus: true}
+	d.PalRow, d.BgRow = 0, -1 // palette "default" is a sane first row; backgrounds start unvisited
 	m.LoadPsecRows(d)
 	m.Dialogs = append(m.Dialogs, d)
-	d.PalRow, d.BgRow = 0, -1 // palette "default" is a sane first row; backgrounds start unvisited
 	m.Refresh()
 }
 
@@ -143,6 +143,7 @@ func (m *Model) OpenHubSection(id string) {
 			}
 			hd.ProvFocus = false
 			m.LoadPsecRows(hd)
+			m.focusCurrentTheme(hd)
 		}
 	}
 }
@@ -255,6 +256,28 @@ func (m *Model) LoadPsecRows(d *Dialog) {
 	d.Message = msg
 	d.Cursor = 0
 	d.Reindex()
+}
+
+// focusCurrentTheme parks the Theme section's cursor on the active
+// palette (and remembers the active background for the other column)
+// instead of the first row.
+func (m *Model) focusCurrentTheme(d *Dialog) {
+	if d.CurPsec() != PsecTheme {
+		return
+	}
+	d.BgFocus = false
+	d.BgRow = -1
+	for ri, p := range d.Payload {
+		switch {
+		case p == "theme:"+m.currentTheme():
+			d.PalRow = ri
+			if i := colFIdxIndex(d, ri); i >= 0 {
+				d.Cursor = i
+			}
+		case p == psecActBg+m.currentBackground():
+			d.BgRow = ri
+		}
+	}
 }
 
 // curatedPlugins are the pi packages pitago is built around. They ride the
@@ -1378,6 +1401,7 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 					d.ProvCursor = (d.ProvCursor - 1 + n) % n
 				}
 				m.LoadPsecRows(d)
+				m.focusCurrentTheme(d)
 				// First visit to an unloaded marketplace fetches it in
 				// the background (rows reload when MarketMsg lands).
 				if d.CurPsec() == PsecMarket {
