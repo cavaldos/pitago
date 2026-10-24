@@ -410,6 +410,20 @@ func PiString(cfg map[string]any, path string, def string) string {
 	return def
 }
 
+// PiDisplay reads a string or number setting as display text ("auto" or
+// "3" for fullscreenWheelScrollLines), with pi's default when absent.
+func PiDisplay(cfg map[string]any, path string, def string) string {
+	switch v := GetPiSetting(cfg, path).(type) {
+	case string:
+		if v != "" {
+			return v
+		}
+	case float64:
+		return fmt.Sprintf("%d", int(v))
+	}
+	return def
+}
+
 // PiInt reads a number (JSON float64) with pi's default when absent.
 func PiInt(cfg map[string]any, path string, def int) int {
 	switch v := GetPiSetting(cfg, path).(type) {

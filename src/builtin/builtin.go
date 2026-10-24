@@ -352,6 +352,54 @@ type fileSetting struct {
 	vals  []string
 	toVal func(disp string) any
 	local bool
+	note  string // bracket tag shown beside the label: "[pi TUI]" / "[pitago]"
+	desc  string // pi's own description, shown in the row footer and matched by the filter
+}
+
+const (
+	noteTUI    = "[pi TUI only]" // pi writes it, only pi's own TUI reads it
+	notePitago = "[pitago only]" // pitago feature with no stock-pi equivalent
+)
+
+func boolVal(d string) any { return d == "on" }
+
+func intVal(def int) func(string) any {
+	return func(d string) any { return atoiOr(d, def) }
+}
+
+func strVal(d string) any { return d }
+
+// enumRow builds a string-enum row.
+func enumRow(label, group, path, note, desc string, vals ...string) fileSetting {
+	return fileSetting{label: label, group: group, path: path, vals: vals, toVal: strVal, note: note, desc: desc}
+}
+
+// boolRow builds an on/off row.
+func boolRow(label, group, path, note, desc string) fileSetting {
+	return fileSetting{label: label, group: group, path: path, vals: []string{"on", "off"}, toVal: boolVal, note: note, desc: desc}
+}
+
+// intRow builds a numeric-choice row.
+func intRow(label, group, path, note, desc string, def int, vals ...string) fileSetting {
+	return fileSetting{label: label, group: group, path: path, vals: vals, toVal: intVal(def), note: note, desc: desc}
+}
+
+// strSettingDefs are pi's defaults for the string/number rows that read
+// through the generic path (everything not special-cased in fileSettingVals).
+var strSettingDefs = map[string]string{
+	"sessionShareDestination":    "auto",
+	"markdown.mermaid":           "streaming",
+	"doubleEscapeAction":         "tree",
+	"tuiMode":                    "fullscreen",
+	"fullscreenExitOutput":       "transcript",
+	"fullscreenScrollbar":        "auto",
+	"fullscreenWheelScrollLines": "auto",
+}
+
+var intSettingDefs = map[string]int{
+	"editorPaddingX":         0,
+	"outputPad":              1,
+	"autocompleteMaxVisible": 5,
 }
 
 var httpTimeoutVals = []string{"30 sec", "1 min", "2 min", "5 min", "disabled"}
@@ -408,14 +456,56 @@ var fileSettings = []fileSetting{
 		}},
 	{label: "Install telemetry", group: "Privacy", path: "enableInstallTelemetry", vals: []string{"on", "off"},
 		toVal: func(d string) any { return d == "on" }},
+	// Remaining stock-pi rows.
+	enumRow("Session share destination", "Network", "sessionShareDestination", "",
+		"Where /share uploads sessions (auto prefers Radius when authenticated, else GitHub Gist)", "auto", "gist", "radius"),
+	enumRow("Mermaid diagrams", "Display", "markdown.mermaid", "",
+		"Render Mermaid code blocks as Unicode diagrams", "off", "final", "streaming"),
+	boolRow("Collapse changelog", "Display", "collapseChangelog", "", "Show condensed changelog after updates"),
+	boolRow("Warn: Anthropic extra usage", "Privacy", "warnings.anthropicExtraUsage", "",
+		"Warn when Anthropic subscription auth may use paid extra usage"),
+	enumRow("Double-escape action", "Agent", "doubleEscapeAction", "",
+		"Action when pressing Escape twice with an empty editor", "tree", "fork", "none"),
+	{label: "Tree filter mode", group: "Agent", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
+		toVal: strVal, desc: "Default filter when opening /tree"},
+	// Stock-pi rows that only pi's own TUI reads (pitago renders itself);
+	// they still round-trip settings.json so pi's TUI stays configurable.
+	enumRow("TUI mode", "pi TUI", "tuiMode", noteTUI,
+		"Interface layout; regular mode uses the terminal's normal scrollback", "regular", "fullscreen"),
+	enumRow("Fullscreen exit output", "pi TUI", "fullscreenExitOutput", noteTUI,
+		"Print the transcript or only a session resume hint when exiting fullscreen mode", "transcript", "resume-hint"),
+	enumRow("Fullscreen scrollbar", "pi TUI", "fullscreenScrollbar", noteTUI,
+		"Scrollbar behavior in fullscreen mode", "auto", "always", "hidden"),
+	boolRow("Fullscreen copy on select", "pi TUI", "fullscreenCopyOnSelect", noteTUI,
+		"Automatically copy selected text in fullscreen mode"),
+	{label: "Fullscreen wheel scrolling", group: "pi TUI", path: "fullscreenWheelScrollLines",
+		vals: []string{"auto", "1", "2", "3", "5", "10"}, note: noteTUI,
+		desc: "Lines per mouse-wheel event in fullscreen mode",
+		toVal: func(d string) any {
+			if d == "auto" {
+				return d
+			}
+			return atoiOr(d, 3)
+		}},
+	boolRow("Show hardware cursor", "pi TUI", "showHardwareCursor", noteTUI,
+		"Use the terminal cursor instead of pi's drawn cursor"),
+	intRow("Editor padding", "pi TUI", "editorPaddingX", noteTUI,
+		"Horizontal padding for the input editor (0-3)", 0, "0", "1", "2", "3"),
+	intRow("Output padding", "pi TUI", "outputPad", noteTUI,
+		"Horizontal padding for messages, tool output and command output", 1, "0", "1"),
+	intRow("Autocomplete max items", "pi TUI", "autocompleteMaxVisible", noteTUI,
+		"Max visible items in pi's autocomplete dropdown (3-20)", 5, "3", "5", "7", "10", "15", "20"),
+	boolRow("Clear on shrink", "pi TUI", "terminal.clearOnShrink", noteTUI,
+		"Clear empty rows when content shrinks (may cause flicker)"),
+	boolRow("Terminal progress", "pi TUI", "terminal.showTerminalProgress", noteTUI,
+		"Show OSC 9;4 progress indicators in the terminal tab bar"),
+	// Pitago's own knobs: no stock-pi equivalent.
 	{label: "Tidy mode", group: "Pitago", path: "", vals: []string{"on", "off"}, local: true,
-		toVal: func(d string) any { return d == "on" }},
+		toVal: boolVal, note: notePitago, desc: "Tool blocks render header-only"},
 	{label: "Autocomplete max", group: "Pitago", path: "", vals: []string{"3", "5", "7", "10", "15", "20"}, local: true,
-		toVal: func(d string) any { return atoiOr(d, 10) }},
+		toVal: intVal(10), note: notePitago, desc: "Max visible items in pitago's autocomplete palette"},
 	{label: "Shell binary", group: "Pitago", path: "", vals: []string{"$SHELL", "/bin/sh", "/bin/bash"}, local: true,
-		toVal: func(d string) any { return d }},
-	{label: "Tree filter mode", group: "Pitago", path: "treeFilterMode", vals: []string{"default", "no-tools", "user-only", "labeled-only", "all"}, local: true,
-		toVal: func(d string) any { return d }},
+		toVal: strVal, note: notePitago, desc: "Program used by shell mode"},
 }
 
 // fileSettingVals stringifies every file row's current value for display.
@@ -450,7 +540,13 @@ func fileSettingVals(cfg map[string]any) map[string]string {
 		case "treeFilterMode":
 			out[fr.path] = pirpc.PiString(cfg, fr.path, "default")
 		default:
-			out[fr.path] = onoff(pirpc.PiBool(cfg, fr.path, fileSettingDef(fr.path)))
+			if def, ok := strSettingDefs[fr.path]; ok {
+				out[fr.path] = pirpc.PiDisplay(cfg, fr.path, def)
+			} else if def, ok := intSettingDefs[fr.path]; ok {
+				out[fr.path] = itoa(pirpc.PiInt(cfg, fr.path, def))
+			} else {
+				out[fr.path] = onoff(pirpc.PiBool(cfg, fr.path, fileSettingDef(fr.path)))
+			}
 		}
 	}
 	return out
@@ -459,7 +555,8 @@ func fileSettingVals(cfg map[string]any) map[string]string {
 // fileSettingDef is pi's default for each bool row (from pi's bundle).
 func fileSettingDef(path string) bool {
 	switch path {
-	case "enableSkillCommands", "terminal.showImages", "images.autoResize":
+	case "enableSkillCommands", "terminal.showImages", "images.autoResize",
+		"enableInstallTelemetry", "fullscreenCopyOnSelect", "warnings.anthropicExtraUsage":
 		return true
 	}
 	return false
@@ -542,7 +639,14 @@ func settingsOptions(st app.SettingsState) ([]string, []string, []string) {
 		if !fr.local {
 			foot += " · reconnects pi"
 		}
-		opts = append(opts, fr.label+": "+disp)
+		label := fr.label
+		if fr.note != "" {
+			label += " " + fr.note
+		}
+		if fr.desc != "" {
+			foot = fr.desc + " · " + foot
+		}
+		opts = append(opts, label+": "+disp)
 		descs = append(descs, foot)
 		cats = append(cats, fr.group)
 	}
