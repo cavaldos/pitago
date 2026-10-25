@@ -1299,6 +1299,12 @@ func All() []app.Builtin {
 			},
 		},
 		{
+			// Hidden live refresh of an open /trajectory window: app
+			// re-enters this (arg = the window's scope) on new steps.
+			Name: app.BuiltinTrajectoryLive, Hidden: true,
+			Run: func(m *app.Model, scope string) tea.Cmd { return loadTrajectoryLive(m, scope) },
+		},
+		{
 			Name: "notification", Desc: "Browse notification history from this RAM run", Usage: "/notification [filter]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {

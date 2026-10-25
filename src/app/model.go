@@ -75,6 +75,8 @@ type Dialog struct {
 	LoginProvider     string   // login flow: provider id
 	LoginEnv          string   // login flow: env var
 	TrajOff           int      // trajectory/team dialog: detail scroll offset (lines)
+	TrajIDs           []string // trajectory: session entry id per step (keeps the selection across live reloads)
+	TrajNewest        string   // trajectory: entry id of the newest step the cursor last jumped to
 	TeamTab           string   // team dialog: workers | inspect | console | cost
 	TeamFollow        bool     // team dialog: follow worker activity
 	TeamDetail        bool     // team dialog: focused worker detail view
@@ -123,6 +125,8 @@ type Model struct {
 	liveCands           []live.Candidate // /live picker rows (parallel to the live dialog Options)
 	followRemote        bool             // true while rendering a foreign session
 	liveConnected       bool
+	trajLoading         bool // a live /trajectory reload is in flight
+	trajDirty           bool // another step landed while it was in flight
 	remoteSession       string
 	liveGeneration      uint64 // invalidates transport messages queued before detach
 	blocks              []Block
@@ -451,8 +455,11 @@ type TreeMsg struct {
 type TrajectoryMsg struct {
 	Scope                   string
 	Options, Descs, Payload []string
+	IDs                     []string // session entry id per step
+	Newest                  int      // raw index of the newest step (latest timestamp), -1 = none
 	Filter                  string
 	Err                     error
+	Live                    bool // background refresh of an open window, not a /trajectory run
 }
 
 type SessionMsg struct {
@@ -1423,6 +1430,11 @@ const BuiltinLoginDialog = "login-dialog"
 // sign-out, exposure, enable, disable, reconnect), because the rows
 // are pi-parity wording that belongs in src/builtin, not here.
 const BuiltinMcpList = "mcp-list"
+
+// BuiltinTrajectoryLive is the hidden live-refresh of /trajectory: app
+// re-enters it (arg = the open window's scope) when pi reports a new step,
+// so the open window follows the run without being reopened.
+const BuiltinTrajectoryLive = "trajectory-live"
 
 // ConfirmFunc runs the Enter action of a picker dialog kind.
 // Implementations live in src/builtin (see Confirmers).

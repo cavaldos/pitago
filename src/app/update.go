@@ -234,7 +234,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueDialogRequest(em.Event.Raw)
 			return m, nil
 		}
-		switch msg.(type) {
+		switch tm := msg.(type) {
+		case TrajectoryMsg:
+			// Live refreshes target the open /trajectory window itself;
+			// a fresh /trajectory run stays swallowed like before.
+			if !tm.Live {
+				return m, nil
+			}
 		case tea.WindowSizeMsg, pasteDoneMsg, orcaTermDoneMsg, quitDisarmMsg, escDisarmMsg,
 			clearCopyHintMsg,
 			petTickMsg, petFlashMsg, streamFlushMsg,
@@ -985,6 +991,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.RunBuiltin(BuiltinMcpList, "")
 
 	case TrajectoryMsg:
+		if msg.Live {
+			m.applyTrajLive(msg)
+			return m, m.trajLiveDone()
+		}
 		m.Status = "ready"
 		if msg.Err != nil {
 			m.AddBlock(Block{Kind: "notice", Text: "trajectory error: " + msg.Err.Error(), Err: true})
@@ -997,8 +1007,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			d := &Dialog{Kind: "trajectory", Title: "Trajectory (" + scope + ")",
 				Message: "harness-style run trace · ↑↓ move · Enter views the full step · type filters",
-				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload, Scope: scope, Filter: msg.Filter}
+				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload, Scope: scope, Filter: msg.Filter,
+				TrajIDs: msg.IDs}
 			d.Reindex()
+			trajFocusNewest(d, msg.Newest) // open on the newest step
 			m.Dialogs = append(m.Dialogs, d)
 		}
 		m.Refresh()
@@ -1918,7 +1930,20 @@ func (m *Model) stampTurnFoot() {
 	}
 }
 
+// handleEvent applies one pi event, then asks for a fresh /trajectory
+// snapshot when the event may have added a step (see trajectory_live.go).
 func (m Model) handleEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
+	nm, cmd := m.applyEvent(ev)
+	if mm, ok := nm.(Model); ok {
+		if tcmd := mm.trajLiveReload(ev.Type); tcmd != nil {
+			return mm, tea.Batch(cmd, tcmd)
+		}
+		return mm, cmd
+	}
+	return nm, cmd
+}
+
+func (m Model) applyEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	var pcmd tea.Cmd
 	switch ev.Type {
 	case "agent_start":

@@ -242,3 +242,45 @@ func TestTrajectoryRegistered(t *testing.T) {
 		t.Fatal("/trajectory missing from All()")
 	}
 }
+
+// Each step carries its session entry id so a live reload can keep the
+// selection on the same step.
+func TestBuildTrajectoryStepIDs(t *testing.T) {
+	opts, _, _, ids := buildTrajectorySteps(trajNodes(), "t1", "all")
+	if want := []string{"u1", "a1", "t1"}; len(ids) != len(opts) || strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+}
+
+// The hidden live builtin is registered and never listed in the / popup.
+func TestTrajectoryLiveBuiltinHidden(t *testing.T) {
+	for _, b := range All() {
+		if b.Name == app.BuiltinTrajectoryLive {
+			if !b.Hidden {
+				t.Fatal("trajectory-live must be hidden")
+			}
+			return
+		}
+	}
+	t.Fatal("trajectory-live builtin not registered")
+}
+
+// The newest step is picked by timestamp, not by row position.
+func TestNewestStep(t *testing.T) {
+	a := msgEntry("a", "", "user", `"x"`)
+	a.Timestamp = "2026-10-25T10:00:00Z"
+	b := msgEntry("b", "a", "assistant", `"y"`)
+	b.Timestamp = "2026-10-25T10:05:00.123Z"
+	c := msgEntry("c", "a", "assistant", `"z"`)
+	c.Timestamp = "2026-10-25T10:01:00Z"
+	nodes := []pirpc.TreeNode{{Entry: a, Children: []pirpc.TreeNode{{Entry: b}, {Entry: c}}}}
+	if got := newestStep(nodes, []string{"a", "b", "c"}); got != 1 {
+		t.Fatalf("newest = %d, want 1 (b)", got)
+	}
+	if got := newestStep(nil, []string{"p", "q"}); got != 1 {
+		t.Fatalf("no timestamps: newest = %d, want last (1)", got)
+	}
+	if got := newestStep(nil, nil); got != -1 {
+		t.Fatalf("no steps: newest = %d, want -1", got)
+	}
+}

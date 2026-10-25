@@ -26,13 +26,31 @@ func trajScopeOf(arg string) (scope, filter string) { return pitago.ScopeOf(arg)
 // loadTrajectory fetches the session tree and builds the dialog rows.
 func loadTrajectory(m *app.Model, arg string) tea.Cmd {
 	scope, filter := trajScopeOf(arg)
+	return trajectoryCmd(m, scope, filter, false)
+}
+
+// loadTrajectoryLive re-reads the tree for an already open window (scope
+// = that window's tab). The window keeps its own filter, so none is sent.
+func loadTrajectoryLive(m *app.Model, scope string) tea.Cmd {
+	if scope == "" {
+		scope = "all"
+	}
+	return trajectoryCmd(m, scope, "", true)
+}
+
+func trajectoryCmd(m *app.Model, scope, filter string, live bool) tea.Cmd {
+	pi := m.Pi
 	return func() tea.Msg {
-		nodes, leaf, err := m.Pi.GetTree()
-		if err != nil {
-			return app.TrajectoryMsg{Err: err}
+		if pi == nil {
+			return app.TrajectoryMsg{Scope: scope, Live: live, Err: fmt.Errorf("pi is not connected")}
 		}
-		opts, descs, payload := buildTrajectory(nodes, leaf, scope)
-		return app.TrajectoryMsg{Scope: scope, Options: opts, Descs: descs, Payload: payload, Filter: filter}
+		nodes, leaf, err := pi.GetTree()
+		if err != nil {
+			return app.TrajectoryMsg{Scope: scope, Live: live, Err: err}
+		}
+		opts, descs, payload, ids := buildTrajectorySteps(nodes, leaf, scope)
+		return app.TrajectoryMsg{Scope: scope, Options: opts, Descs: descs, Payload: payload,
+			IDs: ids, Newest: newestStep(nodes, ids), Filter: filter, Live: live}
 	}
 }
 
@@ -42,6 +60,13 @@ func loadTrajectory(m *app.Model, arg string) tea.Cmd {
 // entries render — usage/compaction/model/thinking changes, labels, titles
 // and custom entries are harness noise, so they never become steps.
 func buildTrajectory(nodes []pirpc.TreeNode, leaf, scope string) (opts, descs, payload []string) {
+	opts, descs, payload, _ = buildTrajectorySteps(nodes, leaf, scope)
+	return opts, descs, payload
+}
+
+// buildTrajectorySteps is buildTrajectory plus the session entry id of
+// each step, which lets a live reload keep the selection on its step.
+func buildTrajectorySteps(nodes []pirpc.TreeNode, leaf, scope string) (opts, descs, payload, ids []string) {
 	tcm := buildToolCallMap(nodes)
 	active := activePathIDs(nodes, leaf)
 	idx := 0
@@ -61,12 +86,40 @@ func buildTrajectory(nodes []pirpc.TreeNode, leaf, scope string) (opts, descs, p
 				opts = append(opts, fmt.Sprintf("#%02d %s", idx, row))
 				descs = append(descs, trajTime(n.Entry.Timestamp)+" · "+trajKind(n.Entry))
 				payload = append(payload, trajDetail(idx, n, row, tcm))
+				ids = append(ids, n.Entry.ID)
 			}
 			walk(n.Children)
 		}
 	}
 	walk(nodes)
-	return opts, descs, payload
+	return opts, descs, payload, ids
+}
+
+// newestStep is the index (into ids) of the step with the latest
+// timestamp; ties and unparsable times fall back to the later step. With
+// branches the newest step is not always the last row, so run order alone
+// is not enough. -1 when there are no steps.
+func newestStep(nodes []pirpc.TreeNode, ids []string) int {
+	ts := map[string]time.Time{}
+	var walk func(ns []pirpc.TreeNode)
+	walk = func(ns []pirpc.TreeNode) {
+		for _, n := range ns {
+			if t, err := time.Parse(time.RFC3339Nano, n.Entry.Timestamp); err == nil {
+				ts[n.Entry.ID] = t
+			}
+			walk(n.Children)
+		}
+	}
+	walk(nodes)
+	best := -1
+	var bestT time.Time
+	for i, id := range ids {
+		t, ok := ts[id]
+		if best < 0 || (ok && !t.Before(bestT)) || (!ok && bestT.IsZero()) {
+			best, bestT = i, t
+		}
+	}
+	return best
 }
 
 // trajPass filters steps per tab: tools = tool activity, messages = chat

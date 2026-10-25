@@ -94,7 +94,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `/thinking` | Toggle thinking level |
 | `/mcp` | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable |
 | `/tree` | Session tree with jump-to-message, copy entry, fork from here |
-| `/trajectory [all\|tools\|messages]` | Harness-style run trace window |
+| `/trajectory [all\|tools\|messages]` | Harness-style run trace window (updates live while pi runs) |
 | `/notification [filter]` | Notification history (time + info/error, newest first) |
 | `/settings` | Agent settings, saved to `~/.pi/agent/settings.json` |
 | `/pitago-setting` | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login |
