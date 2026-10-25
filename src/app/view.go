@@ -142,6 +142,7 @@ func (m *Model) renderBlocks() string {
 	// for each rendered block, so hit-testing stays aligned with connErr.
 	cursor := ly(b.String())
 	line := strings.Count(b.String(), "\n")
+	m.computeToolGroups()
 	for i, bl := range m.blocks {
 		// The jump mark lives outside renderOneBlock on purpose: it is a
 		// scroll anchor, not block content, and putting it in the cached
@@ -159,6 +160,10 @@ func (m *Model) renderBlocks() string {
 		// one-time upload, and a cached replay would resend the payload on
 		// every frame. Re-rendering them is a few string concats.
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
+		head := m.toolGroup[i]
+		if head >= 0 {
+			key ^= m.toolGroupKey(i)
+		}
 		if len(bl.Images) == 0 && m.renderCacheKey[i] == key {
 			s := m.renderCache[i]
 			b.WriteString(s)
@@ -166,9 +171,22 @@ func (m *Model) renderBlocks() string {
 			line += strings.Count(s, "\n")
 			continue
 		}
-		s, skip := m.renderOneBlock(bl, cw)
-		if skip {
-			s = ""
+		var s string
+		switch {
+		case head >= 0 && m.groupCollapsed(head) && i != head:
+			s = "" // folded into the group's summary row
+		case head == i && m.groupCollapsed(head):
+			s = m.renderToolGroupSummary(head, cw) + "\n\n"
+		default:
+			var skip bool
+			s, skip = m.renderOneBlock(bl, cw)
+			if skip {
+				s = ""
+			}
+			if head == i {
+				// Open group: the summary stays on top as the fold toggle.
+				s = m.renderToolGroupSummary(head, cw) + "\n" + s
+			}
 		}
 		// Stored for gutter/selection bookkeeping below, but never
 		// loaded back for image blocks (see the load guard above).

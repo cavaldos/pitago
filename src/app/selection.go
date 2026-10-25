@@ -143,7 +143,11 @@ func (m Model) updateSelection(msg tea.MouseMsg) (Model, tea.Cmd, bool) {
 			// Plain click on a tool call or thinking folds/unfolds it.
 			if i := m.chatRowToBlock(msg.Y); i >= 0 && i < len(m.blocks) &&
 				(m.blocks[i].Kind == "tool" || m.blocks[i].Kind == "thinking") {
-				m.blocks[i].Expanded = !m.blocks[i].Expanded
+				if m.isGroupSummaryRow(i, msg.Y) {
+					m.blocks[i].GroupOpen = !m.blocks[i].GroupOpen
+				} else {
+					m.blocks[i].Expanded = !m.blocks[i].Expanded
+				}
 				m.sel = Selection{}
 				// Refresh, not RefreshFollow: keep the reader where they
 				// clicked instead of jumping to the newest message.

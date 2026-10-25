@@ -50,7 +50,10 @@ type Block struct {
 	// Expanded opens a collapsed shell call ("Ran shell command") to show
 	// the full command and output. Toggled by a left click on the block.
 	Expanded bool
-	Images   []Image
+	// GroupOpen opens a folded run of tool calls ("Read 3 files, ran 1
+	// shell command"). Only meaningful on the run's first block.
+	GroupOpen bool
+	Images    []Image
 	// TokensBefore is the pre-compaction context size a compaction block
 	// reports ("Compacted from 12,345 tokens"); Text carries the summary
 	// markdown itself. Zero means unknown, and the block then shows the

@@ -268,6 +268,7 @@ type Model struct {
 	renderCacheKey      []uint64  // fingerprint parallel to renderCache (see blockKey)
 	blockLine           []int     // transcript line where each block starts (parallel to m.blocks; hidden/skip blocks share the next visible line)
 	blockRows           []int     // rendered start line of each block (mouse hit-testing)
+	toolGroup           []int     // head index of each block's folded tool-call run, -1 if none (see toolgroup.go)
 	chatLines           []string  // absolute rendered chat content lines (selection source)
 	gutterCols          []int     // leading gutter cells per chat line (0 or 2), parallel to chatLines
 	sel                 Selection // chat-column drag selection state
