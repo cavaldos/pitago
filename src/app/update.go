@@ -1523,6 +1523,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			if lvl, ok := m.thinkLevelAt(msg.X, msg.Y); ok {
+				if lvl == m.thinkLvl || m.Pi == nil {
+					return m, nil // already current
+				}
+				return m, m.SetThinking(lvl)
+			}
 			if idx, ok := m.recentAt(msg.X, msg.Y); ok {
 				r := m.recentModels[idx]
 				if r.ID == m.ModelLbl || r.DispLabel() == m.ModelLbl {

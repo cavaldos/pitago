@@ -17,6 +17,9 @@ func (m Model) sideClickableAt(x, y int) bool {
 	if _, ok := m.recentAt(x, y); ok {
 		return true
 	}
+	if _, ok := m.thinkLevelAt(x, y); ok {
+		return true
+	}
 	return m.pluginToggleAt(x, y) || m.sideFoldAt(x, y) != "" ||
 		m.subagentsMoreAt(x, y) || m.subagentRowAt(x, y) != ""
 }
@@ -57,6 +60,9 @@ func (m Model) hoverChanged(x, y int) bool {
 	if on != m.hoverOn || (on && y != m.hoverY) {
 		return true
 	}
+	if lvl, _ := m.thinkLevelAt(x, y); lvl != m.hoverLevel {
+		return true
+	}
 	return m.chatClickableAt(x, y)+1 != m.hoverBlock
 }
 
@@ -64,6 +70,7 @@ func (m Model) hoverChanged(x, y int) bool {
 func (m *Model) setHover(msg tea.MouseMsg) {
 	m.hoverOn = m.sideClickableAt(msg.X, msg.Y)
 	m.hoverY = msg.Y
+	m.hoverLevel, _ = m.thinkLevelAt(msg.X, msg.Y)
 	m.hoverBlock = m.chatClickableAt(msg.X, msg.Y) + 1
 }
 
@@ -113,10 +120,27 @@ func (m Model) applyHover(body string) string {
 	if i < 0 || i >= len(lines) {
 		return body
 	}
+	if m.hoverLevel != "" {
+		return m.applyLevelHover(lines, i)
+	}
 	plain := strings.TrimRight(stripANSI(lines[i]), " ")
 	if strings.TrimSpace(plain) == "" {
 		return body
 	}
 	lines[i] = hoverStyle().Render(plain)
+	return strings.Join(lines, "\n")
+}
+
+// applyLevelHover re-renders the thinking-level row at viewport line i with
+// only the hovered level highlighted, not the whole row.
+func (m Model) applyLevelHover(lines []string, i int) string {
+	rows := m.renderThinkRows(sideInnerW, m.hoverLevel)
+	for r, row := range m.thinkLevelRows(sideInnerW) {
+		for _, l := range row {
+			if l == m.hoverLevel && r < len(rows) {
+				lines[i] = rows[r]
+			}
+		}
+	}
 	return strings.Join(lines, "\n")
 }

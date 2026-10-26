@@ -218,3 +218,35 @@ var errFake = &fakeErr{}
 type fakeErr struct{}
 
 func (*fakeErr) Error() string { return "rpc down" }
+
+// Behaviour: a level in the sidebar strip is hit-testable (hover + click),
+// and cells outside any level name are not.
+func TestThinkLevelAt(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.Status = "ready"
+	m.ModelLbl = "a"
+	m.thinkLvl = "off"
+	m.thinkLevels = []string{"off", "low", "high"}
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = tm.(Model)
+	m.sideCache = m.buildSidebarContent()
+	head := -1
+	for i, ln := range strings.Split(m.sideCache, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(stripANSI(ln)), "model ·") {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
+		t.Fatal("no model row")
+	}
+	x0, y := m.mainW()+2, 1+head+1
+	for off, want := range map[int]string{0: "off", 4: "low", 8: "high"} {
+		if got, ok := m.thinkLevelAt(x0+off, y); !ok || got != want {
+			t.Errorf("x+%d: got %q,%v want %q", off, got, ok, want)
+		}
+	}
+	if _, ok := m.thinkLevelAt(x0+3, y); ok {
+		t.Error("the gap between levels must not hit")
+	}
+}

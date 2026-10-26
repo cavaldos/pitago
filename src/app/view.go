@@ -1361,37 +1361,90 @@ func renderToolResultExpanded(tool, status, s string, expanded bool) string {
 // empty list renders nothing (levels not fetched yet, or the model has
 // none). Pi precedent: pi's model block shows the level list under the name.
 func (m Model) thinkLevelLines(inner int) []string {
-	if len(m.thinkLevels) == 0 {
-		return nil
-	}
-	var rows []string
-	var cur strings.Builder
+	return m.renderThinkRows(inner, "")
+}
+
+// thinkLevelRows lays the levels out in wrapped rows. Render and hit-test
+// share it, so a click always lands on the level that was drawn there.
+func (m Model) thinkLevelRows(inner int) [][]string {
+	var rows [][]string
+	var cur []string
 	w := 0
-	flush := func() {
-		rows = append(rows, cur.String())
-		cur.Reset()
-		w = 0
-	}
 	for _, l := range m.thinkLevels {
-		style := statusBarStyle
-		if l == m.thinkLvl {
-			style = thinkPickStyle
-		}
 		cw := lipgloss.Width(l)
 		if w > 0 && w+1+cw > inner {
-			flush()
+			rows = append(rows, cur)
+			cur, w = nil, 0
 		}
 		if w > 0 {
-			cur.WriteString(" ")
 			w++
 		}
-		cur.WriteString(style.Render(l))
+		cur = append(cur, l)
 		w += cw
 	}
-	if w > 0 {
-		flush()
+	if len(cur) > 0 {
+		rows = append(rows, cur)
 	}
 	return rows
+}
+
+// renderThinkRows draws the level rows; hover (a level name or "") is shown
+// with the hover style unless it is the level in use.
+func (m Model) renderThinkRows(inner int, hover string) []string {
+	var out []string
+	for _, row := range m.thinkLevelRows(inner) {
+		cells := make([]string, len(row))
+		for i, l := range row {
+			style := statusBarStyle
+			switch {
+			case l == m.thinkLvl:
+				style = thinkPickStyle
+			case l == hover:
+				style = hoverStyle()
+			}
+			cells[i] = style.Render(l)
+		}
+		out = append(out, strings.Join(cells, " "))
+	}
+	return out
+}
+
+// thinkLevelAt returns the thinking level under screen (x, y) in the sidebar
+// model block, or "". It anchors on the rendered "model · " row like recentAt
+// anchors on its header, and measures cells with the same layout as the draw.
+func (m Model) thinkLevelAt(x, y int) (string, bool) {
+	if !m.ready || !m.showSide() || len(m.Dialogs) > 0 || !m.SideVisible(SideModel) ||
+		len(m.thinkLevels) == 0 {
+		return "", false
+	}
+	if x < m.mainW() || x > m.winW {
+		return "", false
+	}
+	head := -1
+	for i, ln := range strings.Split(m.sideCache, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(stripANSI(ln)), "model ·") {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
+		return "", false
+	}
+	rows := m.thinkLevelRows(sideInnerW)
+	ri := y - 1 + m.sideVp.YOffset - head - 1
+	if ri < 0 || ri >= len(rows) {
+		return "", false
+	}
+	cx := x - m.mainW() - 2 // box border + padding
+	pos := 0
+	for _, l := range rows[ri] {
+		cw := lipgloss.Width(l)
+		if cx >= pos && cx < pos+cw {
+			return l, true
+		}
+		pos += cw + 1
+	}
+	return "", false
 }
 
 // renderSidebar mirrors pi's session panel: SESSION, model+ctx, STATS,

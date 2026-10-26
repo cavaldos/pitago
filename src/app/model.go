@@ -285,6 +285,7 @@ type Model struct {
 	hoverOn             bool      // pointer rests on a clickable sidebar row
 	hoverBlock          int       // 1 + index of the tool/thinking block under the pointer, 0 none
 	hoverY              int       // screen row of that pointer
+	hoverLevel          string    // thinking level under the pointer, "" none
 	sideCache           string    // last built sidebar content (streaming reuses within sideThrottle)
 	sideCacheAt         time.Time // last sidebar rebuild
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
@@ -1439,6 +1440,18 @@ func (m *Model) CycleThinking() tea.Cmd {
 		}
 		// Toast, not chat: rapid Ctrl+T replaces one popup instead of
 		// spamming one line per press — same Notice path as /thinking.
+		return SettingsRefreshMsg{Notice: "thinking → " + level, Level: level}
+	}
+}
+
+// SetThinking switches to a specific thinking level (sidebar click).
+func (m *Model) SetThinking(level string) tea.Cmd {
+	m.Status = "switching thinking…"
+	m.Refresh()
+	return func() tea.Msg {
+		if err := m.Pi.SetLevel(level); err != nil {
+			return SettingsRefreshMsg{Err: err}
+		}
 		return SettingsRefreshMsg{Notice: "thinking → " + level, Level: level}
 	}
 }
