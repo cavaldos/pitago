@@ -1767,6 +1767,11 @@ func (m Model) renderInput() string {
 			border = cGreen
 			title = "EXTERNAL · " + spinFrame(m.pet.tick) + " " + m.inputStatus()
 		}
+	} else if m.branchSummarizing {
+		// /tree's branch summary: pi's BranchSummaryStatusIndicator, drawn
+		// where pitago draws the compaction indicator. Esc cancels it.
+		border = cGreen
+		title = spinFrame(m.pet.tick) + " " + branchSummaryLabel + agentTag
 	} else if m.compacting {
 		// pi puts the compaction indicator in the editor's TOP BORDER
 		// (setEditorWorkingStatusIndicator, interactive-mode.js:2888), not in
@@ -1995,11 +2000,13 @@ func (m Model) renderDialog() string {
 	if d.Kind == "notification" {
 		return m.renderNotificationDialog(d)
 	}
-	if d.Kind == "tree" {
+	switch d.Kind {
+	case treeKind:
 		return m.renderTreeDialog(d)
-	}
-	if d.Kind == "treeAction" {
-		return m.renderTreeActionDialog(d)
+	case treeSummaryKind:
+		return m.renderTreeSummaryDialog(d)
+	case treeCustomKind:
+		return m.renderTreeCustomDialog(d)
 	}
 	if d.Kind == "sessions" {
 		return m.renderResumeDialog(d)

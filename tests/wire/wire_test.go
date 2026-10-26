@@ -187,6 +187,8 @@ func TestSpawnArgvContract(t *testing.T) {
 			[]string{"fakepi", "--mode", "rpc", "-ne"}},
 		{"provider and model", pirpc.Options{Provider: "fake-provider", Model: "fake-model"},
 			[]string{"fakepi", "--mode", "rpc", "--provider", "fake-provider", "--model", "fake-model"}},
+		{"extensions", pirpc.Options{NoExtensions: true, Extensions: []string{"/tmp/a.ts", "/tmp/b.ts"}},
+			[]string{"fakepi", "--mode", "rpc", "-ne", "-e", "/tmp/a.ts", "-e", "/tmp/b.ts"}},
 		{"everything", pirpc.Options{Continue: true, NoSession: true, NoExtensions: true, Session: "s1",
 			Provider: "p", Model: "m"},
 			[]string{"fakepi", "--mode", "rpc", "-c", "--no-session", "-ne", "--session", "s1",

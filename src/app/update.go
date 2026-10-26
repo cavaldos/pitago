@@ -161,7 +161,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// The /mcp list is a plain row list with no detail
 					// pane, so the wheel moves the selection exactly as
 					// it does on the tree.
-					return m.updateTreeWheel(d, mm)
+					return m.updateListWheel(d, mm)
 				}
 				return m.updateTrajWheel(d, mm)
 			}
@@ -173,18 +173,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m.updateDialog(tea.KeyMsg{Type: t})
 			}
-			// Click-to-select on the tree and its action menu: one click on a
-			// tree row runs it (which opens the menu), and a click on a menu
-			// row selects it. Mouse is off by default (Alt+M), so this path
-			// stays a convenience over the keyboard, never a second code path
-			// with its own rules.
+			// Click-to-select on the tree and its "Summarize branch?" step: a
+			// click selects a row, a click on the selected row is Enter. Mouse
+			// is off by default (Alt+M), so this path stays a convenience over
+			// the keyboard, never a second code path with its own rules.
 			if mm.Action == tea.MouseActionPress && mm.Button == tea.MouseButtonLeft {
-				if d := m.Dialogs[0]; d.Kind == "tree" {
+				if d := m.Dialogs[0]; d.Kind == treeKind {
 					nm, cmd, _ := m.clickTreeDialog(d, mm)
 					return nm, cmd
 				}
-				if d := m.Dialogs[0]; d.Kind == "treeAction" {
-					nm, cmd, _ := m.clickTreeAction(d, mm)
+				if d := m.Dialogs[0]; d.Kind == treeSummaryKind {
+					nm, cmd, _ := m.clickTreeSummary(d, mm)
 					return nm, cmd
 				}
 			}
@@ -397,6 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSubagents(true)
 		m.blocks = nil
 		m.jumpBlock = -1 // a jump mark belongs to the transcript it was set in
+		m.unsend = nil   // its block index belongs to that transcript too
 		m.tools = make(map[string]int)
 		m.progressByKey = make(map[string]int)
 		m.hist = nil
@@ -513,6 +513,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sentAckMsg:
+		if msg.prompt && m.unsend != nil && m.unsend.text == msg.text {
+			// Refused or healed into the follow-up queue: there is no turn
+			// of its own to take back. Accepted: pi started the run, so an
+			// abort from now on reaches it.
+			if msg.err != nil || msg.queued {
+				m.unsend = nil
+			} else {
+				u := *m.unsend
+				u.started = true
+				m.unsend = &u
+			}
+		}
 		if msg.err != nil {
 			// A refused send must not cost the user their words: pi took
 			// nothing, so the text (and the image chips it carried) go
@@ -547,9 +559,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case escAbortMsg:
 		// Queued steer/follow-up text goes back above whatever the user
-		// has typed now; only the abort itself is reported.
-		if len(msg.restored) > 0 {
+		// has typed now; only the abort itself is reported. A taken-back
+		// prompt goes back too, on top, and leaves the transcript.
+		if msg.unsent != nil {
+			m.takeBack(msg.unsent, msg.restored)
+			m.unsend = nil
+		} else if len(msg.restored) > 0 {
 			m.restoreQueuedToEditor(msg.restored)
+		}
+		if msg.unsendErr != nil {
+			m.AddBlock(Block{Kind: "notice", Text: "could not take the message back: " + msg.unsendErr.Error(), Err: true})
 		}
 		if msg.err != nil {
 			m.AddBlock(Block{Kind: "notice", Text: msg.err.Error(), Err: true})
@@ -703,6 +722,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.blocks = nil
 		m.jumpBlock = -1 // a jump mark belongs to the transcript it was set in
+		m.unsend = nil   // its block index belongs to that transcript too
 		m.tools = make(map[string]int)
 		m.progressByKey = make(map[string]int)
 		m.curAsst, m.curThink = -1, -1
@@ -924,35 +944,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TreeMsg:
-		m.Status = "ready"
-		if msg.Err != nil {
-			m.AddBlock(Block{Kind: "notice", Text: "tree error: " + msg.Err.Error(), Err: true})
-		} else if len(msg.Options) == 0 {
-			m.AddBlock(Block{Kind: "notice", Text: "no tree entries yet"})
-		} else {
-			mode := msg.Mode
-			if mode == "" {
-				mode = "default"
-			}
-			d := &Dialog{Kind: "tree", Title: "Tree (" + mode + ")",
-				Message: "session tree · ↑↓ move · Enter opens the action menu · type filters",
-				Options: msg.Options, Descs: msg.Descs, Payload: msg.Payload,
-				// The entry id rides in Paths, the field every picker that
-				// acts on a row already uses (sessions: file, /fork: entry).
-				Paths: msg.TreeIDs, TreeJump: msg.TreeJump, TreeRole: msg.TreeRole,
-				Scope: mode, Filter: msg.Filter}
-			d.Reindex()
-			if msg.Current >= 0 {
-				for i, ri := range d.FIdx {
-					if ri == msg.Current {
-						d.Cursor = i
-						break
-					}
-				}
-			}
-			m.Dialogs = append(m.Dialogs, d)
+		return m.openTreeMsg(msg)
+
+	case treeNavMsg:
+		return m.handleTreeNav(msg)
+
+	case treeLabelMsg:
+		if msg.err != nil {
+			m.treeStatus(msg.err.Error(), true)
 		}
-		m.Refresh()
 		return m, nil
 
 	case McpMsg:
@@ -1783,6 +1783,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.compacting {
 				return m, m.abortCompactionCmd()
 			}
+			// A /tree branch summary owns Esc the same way: pi swaps the
+			// editor's Esc to session.abortBranchSummary() while it runs.
+			if m.branchSummarizing {
+				return m, m.abortBranchSummaryCmd()
+			}
 			// A running !cmd is cancelled with one Esc (pi: onEscape →
 			// isBashRunning → session.abortBash(),
 			// interactive-mode.js:2336-2338). No turn is streaming then,
@@ -1802,6 +1807,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.escArm = time.Time{}
 					m.Status = "cancelling…"
 					m.Refresh()
+					un := m.unsendable()
 					return m, func() tea.Msg {
 						// Pi parity: an abort first pulls every queued
 						// steer/follow-up back into the editor
@@ -1810,7 +1816,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						steer, follow, _ := m.Pi.ClearQueue()
 						restored := append(steer, follow...)
 						_, err := m.Pi.Abort()
-						return escAbortMsg{restored: restored, err: err}
+						msg := escAbortMsg{restored: restored, err: err}
+						if err != nil || un == nil {
+							return msg
+						}
+						// The model had not answered: take the prompt back
+						// too, so it is as if it was never sent. pi keeps
+						// it if the answer started in the meantime.
+						ok, uerr := m.Pi.Unsend(un.at)
+						switch {
+						case ok:
+							msg.unsent = un
+						case uerr != nil && !errors.Is(uerr, pirpc.ErrUnsendUnavailable):
+							msg.unsendErr = uerr
+						}
+						return msg
 					}
 				}
 				m.escArm = time.Now()
@@ -1818,6 +1838,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Status = "press Esc again to cancel…"
 				m.Refresh()
 				return m, escDisarmCmd(m.escGen)
+			}
+			// Idle with an empty editor: pi's double-Esc opens /tree.
+			if nm, cmd, ok := m.doubleEscape(); ok {
+				return nm, cmd
 			}
 			return m, nil
 		case tea.KeyEnter:
@@ -2042,6 +2066,7 @@ func (m Model) applyEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	case "agent_settled":
 		m.thinking = false
 		m.escArm = time.Time{} // turn over: cancel arm no longer applies
+		m.unsend = nil         // and nothing is left to take back
 		m.Status = "ready"
 		m.stampTurnFoot()
 		m.pendSpeed = true
@@ -2882,6 +2907,14 @@ func filterableDialog(d *Dialog) bool {
 
 func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.Dialogs[0]
+	switch d.Kind {
+	case treeKind:
+		return m.updateTreeDialog(km, d)
+	case treeSummaryKind:
+		return m.updateTreeSummary(km, d)
+	case treeCustomKind:
+		return m.updateTreeCustom(km, d)
+	}
 	if d.Kind == "pet" {
 		return m.updatePetDialog(km, d)
 	}
@@ -2946,25 +2979,9 @@ func (m Model) updateListDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyLeft, tea.KeyRight:
-		if d.Kind == "tree" && n > 0 {
-			page := treePageSize(m.winH)
-			if km.Type == tea.KeyRight {
-				d.Cursor += page
-			} else {
-				d.Cursor -= page
-			}
-			if d.Cursor < 0 {
-				d.Cursor = 0
-			}
-			if d.Cursor >= n {
-				d.Cursor = n - 1
-			}
-		}
 		return m, nil
 	case tea.KeyPgUp, tea.KeyPgDown:
-		if d.Kind == "tree" {
-			m.treePage(d, km.Type == tea.KeyPgDown)
-		} else if d.Kind == "trajectory" {
+		if d.Kind == "trajectory" {
 			m.trajPage(d, km.Type == tea.KeyPgDown)
 		} else if d.Kind == "notification" && n > 0 {
 			page := notificationWindow(m.winH)

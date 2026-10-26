@@ -68,6 +68,9 @@ type Options struct {
 	NoExtensions bool   // -ne
 	Session      string // --session <path|id> (resume exact session)
 	Dir          string // working directory for the pi child (default: ours)
+	// Extensions are extra extension files loaded with -e. pi still loads
+	// explicit -e paths under -ne, so pitago's own extensions survive it.
+	Extensions []string
 }
 
 // piStderrLog captures the pi child's stderr (fresh per spawn; read it
@@ -116,6 +119,9 @@ func Spawn(opt Options) (*Client, error) {
 	}
 	if opt.Model != "" {
 		args = append(args, "--model", opt.Model)
+	}
+	for _, ext := range opt.Extensions {
+		args = append(args, "-e", ext)
 	}
 	cmd := exec.Command(bin, args...)
 	if opt.Dir != "" {
@@ -708,6 +714,16 @@ func (c *Client) CycleModel() (string, error) {
 
 // GetCommands lists extension commands, prompt templates and skills.
 func (c *Client) GetCommands() ([]RepoCommand, error) {
+	cmds, err := c.getCommandsRaw()
+	if err != nil {
+		return nil, err
+	}
+	return hideInternalCommands(cmds), nil
+}
+
+// getCommandsRaw is get_commands as pi answers it, pitago's internal
+// extension commands included.
+func (c *Client) getCommandsRaw() ([]RepoCommand, error) {
 	resp, err := c.Send(Command{Type: "get_commands"}, 15*time.Second)
 	if err != nil {
 		return nil, err

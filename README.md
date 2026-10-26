@@ -93,7 +93,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `/plugins` | Collapse/expand installed pi plugins in the sidebar |
 | `/thinking` | Toggle thinking level |
 | `/mcp` | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable |
-| `/tree` | Session tree with jump-to-message, copy entry, fork from here |
+| `/tree` | Navigate the session tree like pi: branches, fold, filters, labels, Enter switches branch (Esc Esc on an empty input opens it too) |
 | `/trajectory [all\|tools\|messages]` | Harness-style run trace window (updates live while pi runs) |
 | `/notification [filter]` | Notification history (time + info/error, newest first) |
 | `/settings` | Agent settings, saved to `~/.pi/agent/settings.json` |
@@ -111,7 +111,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | Key | Action |
 | --- | --- |
 | `Enter` | Send (idle) / steer (while running) |
-| `Esc×2` | Cancel running turn (double-press within 3s — 1st press only arms) |
+| `Esc×2` | Cancel running turn (double-press within 3s — 1st press only arms). Before the model answers, the prompt is taken back: it returns to the input and the model never sees it |
 | `Ctrl+C` | Clear the input — text, a recalled message, the image tray; on an empty input, quit (press twice within 3s) |
 | `Ctrl+N` | New session |
 | `Ctrl+P` / `Ctrl+R` / `Alt+1…5` | Cycle model · recent-models picker · jump to a recent model |

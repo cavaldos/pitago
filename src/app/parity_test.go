@@ -19,12 +19,15 @@ import (
 // returned by clear_queue), FAKE_PI_BUSY (pi is streaming, so a bare
 // prompt is refused with pi's own wording), FAKE_PI_PROMPT_FAIL (any
 // prompt is refused) and FAKE_PI_VETO (a session switch is cancelled by
-// an extension). The prompt-path rules can then be asserted against real
-// JSONL traffic.
+// an extension). FAKE_PI_UNSEND loads pitago's unsend command: "1" takes
+// the prompt back, "keep" leaves it (the model had answered). The
+// prompt-path rules can then be asserted against real JSONL traffic.
 const fakePi = `#!/usr/bin/env python3
 import json, os, sys
 log = open(os.environ["FAKE_PI_LOG"], "a", buffering=1)
 queued = [q for q in os.environ.get("FAKE_PI_QUEUE", "").split(",") if q]
+unsend = os.environ.get("FAKE_PI_UNSEND", "")
+unsent = False
 for line in sys.stdin:
     line = line.strip()
     if not line:
@@ -55,6 +58,14 @@ for line in sys.stdin:
         resp["data"] = {"output": "hello\n", "exitCode": 0}
     if typ == "abort_bash":
         resp["data"] = {}
+    if unsend and typ == "get_commands":
+        resp["data"] = {"commands": [{"name": "pitago-unsend", "source": "extension"}]}
+    if unsend == "1" and typ == "prompt" and cmd.get("message", "").startswith("/pitago-unsend "):
+        unsent = True
+    if unsend and typ == "get_messages":
+        # Stamped far in the future: always "sent at or after" the prompt.
+        user = {"role": "user", "content": "hello", "timestamp": 4102444800000}
+        resp["data"] = {"messages": [] if unsent else [user]}
     print(json.dumps(resp), flush=True)
 `
 

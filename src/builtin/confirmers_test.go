@@ -19,7 +19,7 @@ func TestConfirmersCoversEveryDialogKindThatConfirms(t *testing.T) {
 	for _, kind := range []string{
 		"model", "recent", "sessions", "thinking", "pet", "settings",
 		"pconfig", "login", "loginMethod", "loginOAuth", "logout", "secret",
-		"yank", "update", "trajectory", "tree", "treeAction", "subagents",
+		"yank", "update", "trajectory", "subagents",
 		"blockactions", "mcp", "mcpAction", "mcpExposure", "mcpTools",
 	} {
 		if _, ok := confirmers[kind]; !ok {

@@ -1266,10 +1266,8 @@ func All() []app.Builtin {
 			Name: app.BuiltinMcpList, Hidden: true,
 			Run: func(m *app.Model, _ string) tea.Cmd { return loadMcp(m) },
 		},
-		pi("tree", "Pi-style session tree (Enter opens the action menu)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
-			m.Status = "loading session tree…"
-			m.Refresh()
-			return loadTree(m, arg)
+		pi("tree", "Navigate session tree (switch branches)", "/tree [default|no-tools|user-only|labeled-only|all]", func(m *app.Model, arg string) tea.Cmd {
+			return m.OpenTree(arg)
 		}),
 		pi("thinking", "<level> — Set thinking level", "/thinking", func(m *app.Model, arg string) tea.Cmd {
 			return m.OpenThinking()

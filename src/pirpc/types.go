@@ -109,6 +109,7 @@ type AgentMessage struct {
 	StopReason   string          `json:"stopReason,omitempty"`   // assistant
 	ErrorMessage string          `json:"errorMessage,omitempty"` // assistant
 	Usage        *EntryUsage     `json:"usage,omitempty"`        // final assistant usage (message_end)
+	Timestamp    Millis          `json:"timestamp,omitempty"`    // unix ms, stamped by pi
 	// Summary/TokensBefore/FromID are the payload of the two context
 	// pseudo-messages pi keeps in get_messages instead of as ordinary
 	// messages (createCompactionSummaryMessage / createBranchSummaryMessage,
@@ -120,6 +121,21 @@ type AgentMessage struct {
 	Summary      string `json:"summary,omitempty"`
 	TokensBefore int    `json:"tokensBefore,omitempty"`
 	FromID       string `json:"fromId,omitempty"` // branchSummary: the entry the branch was summarized from
+}
+
+// Millis is a unix-millisecond timestamp. It decodes leniently: anything
+// that is not a JSON number reads as 0, so one odd message an extension
+// wrote can never fail a whole get_messages decode.
+type Millis int64
+
+func (t *Millis) UnmarshalJSON(b []byte) error {
+	var f float64
+	if json.Unmarshal(b, &f) != nil {
+		*t = 0
+		return nil
+	}
+	*t = Millis(f)
+	return nil
 }
 
 // TextOf joins all {"type":"text"} blocks; plain-string content also works.
@@ -233,7 +249,11 @@ type TreeEntry struct {
 	Content       json.RawMessage `json:"content,omitempty"`
 	Label         string          `json:"label,omitempty"`
 	Name          string          `json:"name,omitempty"`
-	Message       AgentMessage    `json:"message"`
+	// TargetID/Replacement are a context_edit entry's payload. A JSON null
+	// replacement (kept verbatim as "null") means the target was omitted.
+	TargetID    string          `json:"targetId,omitempty"`
+	Replacement json.RawMessage `json:"replacement,omitempty"`
+	Message     AgentMessage    `json:"message"`
 }
 
 type TreeNode struct {

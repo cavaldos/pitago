@@ -49,8 +49,7 @@ type Dialog struct {
 	Scope             string                // sessions picker: "current" | "all" (Tab toggles)
 	Payload           []string              // yank picker: full text per option; login: raw keys ("" for action rows)
 	BlockIdx          int                   // blockactions: target chat block index (for Payload kinds)
-	TreeJump          []int                 // tree: index of the row's user/assistant message among the transcript's user/assistant blocks, in order; -1 = no such block
-	TreeRole          []string              // tree: role ("user"/"assistant") of a message row, "" for every other entry type
+	tree              *treeState            // tree / treeSummary / treeCustom: the /tree flow's state (see tree.go)
 	McpServers        []pirpc.McpServerInfo // mcp: full server record per list row (transport, source, state, tools)
 	McpServer         pirpc.McpServerInfo   // mcp: the server an action/exposure dialog belongs to
 	Current           string                // the value in use, marked in the grid/list (pet: "●" cell)
@@ -221,6 +220,9 @@ type Model struct {
 	compacting          bool        // pi is compacting (no abort_compaction RPC, so Esc cannot cancel it)
 	compactReason       string      // pi's compaction_start reason: manual | threshold | overflow
 	compactAborted      bool        // the last /compact was cancelled by Esc (suppresses its rethrown RPC error)
+	branchSummarizing   bool        // a /tree navigation is writing a branch summary (Esc aborts it)
+	summaryAborted      bool        // that summary was cancelled by Esc (the tree reopens)
+	lastEsc             time.Time   // previous Esc on an idle, empty editor (pi's double-Esc → /tree)
 	imgSeq              int         // chip counter, never renumbered
 	trayFocus           bool        // cursor moved into the tray (↓ from last input line)
 	imgCursor           int         // selected chip while trayFocus
@@ -287,6 +289,10 @@ type Model struct {
 	sideCacheAt         time.Time // last sidebar rebuild
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
 	pendingPaint        bool      // a coalesced paint is waiting on its flush tick
+
+	// unsend is the prompt a double-Esc cancel can still take back (nil =
+	// none). It is replaced, never mutated: Model copies share the pointer.
+	unsend *pendingUnsend
 
 	// piTaskSeen records that a real pi-tasks store file was read for
 	// piTaskSeenFor. refreshPiTasks uses it to tell "no store configured"
@@ -391,15 +397,33 @@ type sentAckMsg struct {
 	err    error
 	text   string
 	queued bool
+	prompt bool        // a plain prompt (not a steer or follow-up): may be pendingUnsend
 	tray   []imgAttach // chips consumed by the send, returned on refusal
 }
 
 // escAbortMsg reports the double-Esc cancel: cleared steer/follow-up text
 // (pi parity — an abort restores the queue into the editor) plus the abort
 // error, since the queue restore and the abort are one RPC round trip.
+// unsent is set when the cancelled prompt was also taken back (see
+// pendingUnsend); unsendErr says why taking it back failed.
 type escAbortMsg struct {
-	restored []string
-	err      error
+	restored  []string
+	err       error
+	unsent    *pendingUnsend
+	unsendErr error
+}
+
+// pendingUnsend is the plain prompt pitago just started. Until the model
+// shows any output for it, the double-Esc cancel also takes it back
+// (Claude Code parity): pi drops it from the session, its blocks leave the
+// transcript and the text and image chips return to the input, as if it
+// was never sent.
+type pendingUnsend struct {
+	text    string
+	tray    []imgAttach
+	at      time.Time // taken before the prompt RPC; pi stamps the message later
+	from    int       // len(m.blocks) at submit: the turn's blocks start here
+	started bool      // pi acked the prompt, so an abort now reaches the run
 }
 
 type quitDisarmMsg struct{ gen int } // quit-arm window elapsed
@@ -437,17 +461,6 @@ type SettingsMsg struct {
 	Opts, Descs, Cats []string
 	Filter            string
 	Err               error
-}
-
-type TreeMsg struct {
-	Mode                    string
-	Options, Descs, Payload []string
-	TreeIDs                 []string // tree: session entry id per row
-	TreeJump                []int    // row's user/assistant message ordinal in the transcript, -1 = none
-	TreeRole                []string // "user"/"assistant" for message rows, "" otherwise
-	Filter                  string
-	Current                 int
-	Err                     error
 }
 
 // TrajectoryMsg carries harness-style run-trace rows for the /trajectory
@@ -805,7 +818,7 @@ func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) te
 		}
 		_, err = m.Pi.Prompt(text, images...)
 		if !pirpc.IsAgentBusy(err) {
-			return sentAckMsg{err: err, text: text}
+			return sentAckMsg{err: err, text: text, prompt: true}
 		}
 		// Self-heal the desync. pitago's streaming flag and pi's isStreaming
 		// can disagree (a turn pitago already considers settled, a steer pi
@@ -818,9 +831,9 @@ func (m *Model) sendCmd(steer bool, text string, images []pirpc.ImageContent) te
 		// the turn ends, which is also what pi's own Alt+Enter does
 		// (dist/modes/interactive/interactive-mode.js:3546).
 		if _, ferr := m.Pi.FollowUp(text, images...); ferr != nil {
-			return sentAckMsg{err: ferr, text: text}
+			return sentAckMsg{err: ferr, text: text, prompt: true}
 		}
-		return sentAckMsg{queued: true, text: text}
+		return sentAckMsg{queued: true, text: text, prompt: true}
 	}
 }
 
@@ -902,11 +915,11 @@ func (m *Model) submit(mode int) tea.Cmd {
 	// @image.png → vision attachments (pi CLI parity); the @text
 	// stays so history keeps the file ref, images ride the RPC.
 	// Tray chips (drops/pastes/Tab-completed @) join in too.
-	images, notes := m.takeImages(text)
 	// Tray chips are consumed by the send; a refused send must give them
 	// back, or an image the user picked would silently vanish. Snapshot
 	// before takeImages clears the tray.
 	tray := append([]imgAttach(nil), m.imgAtts...)
+	images, notes := m.takeImages(text)
 	for _, n := range notes {
 		m.AddBlock(Block{Kind: "notice", Text: n, Err: images == nil})
 	}
@@ -922,8 +935,11 @@ func (m *Model) submit(mode int) tea.Cmd {
 		m.Refresh()
 		return withTrayRestore(m.sendFollowUpCmd(text, images), tray)
 	}
-	m.imgAtts = tray // a refused send keeps the chips; a sent one drops them
 	if mode == sendSteer || m.thinking {
+		// A steer can join the running turn as a second user message, and
+		// taking back only the first would leave it behind. Cancel stays
+		// a plain abort for this turn.
+		m.unsend = nil
 		m.ta.Reset()
 		m.closeAt()
 		return withTrayRestore(m.sendCmd(true, text, images), tray)
@@ -931,7 +947,73 @@ func (m *Model) submit(mode int) tea.Cmd {
 	m.ta.Reset()
 	m.closeAt()
 	m.Refresh()
+	m.unsend = &pendingUnsend{text: text, tray: tray, at: time.Now(), from: len(m.blocks)}
 	return withTrayRestore(m.sendCmd(false, text, images), tray)
+}
+
+// unsendable returns the prompt a cancel right now would take back, or nil
+// when pi has not started it yet or the model already shows output for it.
+func (m *Model) unsendable() *pendingUnsend {
+	u := m.unsend
+	if u == nil || !u.started || u.from > len(m.blocks) {
+		return nil
+	}
+	for _, b := range m.blocks[u.from:] {
+		switch b.Kind {
+		case "assistant", "thinking":
+			if strings.TrimSpace(b.Text) != "" {
+				return nil
+			}
+		case "tool":
+			return nil
+		}
+	}
+	return u
+}
+
+// takeBack applies a taken-back prompt: its blocks leave the transcript and
+// its text (above any cleared queue text and whatever the user typed since)
+// and image chips return to the input.
+func (m *Model) takeBack(u *pendingUnsend, queued []string) {
+	m.dropBlocksFrom(u.from)
+	m.restoreQueuedToEditor(append([]string{u.text}, queued...))
+	if len(u.tray) > 0 {
+		m.imgAtts = append(append([]imgAttach(nil), u.tray...), m.imgAtts...)
+		m.applyPopupH()
+	}
+	m.refreshCmds()
+	m.refreshAt()
+}
+
+// dropBlocksFrom cuts the transcript back to its first i blocks, and drops
+// every index that pointed past the cut.
+func (m *Model) dropBlocksFrom(i int) {
+	if i < 0 || i >= len(m.blocks) {
+		return
+	}
+	m.blocks = m.blocks[:i]
+	for id, bi := range m.tools {
+		if bi >= i {
+			delete(m.tools, id)
+		}
+	}
+	for key, bi := range m.progressByKey {
+		if bi >= i {
+			delete(m.progressByKey, key)
+		}
+	}
+	if m.curAsst >= i {
+		m.curAsst = -1
+	}
+	if m.curThink >= i {
+		m.curThink = -1
+	}
+	if m.jumpBlock >= i {
+		m.jumpBlock = -1
+	}
+	if m.hoverBlock > i { // hoverBlock is 1 + index
+		m.hoverBlock = 0
+	}
 }
 
 // withTrayRestore hands the consumed tray chips to the ack so a refused

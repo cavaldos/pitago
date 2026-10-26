@@ -87,6 +87,16 @@ func main() {
 	// and no in-session set_model is needed (respawns reuse these opts).
 	// Explicit -provider/-model flags still win.
 	applyRestoredModel(&opts, app.LoadPrefs(app.PrefsPath()))
+	// pitago's unsend extension: Esc before the model answers takes the
+	// prompt back. Without the file the cancel stays a plain abort.
+	if ext, err := pirpc.InstallUnsendExt(); err == nil {
+		opts.Extensions = append(opts.Extensions, ext)
+	}
+	// pitago's tree extension: /tree navigates the session and edits labels
+	// the way pi's own tree does. Without it /tree is browse-and-copy only.
+	if ext, err := pirpc.InstallTreeExt(); err == nil {
+		opts.Extensions = append(opts.Extensions, ext)
+	}
 	pi, err := pirpc.Spawn(opts)
 	if err != nil {
 		fmt.Println("Cannot start pi:", err)

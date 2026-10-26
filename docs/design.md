@@ -102,7 +102,7 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 ## Native built-ins (pi built-ins don't run over RPC, so re-implemented)
 
 - `/model` filterable picker (all configured/scoped models) + Ctrl+P quick cycle
-- `/thinking` level picker, `/tree` session-tree view + pi's per-row action menu (`Jump to message` / `View entry` / `Copy entry` / `Fork from here` / `Back to tree`)
+- `/thinking` level picker, `/tree` pi's Session Tree (port of pi 1.4.0's tree selector in `src/components/sessiontree`: branches, folding, filters, labels; Enter navigates via the `pitago-tree` extension, with pi's `Summarize branch?` step)
 - `/mcp` MCP server manager + pi's per-server action menu (`Sign in` / `Tools` / `Reconnect` / `Sign out` / `Exposure` / `Disable`, or `Enable` for a disabled server), plus the `/mcp login|logout|reconnect <server>` subcommands
 - `/settings` overlay: model, thinking, steering/follow-up modes, auto-compact, auto-retry
 - `/login` / `/logout`: API-key keystore (0600) + auto-respawn pi; OAuth guided via stock pi
@@ -111,9 +111,8 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 ## Out of scope (YAGNI)
 
 - Clipboard-paste / drag-drop images, setWidget custom rendering, manual compaction, multi-session tabs.
-  Real session-tree navigation is out of reach too: pi's `navigateTree` (the `Summarize branch?`
-  prompt in its own TUI) is not in the RPC command surface, so `/tree` actions are local
-  (scroll the transcript, copy, fork) instead of moving pi's leaf.
+  Session-tree navigation is not an RPC command either; pitago reaches pi's `navigateTree` and
+  `setLabel` through its own extension (`src/pirpc/tree_ext.ts`, loaded with `-e`).
 - `@image.png` vision IS in scope (components/image → RPC `images`, pi CLI parity).
   Dropped/pasted/Tab-completed image paths collapse into an input-tray
   (`[Image N]` chips, src/app/attach.go) so long escaped paths never clog

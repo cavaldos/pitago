@@ -186,6 +186,7 @@ func (m *Model) applyLive(generation uint64, message live.Message) tea.Cmd {
 		m.thinkLvl = snap.ThinkingLevel
 		m.blocks = nil
 		m.jumpBlock = -1 // the remote transcript is a different session
+		m.unsend = nil
 		m.clearTeamWidgetState()
 		m.tools = make(map[string]int)
 		m.progressByKey = make(map[string]int)

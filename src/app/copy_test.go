@@ -39,14 +39,14 @@ func copyableDialog(kind string, payload ...string) *Dialog {
 }
 
 func TestDialogCopyableKinds(t *testing.T) {
-	for _, kind := range []string{"trajectory", "notification", "tree"} {
+	for _, kind := range []string{"trajectory", "notification"} {
 		if !dialogCopyable(copyableDialog(kind, "x")) {
 			t.Errorf("%s must be copyable", kind)
 		}
 	}
 	// "yank" copies on Enter already, and Ctrl+Y there would shadow the
 	// global yank-last action.
-	for _, kind := range []string{"yank", "model", "sessions", "login", ""} {
+	for _, kind := range []string{"yank", "model", "sessions", "login", "tree", ""} {
 		if dialogCopyable(copyableDialog(kind, "x")) {
 			t.Errorf("%s must not claim Ctrl+Y", kind)
 		}
