@@ -33,8 +33,6 @@ _A polished Terminal User Interface (TUI) frontend for the `pi` agent, built wit
   <img src="resources/marketplace.png" alt="the marketplace" width="32%" />
 </div>
 
-
-
 ## Install
 
 ```bash
@@ -59,10 +57,10 @@ script/run.sh                        # or: go run ./src
 
 ### Uninstall
 
-| Platform | Command |
-| -------- | ------- |
-| macOS / Linux | `rm ~/.local/bin/pitago` (or `/usr/local/bin/pitago` if you installed with `sudo` before) |
-| Windows | `del C:\path\to\pitago.exe` — wherever you placed it, on a folder in your PATH |
+| Platform         | Command                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
+| macOS / Linux    | `rm ~/.local/bin/pitago` (or `/usr/local/bin/pitago` if you installed with `sudo` before)                             |
+| Windows          | `del C:\path\to\pitago.exe` — wherever you placed it, on a folder in your PATH                                        |
 | Any (reset data) | `rm -rf ~/.config/pitago` / `Remove-Item -Recurse -Force $HOME\.config\pitago` — drops saved API keys + recent models |
 
 ## Quick Start
@@ -75,7 +73,6 @@ go run ./src -ne                    # load no pi extensions (same as `pi -ne`)
 go run ./src --update               # self-update to the latest GitHub release
 ```
 
-
 ## Commands &amp; keybindings
 
 ### Commands
@@ -83,52 +80,52 @@ go run ./src --update               # self-update to the latest GitHub release
 Type `/` to open the command popup. Builtins are intercepted locally and re-implemented over
 RPC; extension/prompt/skill commands come from pi's `get_commands` and run server-side.
 
-| Command | Action |
-| ------- | ------ |
-| `/model` · `/recent` | Change model · recent models picker |
-| `/yank` `/copy` `/copy-md` `/copy-tables` `/copy-code` | Copy the last assistant answer, whole or semantic |
-| `/sidebar` · `/mouse [on\|off]` | Hide/show sidebar · toggle mouse (click + wheel) |
-| `/theme [name]` | Switch theme — picker, or apply directly (`pitago --theme one-dark`) |
-| `/pet [name\|ascii\|classic]` | Sidebar pet: picker dialog, or apply directly |
-| `/plugins` | Collapse/expand installed pi plugins in the sidebar |
-| `/thinking` | Toggle thinking level |
-| `/mcp` | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable |
-| `/tree` | Navigate the session tree like pi: branches, fold, filters, labels, Enter switches branch (Esc Esc on an empty input opens it too) |
-| `/trajectory [all\|tools\|messages]` | Harness-style run trace window (updates live while pi runs) |
-| `/notification [filter]` | Notification history (time + info/error, newest first) |
-| `/settings` | Agent settings, saved to `~/.pi/agent/settings.json` |
-| `/pitago-setting` | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login |
-| `/login` · `/logout` | Manage API keys + pi OAuth/subscriptions |
-| `/live` | Attach read-only to a running `pi` session |
-| `/reload` | Reload extensions |
-| `/new` · `/resume` · `/session` | New session · resume picker · session management |
-| `/compact [instructions]` | Compact the context now (an LLM call, can take a while) |
-| `/update` | Check GitHub releases and install the latest |
-| `/quit` | Exit |
+| Command                                                | Action                                                                                                                             |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/model` · `/recent`                                   | Change model · recent models picker                                                                                                |
+| `/yank` `/copy` `/copy-md` `/copy-tables` `/copy-code` | Copy the last assistant answer, whole or semantic                                                                                  |
+| `/sidebar` · `/mouse [on\|off]`                        | Hide/show sidebar · toggle mouse (click + wheel)                                                                                   |
+| `/theme [name]`                                        | Switch theme — picker, or apply directly (`pitago --theme one-dark`)                                                               |
+| `/pet [name\|ascii\|classic]`                          | Sidebar pet: picker dialog, or apply directly                                                                                      |
+| `/plugins`                                             | Collapse/expand installed pi plugins in the sidebar                                                                                |
+| `/thinking`                                            | Toggle thinking level                                                                                                              |
+| `/mcp`                                                 | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable                               |
+| `/tree`                                                | Navigate the session tree like pi: branches, fold, filters, labels, Enter switches branch (Esc Esc on an empty input opens it too) |
+| `/trajectory [all\|tools\|messages]`                   | Harness-style run trace window (updates live while pi runs)                                                                        |
+| `/notification [filter]`                               | Notification history (time + info/error, newest first)                                                                             |
+| `/settings`                                            | Agent settings, saved to `~/.pi/agent/settings.json`                                                                               |
+| `/pitago-setting`                                      | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login                                                  |
+| `/login` · `/logout`                                   | Manage API keys + pi OAuth/subscriptions                                                                                           |
+| `/live`                                                | Attach read-only to a running `pi` session                                                                                         |
+| `/reload`                                              | Reload extensions                                                                                                                  |
+| `/new` · `/resume` · `/session`                        | New session · resume picker · session management                                                                                   |
+| `/compact [instructions]`                              | Compact the context now (an LLM call, can take a while)                                                                            |
+| `/update`                                              | Check GitHub releases and install the latest                                                                                       |
+| `/quit`                                                | Exit                                                                                                                               |
 
 ### Keybindings
 
-| Key | Action |
-| --- | --- |
-| `Enter` | Send (idle) / steer (while running) |
-| `Esc×2` | Cancel running turn (double-press within 3s — 1st press only arms). Before the model answers, the prompt is taken back: it returns to the input and the model never sees it |
-| `Ctrl+C` | Clear the input — text, a recalled message, the image tray; on an empty input, quit (press twice within 3s) |
-| `Ctrl+N` | New session |
-| `Ctrl+P` / `Ctrl+R` / `Alt+1…5` | Cycle model · recent-models picker · jump to a recent model |
-| `Ctrl+T` | Cycle thinking level (no picker) |
-| `Ctrl+E` | Hide/show sidebar (hide for clean drag-select of chat only) |
-| `Ctrl+Y` / `Ctrl+O` | Yank last assistant answer · yank picker for any message |
-| `Ctrl+V` | Paste text — or screenshot data (pngpaste/wl-paste/xclip) |
-| `Ctrl+G` | Expand/collapse tool output: write content, read results, diffs |
-| `Backspace` | Empty input + image tray → remove the last `[Image N]` chip |
-| `↓` (+tray) | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input |
-| `Tab` | Complete `/command` or `@file` |
-| `@` | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision) |
-| `↑↓ PgUp PgDn` | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat |
-| `Tab` | Toggle plan mode (`/`complete in the palette, `@`complete files) |
-| `End` | Jump to the latest message — a hint chip with the same shortcut floats over the transcript while you are scrolled up (click it to jump too) |
-| `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar |
-| `Mouse wheel` | Hover sidebar to scroll it, the chat otherwise; `--mouse=false` disables |
+| Key                                     | Action                                                                                                                                                                      |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Enter`                                 | Send (idle) / steer (while running)                                                                                                                                         |
+| `Esc×2`                                 | Cancel running turn (double-press within 3s — 1st press only arms). Before the model answers, the prompt is taken back: it returns to the input and the model never sees it |
+| `Ctrl+C`                                | Clear the input — text, a recalled message, the image tray; on an empty input, quit (press twice within 3s)                                                                 |
+| `Ctrl+N`                                | New session                                                                                                                                                                 |
+| `Ctrl+P` / `Ctrl+R` / `Alt+1…5`         | Cycle model · recent-models picker · jump to a recent model                                                                                                                 |
+| `Ctrl+T`                                | Cycle thinking level (no picker)                                                                                                                                            |
+| `Ctrl+E`                                | Hide/show sidebar (hide for clean drag-select of chat only)                                                                                                                 |
+| `Ctrl+Y` / `Ctrl+O`                     | Yank last assistant answer · yank picker for any message                                                                                                                    |
+| `Ctrl+V`                                | Paste text — or screenshot data (pngpaste/wl-paste/xclip)                                                                                                                   |
+| `Ctrl+G`                                | Expand/collapse tool output: write content, read results, diffs                                                                                                             |
+| `Backspace`                             | Empty input + image tray → remove the last `[Image N]` chip                                                                                                                 |
+| `↓` (+tray)                             | Cursor into the image tray · `←→` pick a chip · `⌫` delete it · `Esc` back to input                                                                                         |
+| `Tab`                                   | Complete `/command` or `@file`                                                                                                                                              |
+| `@`                                     | Mention a file (fuzzy finder; `@*.png/.jpg/.gif/.webp` also sends vision)                                                                                                   |
+| `↑↓ PgUp PgDn`                          | Empty input: recall sent messages (`Esc` clear) · otherwise scroll chat                                                                                                     |
+| `Tab`                                   | Toggle plan mode (`/`complete in the palette, `@`complete files)                                                                                                            |
+| `End`                                   | Jump to the latest message — a hint chip with the same shortcut floats over the transcript while you are scrolled up (click it to jump too)                                 |
+| `Alt+…` or `Ctrl+↑↓ PgUp PgDn Home End` | Scroll the sidebar                                                                                                                                                          |
+| `Mouse wheel`                           | Hover sidebar to scroll it, the chat otherwise; `--mouse=false` disables                                                                                                    |
 
 ### Shell mode
 
@@ -136,13 +133,13 @@ Type `!` on an **empty** input to switch the editor into a local shell: `Enter` 
 leaves the mode and kills the process. Nothing typed in shell mode ever reaches pi — no turn, no
 session entry — so the command is yours, not the model's. (`!cmd` still goes to pi, unchanged.)
 
-| Key | Action |
-| --- | --- |
-| `!` (empty input) | Enter shell mode |
-| `Enter` | Run the line; output lands in the chat as a bash block (stderr included, non-zero exit marked) |
-| `↑↓` / `Shift+↑↓` | Recall an earlier shell command (`Esc` clears) — never a message sent to pi |
-| `Esc` | Leave shell mode, kill the shell, drop a recalled command |
-| `Ctrl+V` | Paste a command (the editor's other keys keep working: chat scroll, `Ctrl+C` clear/quit, sidebar) |
+| Key               | Action                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| `!` (empty input) | Enter shell mode                                                                                  |
+| `Enter`           | Run the line; output lands in the chat as a bash block (stderr included, non-zero exit marked)    |
+| `↑↓` / `Shift+↑↓` | Recall an earlier shell command (`Esc` clears) — never a message sent to pi                       |
+| `Esc`             | Leave shell mode, kill the shell, drop a recalled command                                         |
+| `Ctrl+V`          | Paste a command (the editor's other keys keep working: chat scroll, `Ctrl+C` clear/quit, sidebar) |
 
 One long-lived shell runs every line with the session cwd, so `cd`, `export` and shell variables
 persist between commands. The program is `$SHELL` (see `/settings` → Pitago → **Shell binary** for
@@ -157,14 +154,14 @@ pi's own `!cmd` escape (a fresh process per command, output visible to the model
 
 <sub>▶ <a href="https://github.com/user-attachments/assets/35d59f05-45b7-407c-a212-552ca61c1b07">Video demo</a></sub>
 
-| Action | How |
-| ------ | --- |
-| Drag-select | With mouse on (default): drag inside the chat — selection is clamped to the chat pane, edge auto-scrolls |
-| Select a line | **Double-click** a chat line |
-| Copy a block | **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, `Copy plain text` — the menu only lists what the block contains |
-| Mouse off | Native terminal selection; toggle at runtime with `/mouse off` |
-| Last answer | `Ctrl+Y` / `/yank` / `/copy`, or `/copy-md` `/copy-tables` `/copy-code` for semantic content |
-| Any message | `Ctrl+O` opens the yank picker |
+| Action        | How                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Drag-select   | With mouse on (default): drag inside the chat — selection is clamped to the chat pane, edge auto-scrolls                                                           |
+| Select a line | **Double-click** a chat line                                                                                                                                       |
+| Copy a block  | **Right-click** an assistant block for `Copy markdown`, `Copy N code block(s)`, `Copy N table(s)`, `Copy plain text` — the menu only lists what the block contains |
+| Mouse off     | Native terminal selection; toggle at runtime with `/mouse off`                                                                                                     |
+| Last answer   | `Ctrl+Y` / `/yank` / `/copy`, or `/copy-md` `/copy-tables` `/copy-code` for semantic content                                                                       |
+| Any message   | `Ctrl+O` opens the yank picker                                                                                                                                     |
 
 Whole-message copy preserves raw Markdown, tables, fenced-code languages, and links; partial
 drag selection copies visible text without ANSI/OSC sequences.
@@ -187,14 +184,14 @@ the backend edges. `script/check-layers.sh` enforces the one-way import graph.
 
 ## Docs
 
-| Doc | What |
-| --- | ---- |
-| [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md) | Directory map and the import rules |
-| [resources/doc/CONFIGURATION.md](resources/doc/CONFIGURATION.md) | Every file under `~/.config/pitago/` |
-| [resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md) | Attaching to a running `pi` session |
-| [resources/doc/CONTRIBUTING.md](resources/doc/CONTRIBUTING.md) | Dev workflow, layers, tests |
-| [docs/design.md](docs/design.md) | Design notes: why each decision looks the way it does |
-| [docs/subagent-surface-hosts.md](docs/subagent-surface-hosts.md) | Subagent surface hosts |
+| Doc                                                              | What                                                  |
+| ---------------------------------------------------------------- | ----------------------------------------------------- |
+| [resources/doc/ARCHITECTURE.md](resources/doc/ARCHITECTURE.md)   | Directory map and the import rules                    |
+| [resources/doc/CONFIGURATION.md](resources/doc/CONFIGURATION.md) | Every file under `~/.config/pitago/`                  |
+| [resources/doc/LIVE-SESSION.md](resources/doc/LIVE-SESSION.md)   | Attaching to a running `pi` session                   |
+| [resources/doc/CONTRIBUTING.md](resources/doc/CONTRIBUTING.md)   | Dev workflow, layers, tests                           |
+| [docs/design.md](docs/design.md)                                 | Design notes: why each decision looks the way it does |
+| [docs/subagent-surface-hosts.md](docs/subagent-surface-hosts.md) | Subagent surface hosts                                |
 
 ## Star History
 
