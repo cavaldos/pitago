@@ -1288,6 +1288,13 @@ func All() []app.Builtin {
 			return exportSession(m, arg)
 		}),
 		{
+			Name: "focus", Desc: "Pick a file, select lines, ask the AI about only that code (saves tokens)", Usage: "/focus [path[:start-end]]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.OpenFocus(arg)
+			},
+		},
+		{
 			Name: "trajectory", Desc: "Harness-style run trace (numbered steps · Enter views full step)", Usage: "/trajectory [all|tools|messages]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {

@@ -91,6 +91,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `/thinking`                                            | Toggle thinking level                                                                                                              |
 | `/mcp`                                                 | MCP server manager: add/remove servers, per-server login, tools, reconnect, exposure, enable/disable                               |
 | `/tree`                                                | Navigate the session tree like pi: branches, fold, filters, labels, Enter switches branch (Esc Esc on an empty input opens it too) |
+| `/focus [path[:start-end]]`                            | File tree (neo-tree style) + code view: select lines (`v`/drag), ask the AI about only those lines                                 |
 | `/trajectory [all\|tools\|messages]`                   | Harness-style run trace window (updates live while pi runs)                                                                        |
 | `/notification [filter]`                               | Notification history (time + info/error, newest first)                                                                             |
 | `/settings`                                            | Agent settings, saved to `~/.pi/agent/settings.json`                                                                               |

@@ -170,6 +170,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m.updateTrajWheel(d, mm)
 			}
+			// /focus owns every mouse event: wheel per pane, tree clicks,
+			// click/drag line selection in the code pane.
+			if d := m.Dialogs[0]; d.Kind == focusKind {
+				return m.updateFocusMouse(d, mm)
+			}
 			if d := m.Dialogs[0]; d.Kind == "notification" &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
 				t := tea.KeyUp
@@ -2919,6 +2924,8 @@ func filterableDialog(d *Dialog) bool {
 func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.Dialogs[0]
 	switch d.Kind {
+	case focusKind:
+		return m.updateFocusDialog(km, d)
 	case treeKind:
 		return m.updateTreeDialog(km, d)
 	case treeSummaryKind:

@@ -50,6 +50,7 @@ type Dialog struct {
 	Payload           []string              // yank picker: full text per option; login: raw keys ("" for action rows)
 	BlockIdx          int                   // blockactions: target chat block index (for Payload kinds)
 	tree              *treeState            // tree / treeSummary / treeCustom: the /tree flow's state (see tree.go)
+	focus             *focusState           // focus: the /focus window's state (see focus.go)
 	McpServers        []pirpc.McpServerInfo // mcp: full server record per list row (transport, source, state, tools)
 	McpServer         pirpc.McpServerInfo   // mcp: the server an action/exposure dialog belongs to
 	Current           string                // the value in use, marked in the grid/list (pet: "●" cell)
@@ -162,6 +163,7 @@ type Model struct {
 	Mouse               bool // --mouse: terminal reports clicks (sidebar recent switch)
 	baseVpH             int
 	cwd                 string
+	focusLast           *focusLast // where /focus was left (a bare /focus reopens it)
 	ModelLbl            string
 	CurAgent            string   // last-picked /subagents entry (shown on the input bar)
 	AppVersion          string   // pitago build version for the welcome header ("" = omit)

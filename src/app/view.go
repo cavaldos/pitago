@@ -2057,6 +2057,8 @@ func (m Model) renderDialog() string {
 		return m.renderNotificationDialog(d)
 	}
 	switch d.Kind {
+	case focusKind:
+		return m.renderFocusDialog(d)
 	case treeKind:
 		return m.renderTreeDialog(d)
 	case treeSummaryKind:
