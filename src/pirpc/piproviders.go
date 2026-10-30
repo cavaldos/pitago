@@ -39,7 +39,8 @@ var piExtraLabels = map[string]string{
 	"xiaomi-token-plan-ams":      "Xiaomi Token Plan (Amsterdam)",
 	"xiaomi-token-plan-sgp":      "Xiaomi Token Plan (Singapore)",
 	"ant-ling":                   "Ant Ling",
-	"azure-openai-responses":     "Azure OpenAI",
+	"azure":                      "Azure OpenAI",
+	"typesafe":                   "TypeSafe",
 	"amazon-bedrock":             "Amazon Bedrock",
 	"baseten":                    "Baseten",
 	"cloudflare-ai-gateway":      "Cloudflare AI Gateway",
@@ -117,8 +118,10 @@ func piProviderLabel(id string) string {
 	return b.String()
 }
 
-// piBundleChunks locates pi's installed bundle chunks: $PI_BIN (or PATH "pi")
-// resolves to <pkg>/dist/bundle/cli.js, chunks sit alongside in chunks/.
+// piBundleChunks locates pi's installed bundle chunks. npm/Homebrew: $PI_BIN
+// (or PATH "pi") resolves to <pkg>/dist/bundle/cli.js with chunks/ alongside.
+// pi's managed installer puts a shell launcher on PATH instead, so fall back
+// to the package dir PiPackageRoot finds.
 func piBundleChunks() []string {
 	bin := strings.TrimSpace(os.Getenv("PI_BIN"))
 	if bin == "" {
@@ -126,14 +129,19 @@ func piBundleChunks() []string {
 			bin = p
 		}
 	}
-	if bin == "" {
-		return nil
+	if bin != "" {
+		if rp, err := filepath.EvalSymlinks(bin); err == nil && rp != "" {
+			bin = rp
+		}
+		if ms, _ := filepath.Glob(filepath.Join(filepath.Dir(bin), "chunks", "*.js")); len(ms) > 0 {
+			return ms
+		}
 	}
-	if rp, err := filepath.EvalSymlinks(bin); err == nil && rp != "" {
-		bin = rp
+	if root, err := PiPackageRoot(); err == nil {
+		ms, _ := filepath.Glob(filepath.Join(root, "dist", "bundle", "chunks", "*.js"))
+		return ms
 	}
-	ms, _ := filepath.Glob(filepath.Join(filepath.Dir(bin), "chunks", "*.js"))
-	return ms
+	return nil
 }
 
 // discoverPiProviders reads the live catalog from pi's bundle (plus the
@@ -168,6 +176,24 @@ func discoverPiProviders() []ProviderEnv {
 	return out
 }
 
+// uniqueEnvSlots gives every provider its own keystore slot. pi lets twins
+// share one env var (opencode/opencode-go, moonshotai/moonshotai-cn, the two
+// Cloudflare and Qwen token plan providers), but pitago's keystore is keyed
+// by Env, so twins would show and switch each other's keys. The first
+// provider keeps pi's env var; later twins get <ID>_API_KEY (matching the
+// names pitago used before, e.g. OPENCODE_GO_API_KEY). pi itself reads the
+// key from auth.json under the provider id, so the slot name never reaches it.
+func uniqueEnvSlots(ps []ProviderEnv) []ProviderEnv {
+	used := map[string]bool{}
+	for i, p := range ps {
+		if used[p.Env] {
+			ps[i].Env = strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(p.Provider)) + "_API_KEY"
+		}
+		used[ps[i].Env] = true
+	}
+	return ps
+}
+
 // mergeProviders unions catalogs deduped by provider id, primaries first.
 func mergeProviders(primary, fallback []ProviderEnv) []ProviderEnv {
 	seen := map[string]bool{}
@@ -195,7 +221,7 @@ var piProvidersCache []ProviderEnv
 // fallback. OAuth-only providers are NOT here — see AllLoginProviders.
 func ProviderEnvsAll() []ProviderEnv {
 	piProvidersOnce.Do(func() {
-		piProvidersCache = mergeProviders(discoverPiProviders(), ProviderEnvs)
+		piProvidersCache = uniqueEnvSlots(mergeProviders(discoverPiProviders(), ProviderEnvs))
 	})
 	return piProvidersCache
 }

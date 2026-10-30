@@ -76,19 +76,20 @@ var ProviderEnvs = []ProviderEnv{
 	{"xiaomi-token-plan-ams", "Xiaomi Token Plan (Amsterdam)", "XIAOMI_TOKEN_PLAN_AMS_API_KEY"},
 	{"xiaomi-token-plan-sgp", "Xiaomi Token Plan (Singapore)", "XIAOMI_TOKEN_PLAN_SGP_API_KEY"},
 	{"ant-ling", "Ant Ling", "ANT_LING_API_KEY"},
-	{"azure-openai-responses", "Azure OpenAI", "AZURE_OPENAI_API_KEY"},
+	{"azure", "Azure OpenAI", "AZURE_OPENAI_API_KEY"},
 	{"baseten", "Baseten", "BASETEN_API_KEY"},
 	{"cloudflare-ai-gateway", "Cloudflare AI Gateway", "CLOUDFLARE_AI_GATEWAY_API_KEY"},
-	{"cloudflare-workers-ai", "Cloudflare Workers AI", "CLOUDFLARE_WORKERS_AI_API_KEY"},
-	{"google-vertex", "Google Vertex AI", "GOOGLE_VERTEX_API_KEY"},
+	{"cloudflare-workers-ai", "Cloudflare Workers AI", "CLOUDFLARE_API_KEY"},
+	{"google-vertex", "Google Vertex AI", "GOOGLE_CLOUD_API_KEY"},
 	{"meta", "Meta", "META_API_KEY"},
 	{"opencode-go", "OpenCode Go", "OPENCODE_GO_API_KEY"},
 	{"radius", "Radius", "RADIUS_API_KEY"},
+	{"typesafe", "TypeSafe", "TYPESAFE_API_KEY"},
 }
 
 // OAuthProvider is a subscription/OAuth-only provider (no API-key env).
-// Source: pi docs/providers.md "Subscriptions" — login happens in stock
-// pi, but pitago lists, tracks and disconnects them.
+// Source: pi docs/providers.md "Subscriptions". Login runs in pitago via
+// pi's own OAuth code (see oauthlogin.go).
 type OAuthProvider struct {
 	Provider string // pi provider id (auth.json key)
 	Label    string // human label
@@ -99,6 +100,7 @@ var OAuthProviders = []OAuthProvider{
 	{"openai-codex", "OpenAI Codex"},
 	{"github-copilot", "GitHub Copilot"},
 	{"radius", "Radius"},
+	{"meta", "Meta"},
 }
 
 // ProviderLabel returns the human label for any known provider id.

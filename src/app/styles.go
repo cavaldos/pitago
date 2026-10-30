@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/components/format"
@@ -117,7 +119,8 @@ var (
 			Foreground(cCyan)
 	rowHiStyle = lipgloss.NewStyle().
 			Background(cHiBg).
-			Foreground(cHiFg)
+			Foreground(cHiFg).
+			Bold(true)
 	dlgStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(cBorder).
@@ -265,7 +268,8 @@ func ApplyTheme(raw theme.Theme) {
 		Foreground(cCyan)
 	rowHiStyle = lipgloss.NewStyle().
 		Background(cHiBg).
-		Foreground(cHiFg)
+		Foreground(cHiFg).
+		Bold(true)
 	dlgStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(cBorder).
@@ -276,3 +280,38 @@ func ApplyTheme(raw theme.Theme) {
 }
 
 // messages ---------------------------------------------------------------
+
+// selRow styles the cursor row of a two-pane picker's left pane. The
+// focused pane gets the full highlight; when focus moves to the right pane
+// the selected row keeps a bold accent bar on the highlight background, so
+// the chosen provider/group stays easy to spot.
+func selRow(focused bool) (mark string, style lipgloss.Style) {
+	mark = lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render("▸ ")
+	if focused {
+		return mark, rowHiStyle
+	}
+	return mark, lipgloss.NewStyle().Background(cHiBg).Foreground(cAccent).Bold(true)
+}
+
+// paintRow renders one list row at width w. Rows mix in their own styled
+// spans (status dots, dim descriptions); each span ends with an SGR reset
+// that would also drop the row's background, leaving the selection
+// highlight on the first few cells only. Re-opening the row style after
+// every reset keeps the highlight across the whole row.
+func paintRow(style lipgloss.Style, content string, w int) string {
+	if pre := sgrPrefix(style); pre != "" {
+		content = strings.ReplaceAll(content, "\x1b[0m", "\x1b[0m"+pre)
+	}
+	return style.Width(w).Render(content)
+}
+
+// sgrPrefix is the escape sequence a style opens with ("" when the
+// terminal profile has no colors).
+func sgrPrefix(style lipgloss.Style) string {
+	const probe = "\u2063" // invisible separator, never in row text
+	out := style.UnsetWidth().UnsetPadding().UnsetMargins().Render(probe)
+	if i := strings.Index(out, probe); i > 0 {
+		return out[:i]
+	}
+	return ""
+}

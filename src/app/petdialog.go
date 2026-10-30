@@ -108,8 +108,8 @@ func (m Model) renderPetDialog(d *Dialog) string {
 			mark = "▸ "
 			style = rowHiStyle
 		}
-		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(
-			dot+Fit(name, leftW-4)))
+		leftLines = append(leftLines, mark+paintRow(style,
+			dot+Fit(name, leftW-4), leftW-2))
 	}
 	if below {
 		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))

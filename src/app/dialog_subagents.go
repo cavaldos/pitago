@@ -1029,7 +1029,7 @@ func (m Model) renderSubagentsDialog(d *Dialog) string {
 				row += "  " + toolStyle.Render("— "+Short(desc, rowW-47))
 			}
 			if fi == d.Cursor {
-				b.WriteString(cursor + style.Width(rowW).Render(row) + "\n")
+				b.WriteString(cursor + paintRow(style, row, rowW) + "\n")
 			} else {
 				b.WriteString(cursor + style.Render(row) + "\n")
 			}

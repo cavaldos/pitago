@@ -48,7 +48,8 @@ func TestLoginReindexFiltersProviders(t *testing.T) {
 	}
 }
 
-// Right pane: masked key rows + 3 action rows, never the raw secret.
+// Right pane: masked key rows + add/reload rows (groq has no OAuth sign-in),
+// never the raw secret.
 func TestRefreshLoginKeysBuildsRows(t *testing.T) {
 	dir := t.TempDir()
 	m := Model{KeyPath: dir + "/keys.json"}
@@ -64,7 +65,7 @@ func TestRefreshLoginKeysBuildsRows(t *testing.T) {
 	if d.KeyActive != 1 {
 		t.Fatalf("active = %d", d.KeyActive)
 	}
-	if len(d.Options) != 2+3 {
+	if len(d.Options) != 2+2 {
 		t.Fatalf("rows = %d: %v", len(d.Options), d.Options)
 	}
 	for _, row := range d.Options {
@@ -163,5 +164,38 @@ func TestLoginAddOpensSecret(t *testing.T) {
 	s := m.Dialogs[0]
 	if s.Kind != "secret" || s.LoginProvider != "groq" || s.LoginEnv != "GROQ_API_KEY" {
 		t.Fatalf("secret = %+v", s)
+	}
+}
+
+// Providers pi can sign into with OAuth get an in-TUI sign-in row; it
+// replaces the old "guide in stock pi" row.
+func TestRefreshLoginKeysOAuthRow(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir()) // no real pi logins
+	m := Model{KeyPath: t.TempDir() + "/keys.json"}
+	d := loginTestDialog()
+	for i, p := range d.Provs {
+		if p == "anthropic" {
+			d.ProvCursor = i
+		}
+	}
+	d.Reindex()
+	m.RefreshLoginKeys(d)
+	if d.LoginProvider != "anthropic" {
+		t.Skipf("anthropic not in test provider list: %v", d.Provs)
+	}
+	found := false
+	for i, a := range d.LoginActions {
+		if a == "oauth" {
+			found = true
+			if !strings.Contains(d.Options[loginKeysLen(d)+i], "Sign in") {
+				t.Fatalf("oauth row label = %q", d.Options[loginKeysLen(d)+i])
+			}
+		}
+		if a == "guide" {
+			t.Fatalf("stale guide row: %v", d.Options)
+		}
+	}
+	if !found {
+		t.Fatalf("no oauth row: %v", d.Options)
 	}
 }

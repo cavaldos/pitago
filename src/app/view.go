@@ -2038,6 +2038,9 @@ func (m Model) renderDialog() string {
 	if d.Kind == "pet" {
 		return m.renderPetDialog(d)
 	}
+	if d.Kind == oauthKind {
+		return m.renderOAuthDialog(d)
+	}
 	if d.Kind == "pconfig" && len(d.Provs) > 0 {
 		return m.renderPconfigDialog(d)
 	}
@@ -2188,7 +2191,7 @@ func (m Model) renderDialog() string {
 				}
 			}
 			if fi == d.Cursor {
-				b.WriteString(cursor + style.Width(rowW).Render(row) + "\n")
+				b.WriteString(cursor + paintRow(style, row, rowW) + "\n")
 			} else {
 				b.WriteString(cursor + style.Render(row) + "\n")
 			}
@@ -2386,14 +2389,9 @@ func (m Model) renderModelDialog(d *Dialog) string {
 			style = toolStyle
 		}
 		if pi == d.ProvCursor {
-			mark = "▸ "
-			if d.ProvFocus {
-				style = rowHiStyle
-			} else {
-				style = lipgloss.NewStyle().Foreground(cText)
-			}
+			mark, style = selRow(d.ProvFocus)
 		}
-		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(content))
+		leftLines = append(leftLines, mark+paintRow(style, content, leftW-2))
 	}
 	if pBelow {
 		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", ptotal-pend)))
@@ -2440,7 +2438,7 @@ func (m Model) renderModelDialog(d *Dialog) string {
 		if d.isFavIdx(ri) {
 			star = warnStyle.Render("★")
 		}
-		rightLines = append(rightLines, mark+style.Width(rightW-4).Render(row)+" "+star)
+		rightLines = append(rightLines, mark+paintRow(style, row, rightW-4)+" "+star)
 	}
 	if rBelow {
 		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
@@ -2619,14 +2617,9 @@ func (m Model) renderSettingsDialog(d *Dialog) string {
 			style = toolStyle
 		}
 		if pi == d.ProvCursor {
-			mark = "▸ "
-			if d.ProvFocus {
-				style = rowHiStyle
-			} else {
-				style = lipgloss.NewStyle().Foreground(cText)
-			}
+			mark, style = selRow(d.ProvFocus)
 		}
-		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(content))
+		leftLines = append(leftLines, mark+paintRow(style, content, leftW-2))
 	}
 	if pBelow {
 		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", ptotal-pend)))
@@ -2675,7 +2668,7 @@ func (m Model) renderSettingsDialog(d *Dialog) string {
 				row += "  " + toolStyle.Render("— "+Short(desc, dw))
 			}
 		}
-		rightLines = append(rightLines, mark+style.Width(rightW-2).Render(row))
+		rightLines = append(rightLines, mark+paintRow(style, row, rightW-2))
 	}
 	if rBelow {
 		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))
@@ -2802,7 +2795,7 @@ func (m Model) renderAskUserDialog(d *Dialog) string {
 			titleStyle = lipgloss.NewStyle().Foreground(cAccent)
 		}
 		row := mark + titleStyle.Render(fmt.Sprintf("%d. %s", ri+1, Short(d.Options[ri], leftW-lipgloss.Width(mark)-3)))
-		left = append(left, style.Width(leftW).Render(row))
+		left = append(left, paintRow(style, row, leftW))
 	}
 	if below {
 		left = append(left, toolStyle.Render(fmt.Sprintf("…(+%d below)", total-end)))
@@ -2994,14 +2987,9 @@ func (m Model) renderLoginDialog(d *Dialog) string {
 		mark := "  "
 		style := statusBarStyle
 		if pi == d.ProvCursor {
-			mark = "▸ "
-			if d.ProvFocus {
-				style = rowHiStyle
-			} else {
-				style = lipgloss.NewStyle().Foreground(cText)
-			}
+			mark, style = selRow(d.ProvFocus)
 		}
-		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(content))
+		leftLines = append(leftLines, mark+paintRow(style, content, leftW-2))
 	}
 	if pBelow {
 		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", ptotal-pend)))
@@ -3042,7 +3030,7 @@ func (m Model) renderLoginDialog(d *Dialog) string {
 				row = Short(d.Options[fi], rightW-2-len(desc)-4) + "  " + toolStyle.Render("— "+desc)
 			}
 		}
-		rightLines = append(rightLines, mark+style.Width(rightW-2).Render(row))
+		rightLines = append(rightLines, mark+paintRow(style, row, rightW-2))
 	}
 	if rBelow {
 		rightLines = append(rightLines, "  "+toolStyle.Width(rightW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))

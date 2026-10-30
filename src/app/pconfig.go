@@ -1036,7 +1036,7 @@ func hubHead(label string, n, w int, focused bool) string {
 	if focused {
 		mark, style = "▸ ", sideTitleStyle
 	}
-	return mark + style.Width(w-2).Render(fmt.Sprintf("%s · %d", label, n))
+	return mark + paintRow(style, fmt.Sprintf("%s · %d", label, n), w-2)
 }
 
 // isBgRow reports whether one option row is a background choice rather
@@ -1191,7 +1191,7 @@ func (m Model) hubRows(d *Dialog, idxs []int, curRi, listW, win int, bg, focused
 				row += "  " + psecDesc(payloadOf(d, ri), desc, listW-4-optW-3)
 			}
 		}
-		lines = append(lines, mark+style.Width(listW-2).Render(row))
+		lines = append(lines, mark+paintRow(style, row, listW-2))
 	}
 	if below {
 		lines = append(lines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", len(idxs)-end)))
@@ -1640,14 +1640,9 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 		mark := "  "
 		style := statusBarStyle
 		if pi == d.ProvCursor {
-			mark = "▸ "
-			if d.ProvFocus {
-				style = rowHiStyle
-			} else {
-				style = lipgloss.NewStyle().Foreground(cText)
-			}
+			mark, style = selRow(d.ProvFocus)
 		}
-		leftLines = append(leftLines, mark+style.Width(leftW-2).Render(content))
+		leftLines = append(leftLines, mark+paintRow(style, content, leftW-2))
 	}
 	if pBelow {
 		leftLines = append(leftLines, "  "+toolStyle.Width(leftW-2).Render(fmt.Sprintf("…(+%d below)", ptotal-pend)))
@@ -1715,7 +1710,7 @@ func (m Model) renderPconfigDialog(d *Dialog) string {
 				}
 				row = marketRow(d.Options[ri], chip, optW)
 			}
-			rightLines = append(rightLines, mark+style.Width(listW-2).Render(row))
+			rightLines = append(rightLines, mark+paintRow(style, row, listW-2))
 		}
 		if rBelow {
 			rightLines = append(rightLines, "  "+toolStyle.Width(listW-2).Render(fmt.Sprintf("…(+%d below)", total-end)))

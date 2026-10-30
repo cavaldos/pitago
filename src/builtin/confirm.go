@@ -294,14 +294,9 @@ func confirmLoginMethod(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd
 			LoginProvider: prov, LoginEnv: env}
 		m.Refresh()
 		return m, nil
-	case 1: // OAuth
-		m.Dialogs[0] = &app.Dialog{Kind: "loginOAuth", Title: "OAuth — " + prov,
-			Message:       "1. Open another terminal\n2. Run: pi\n3. Type: /login " + prov + " then follow the steps\n4. Come back here and reload",
-			Options:       []string{"Done — reload", "Close"},
-			LoginProvider: prov}
-		m.Dialogs[0].Reindex()
-		m.Refresh()
-		return m, nil
+	case 1: // OAuth: sign in right here with pi's own login flow
+		m.Dialogs = m.Dialogs[1:]
+		return m, m.OpenOAuthFlow(prov)
 	default: // reload models
 		m.Dialogs = m.Dialogs[1:]
 		m.Status = "reloading models…"
@@ -370,7 +365,7 @@ func confirmSecret(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 		}
 		// Critical: pi's auth.json wins over env, so export alone is not
 		// enough — write the active key to pi too or pi never sees models.
-		pirpc.PushActiveToPi(keyPath, env)
+		pirpc.PushActiveFor(keyPath, prov, env)
 		return msg
 	}
 }

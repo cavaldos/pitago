@@ -138,6 +138,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// OAuth flow messages run while its dialog is open, so they must
+	// pass before the dialog gate below swallows unknown messages.
+	if nm, cmd, ok := m.handleOAuthMsg(msg); ok {
+		return nm, cmd
+	}
 	// A Replace picker targets the open dialog in place (Tab scope swap),
 	// not a second dialog — it bypasses dialog capture to the main switch.
 	// dialog captures all keys while open
@@ -2924,6 +2929,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if d.Kind == "pet" {
 		return m.updatePetDialog(km, d)
 	}
+	if d.Kind == oauthKind {
+		return m.updateOAuthDialog(km, d)
+	}
 	if d.Kind == "team" {
 		return m.updateTeamDashboardDialog(km, d)
 	}
@@ -3836,11 +3844,15 @@ func (m *Model) RefreshLoginKeys(d *Dialog) {
 		d.Payload = append(d.Payload, "")
 		d.Descs = append(d.Descs, "logout "+prov+" in pi too")
 		d.LoginActions = append(d.LoginActions, "disconnect")
-	} else {
-		d.Options = append(d.Options, "OAuth / subscription")
+	} else if info, ok := pirpc.OAuthLoginFor(prov); ok {
+		desc := info.Label
+		if desc == "" {
+			desc = info.Name
+		}
+		d.Options = append(d.Options, "⇢ Sign in with subscription (OAuth)")
 		d.Payload = append(d.Payload, "")
-		d.Descs = append(d.Descs, "guide in stock pi")
-		d.LoginActions = append(d.LoginActions, "guide")
+		d.Descs = append(d.Descs, desc)
+		d.LoginActions = append(d.LoginActions, "oauth")
 	}
 	d.Options = append(d.Options, "↻ Reload models")
 	d.Payload = append(d.Payload, "")
@@ -4021,7 +4033,7 @@ func (m Model) confirmLoginKey(d *Dialog) (tea.Model, tea.Cmd) {
 			}
 			_ = pirpc.SetActive(keyPath, env, idx)
 			// Selecting a key pushes it to pi (auth.json wins over env).
-			pirpc.PushActiveToPi(keyPath, env)
+			pirpc.PushActiveFor(keyPath, prov, env)
 			return LoginSwitchMsg{Prov: prov, Masked: masked, D: d}
 		}
 	}
@@ -4052,9 +4064,9 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 	}
 	switch d.LoginActions[ai] {
 	case "add":
-		return m.openOAuthGuide(d) // unreachable (add handled above); safe fallback
-	case "guide":
-		return m.openOAuthGuide(d)
+		return m, nil // unreachable: add is handled in confirmLoginKey
+	case "oauth", "guide":
+		return m, m.OpenOAuthFlow(d.LoginProvider)
 	case "disconnect":
 		return m.disconnectOAuth(d)
 	default: // reload models — stay open, re-import pi first
@@ -4068,19 +4080,6 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 			return LoginReloadMsg{D: d}
 		}
 	}
-}
-
-// openOAuthGuide pushes the stock-pi OAuth guide on top of /login.
-func (m Model) openOAuthGuide(d *Dialog) (tea.Model, tea.Cmd) {
-	prov := d.LoginProvider
-	o := &Dialog{Kind: "loginOAuth", Title: "OAuth — " + prov,
-		Message:       "1. Open another terminal\n2. Run: pi\n3. Type: /login " + prov + " then follow the steps\n4. Come back here and reload",
-		Options:       []string{"Done — reload", "Close"},
-		LoginProvider: prov}
-	o.Reindex()
-	m.Dialogs = append([]*Dialog{o}, m.Dialogs...)
-	m.Refresh()
-	return m, nil
 }
 
 // disconnectOAuth logs a provider out of its pi subscription: drops pi's
@@ -4146,7 +4145,7 @@ func (m Model) deleteLoginKey(d *Dialog) (tea.Model, tea.Cmd) {
 		_ = pirpc.DeleteKeyAt(keyPath, env, idx)
 		// Keep pi in sync: last key removes pi's entry, otherwise pi follows
 		// the new active key.
-		pirpc.PushActiveToPi(keyPath, env)
+		pirpc.PushActiveFor(keyPath, prov, env)
 		keys, _ := pirpc.ListKeys(keyPath, env)
 		return LoginDeleteMsg{Prov: prov, Masked: masked, Left: keys, Active: true, D: d}
 	}

@@ -269,7 +269,7 @@ func (m *Model) applyPaste(msg pasteDoneMsg) {
 		// trailing newline out of the keystore (deliberate, unlike the
 		// prompt path, which keeps every pasted byte).
 		for _, d := range m.Dialogs {
-			if d.Kind == "secret" || d.Kind == "input" {
+			if d.Kind == "secret" || d.Kind == "input" || d.Kind == oauthKind {
 				d.Filter += strings.TrimSpace(msg.text)
 				m.applyPopupH() // long paste wraps: keep the winH budget
 				m.Refresh()

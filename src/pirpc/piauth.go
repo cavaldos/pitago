@@ -248,11 +248,17 @@ func WritePiKey(provider, key string) error {
 // This is the ONLY place pitago pushes a credential into pi — an explicit
 // /login or /logout action, never a launch side effect.
 func PushActiveToPi(keyPath, env string) {
-	if env == "" {
-		return
-	}
 	provider, _ := LookupProvider(env)
-	if provider == "" {
+	PushActiveFor(keyPath, provider, env)
+}
+
+// PushActiveFor is PushActiveToPi for a known provider. Several pi providers
+// share one env var (opencode/opencode-go, moonshotai/moonshotai-cn, both
+// Cloudflare ones, both Qwen token plans), so the reverse env → provider
+// lookup would always pick the first twin: callers that know which provider
+// the user picked must pass it here.
+func PushActiveFor(keyPath, provider, env string) {
+	if env == "" || provider == "" {
 		return
 	}
 	keys, active := ListKeys(keyPath, env)

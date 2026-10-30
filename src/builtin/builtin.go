@@ -125,9 +125,9 @@ func buildLoginDialog(m *app.Model, arg string) tea.Cmd {
 func openLoginMethod(m *app.Model, provider, env string) {
 	d := &app.Dialog{
 		Kind: "loginMethod", Title: "Login " + provider,
-		Message:       "API key goes to pitago's private keystore (" + env + "), pi reconnects automatically. Do OAuth in stock pi.",
+		Message:       "API key goes to pitago's private keystore (" + env + "), pi reconnects automatically. OAuth signs in here with pi's own login.",
 		Options:       []string{"Enter API key", "OAuth / subscription", "Logged in — reload"},
-		Descs:         []string{"save key + reconnect pi", "guide", "refresh model list"},
+		Descs:         []string{"save key + reconnect pi", "sign in (browser / device code)", "refresh model list"},
 		LoginProvider: provider, LoginEnv: env,
 	}
 	d.Reindex()
@@ -261,7 +261,7 @@ func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
 		// Keep pi in sync (auth.json wins over env): last key removes pi's
 		// entry, otherwise pi follows the new active key. The re-read shares
 		// this Cmd so the notice can never describe a pending write.
-		pirpc.PushActiveToPi(keyPath, env)
+		pirpc.PushActiveFor(keyPath, provider, env)
 		keys, _ := pirpc.ListKeys(keyPath, env)
 		return app.LogoutDoneMsg{Provider: provider, Kind: "deleted", Masked: masked, Left: keys}
 	}
