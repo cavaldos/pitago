@@ -1630,6 +1630,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
+			// A shell-mode line in flight: ^C interrupts that command,
+			// like in a terminal. The shell itself (cwd, variables) and
+			// any typed-ahead line in the editor are kept.
+			if m.shellOn && m.shellRunning && shellCanInterrupt {
+				m.interruptShell()
+				return m, nil
+			}
 			// pi parity (app.clear): the first ^C clears a non-empty
 			// editor, and only an *empty* one arms the double-press quit.
 			// One stray ^C on a half-typed prompt can therefore never cost

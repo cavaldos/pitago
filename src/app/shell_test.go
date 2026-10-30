@@ -733,12 +733,12 @@ func TestPiBashOutputIsStrippedOfANSI(t *testing.T) {
 // every keystroke, so a block that stores a megabyte of command output
 // makes every later keystroke re-hash it (measured 17.9 ms/op for 5 x 2 MB
 // blocks against 1.74 ms/op for the same transcript at 1 KB per block).
-// Nothing visible is lost: a bash block renders Short(bl.Text, 400).
+// A cut block ends in "…" so the loss is visible.
 func TestShellOutputIsCappedInTheBlock(t *testing.T) {
 	requireShell(t)
 	m := shellModeModel(t)
-	// 5 KB of output: past the cap, and enough to prove the head survives.
-	m = runShellLine(t, &m, `for i in $(seq 1 200); do echo "line $i padded out a bit"; done`)
+	// ~25 KB of output: past the cap, and enough to prove the head survives.
+	m = runShellLine(t, &m, `for i in $(seq 1 1000); do echo "line $i padded out a bit"; done`)
 	b := lastBashBlock(t, m)
 	// The cap bounds the OUTPUT; the block also carries "$ <command>\n".
 	if limit := shellOutCap + 128; len(b.Text) > limit {

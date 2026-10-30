@@ -33,7 +33,12 @@ import (
 //   - "!" typed alone into an empty editor enters shell mode (the "!" itself
 //     is consumed, never sent as text).
 //   - Enter runs the current line in the persistent shell, once at a time.
-//   - Esc leaves shell mode and kills the shell process.
+//     The line goes through eval with stdin at /dev/null (see wrapCommand),
+//     so a typo'd quote or a command that reads stdin finishes instead of
+//     swallowing the end marker and hanging the mode.
+//   - Ctrl+C while a line runs interrupts that command; the shell (and its
+//     cwd/variables) survives.
+//   - Esc leaves shell mode and kills the shell and everything it started.
 //   - The shell is local only: m.Pi is never touched from this file.
 //
 // While shell mode is on the editor belongs to the shell: pi's own key
@@ -54,10 +59,10 @@ const (
 	shellScanMax = 1 << 20
 	// shellOutCap bounds how much of one command's output a shell-mode
 	// block keeps. Measured reason (see capShellOutput): a block's WHOLE
-	// text is hashed on every keystroke by blockKey, and the block only
-	// ever *shows* its first 400 display cells, so storing megabytes buys
-	// nothing visible and costs every later keystroke.
-	shellOutCap = 2000
+	// text is hashed on every keystroke by blockKey, so storing megabytes
+	// costs every later keystroke. 16 KB is a few screens of output (all
+	// of it shows with ctrl+g) at a cost that does not register.
+	shellOutCap = 16 << 10
 	// shellEnvVal is the "$SHELL" token of the /settings "Shell binary" row
 	// (Pitago group): follow the login shell from the environment. It is
 	// also the default when the pref is unset.
@@ -127,6 +132,7 @@ type shellProc struct {
 func startShell(bin, dir string, gen int) (*shellProc, error) {
 	cmd := exec.Command(bin)
 	cmd.Dir = dir // the session cwd, so the shell starts where the user is
+	shellSetGroup(cmd)
 	// Own pipes rather than StdinPipe/StdoutPipe: exec closes the ones it
 	// creates inside Wait, which would race the reader goroutine on a
 	// process that outlives a single Wait by design.
@@ -153,6 +159,10 @@ func startShell(bin, dir string, gen int) (*shellProc, error) {
 	inR.Close()  // the child holds its own copy now
 	outW.Close() // ditto: the reader goroutine owns the read end
 	p := &shellProc{cmd: cmd, bin: bin, in: inW, lines: make(chan string, 512), gen: gen}
+	if init := p.initCmd(); init != "" {
+		// Written before any command, so it is in place for the first line.
+		_, _ = io.WriteString(inW, init)
+	}
 	go p.read(outR)
 	go func() {
 		_ = cmd.Wait()
@@ -184,7 +194,7 @@ func (p *shellProc) run(gen int, command string) shellOutMsg {
 	// printf, not echo: the marker must be a line of its own, and the
 	// leading newline keeps output that lacked a trailing newline from
 	// being glued to the sentinel.
-	payload := command + "\n" + p.markerCmd(marker)
+	payload := p.wrapCommand(command) + p.markerCmd(marker)
 	p.mu.Lock()
 	_, err := io.WriteString(p.in, payload)
 	p.mu.Unlock()
@@ -221,16 +231,73 @@ func (p *shellProc) run(gen int, command string) shellOutMsg {
 // 0 and a failing command would render as a success.
 func (p *shellProc) markerCmd(marker string) string {
 	verb := "$?"
-	if filepath.Base(p.bin) == "fish" {
+	if p.isFish() {
 		verb = "$status"
 	}
 	return fmt.Sprintf("printf '\\n%%s %%d\\n' %s %s\n", marker, verb)
 }
 
-// close kills the shell. It is safe to call twice (Esc then quit).
+// isFish reports a fish shell, whose syntax differs from POSIX sh in the
+// few places this file writes shell code itself.
+func (p *shellProc) isFish() bool { return filepath.Base(p.bin) == "fish" }
+
+// initCmd is written once, right after the shell starts. A SIGINT handler
+// (not an ignore: an ignored signal stays ignored in every child) keeps the
+// shell alive when Ctrl+C interrupts the running command, so the next
+// line still has its cwd and variables. fish has no POSIX trap; there an
+// interrupt may end the shell, which then restarts on the next line.
+func (p *shellProc) initCmd() string {
+	if p.isFish() {
+		return ""
+	}
+	return "trap ':' INT\n"
+}
+
+// wrapCommand turns one user line into the text written to the shell.
+//
+// Written raw, the line shares the shell's stdin with the marker that
+// follows it, and two kinds of line then hang the mode for good:
+//   - an unfinished line (`echo "abc`, a trailing `\`) makes the shell read
+//     on, and the marker becomes part of the user's string;
+//   - a command that reads stdin (`cat`, `read x`, `python`) eats the
+//     marker as its input.
+//
+// eval of the single-quoted line parses it as a unit — a syntax error is
+// reported and the shell moves on to the marker — and </dev/null gives the
+// line an empty stdin of its own. eval runs in the current shell, so cd,
+// export and variables still persist.
+func (p *shellProc) wrapCommand(command string) string {
+	if p.isFish() {
+		// fish single quotes only escape \ and '.
+		q := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(command)
+		return "eval '" + q + "' </dev/null\n"
+	}
+	q := strings.ReplaceAll(command, "'", `'\''`)
+	// zsh's `command` means "an external program", so `command eval` would
+	// look for /usr/bin/eval. Everywhere else `command` is needed: eval is a
+	// POSIX special builtin, and a syntax error inside one exits a
+	// non-interactive shell (dash does) unless `command` strips that.
+	verb := "command eval"
+	if filepath.Base(p.bin) == "zsh" {
+		verb = "eval"
+	}
+	return verb + " '" + q + "' </dev/null\n"
+}
+
+// interrupt sends SIGINT to the running command. The shell traps it (see
+// initCmd), finishes the line with a non-zero status and prints the
+// marker, so the line ends the normal way. No-op on Windows.
+func (p *shellProc) interrupt() {
+	shellSignalGroup(p.cmd, true)
+}
+
+// close kills the shell and everything it started (a backgrounded or
+// still-running child would otherwise keep the output pipe open and
+// outlive pitago). It is safe to call twice (Esc then quit).
 func (p *shellProc) close() {
 	_ = p.in.Close()
 	if p.cmd != nil && p.cmd.Process != nil {
+		shellSignalGroup(p.cmd, false)
 		_ = p.cmd.Process.Kill()
 	}
 }
@@ -289,6 +356,18 @@ func (m *Model) exitShellMode() {
 	m.Refresh()
 }
 
+// interruptShell stops the command in flight (Ctrl+C while a shell line
+// runs). The line still ends through handleShellOut, with the status the
+// interrupted command left, so the transcript shows what it printed.
+func (m *Model) interruptShell() {
+	if m.shell == nil || !m.shellRunning {
+		return
+	}
+	m.shell.interrupt()
+	m.Status = "interrupting…"
+	m.Refresh()
+}
+
 // stopShell kills the persistent shell, if any. Called on quit as well as on
 // exit, so a leaked `sh` never outlives pitago.
 func (m *Model) stopShell() {
@@ -305,42 +384,47 @@ func (m *Model) submitShell() tea.Cmd {
 	if command == "" {
 		return nil
 	}
-	m.ta.Reset()
-	m.closeAt()
-	m.refreshCmds()
 	if m.shellRunning {
 		// One line at a time: interleaving two commands would make the
-		// marker boundary meaningless (their output would mix).
-		m.AddBlock(Block{Kind: "notice", Text: "a shell command is still running — wait for it to finish"})
+		// marker boundary meaningless (their output would mix). The line
+		// stays in the editor so it can be sent once this one is done.
+		m.Status = "a command is still running — ^C interrupts it"
 		m.Refresh()
 		return nil
 	}
+	m.ta.Reset()
+	m.shellHistIdx = -1
+	m.closeAt()
+	m.refreshCmds()
 	m.pushShellHist(command)
+	// Started here, on the event loop, rather than inside the Cmd: the
+	// handle must be on the model while the line runs so Ctrl+C can
+	// interrupt even the very first command. Starting a process does not
+	// block.
+	if m.shell == nil || m.shell.dead() {
+		if m.shell != nil {
+			m.shell.close()
+		}
+		p, err := startShell(m.shellBin, m.cwd, m.shellGen)
+		if err != nil {
+			m.shell = nil
+			m.AddBlock(Block{Kind: "notice", Text: "cannot start shell: " + err.Error(), Err: true})
+			m.Refresh()
+			return nil
+		}
+		m.shell = p
+	}
 	m.shellRunning = true
 	m.Status = "$ " + Short(command, 60) + "…"
 	m.Refresh()
-	return m.shellRun(command)
+	return shellRunCmd(m.shell, m.shellGen, command)
 }
 
-// shellRun is the tea.Cmd half of submitShell: it starts the shell on demand
-// and blocks on the marker until the line is done.
-func (m *Model) shellRun(command string) tea.Cmd {
-	gen := m.shellGen
-	cwd := m.cwd
-	prev := m.shell
-	// Captured by value: the Cmd runs off the event loop, where reading m
-	// would race the model it was built from (same rule as the other Cmd
-	// closures in this package).
-	bin := m.shellBin
+// shellRunCmd is the tea.Cmd half of submitShell: it blocks on the marker
+// until the line is done. Everything it needs is passed by value: the Cmd
+// runs off the event loop, where reading the model would race it.
+func shellRunCmd(p *shellProc, gen int, command string) tea.Cmd {
 	return func() tea.Msg {
-		p := prev
-		if p == nil || p.dead() {
-			np, err := startShell(bin, cwd, gen)
-			if err != nil {
-				return shellOutMsg{gen: gen, command: command, err: fmt.Errorf("cannot start shell: %w", err)}
-			}
-			p = np
-		}
 		out := p.run(gen, command)
 		out.proc = p
 		return out
@@ -492,10 +576,10 @@ func (m *Model) tryShellHistNext() bool {
 // ONE 2 MB block). Nothing else in the keystroke path scales with the
 // stored size — the cache hits, so the blocks are not re-rendered.
 //
-// 2000 matches the budget pi itself keeps for a bashExecution output
-// (update.go), so the local shell stores no more than the remote one, and
-// it is invisible: a bash block renders Short(bl.Text, 400) — the first
-// 400 display cells — and copy/selection work off the rendered lines.
+// 16 KB sits at the cheap end of that curve (between the 1 KB and 40 KB
+// columns) while still holding a few screens of output: a collapsed bash
+// block shows its first lines and ctrl+g shows everything stored (see
+// bashBlockRows in view.go).
 func capShellOutput(out string) string {
 	if len(out) <= shellOutCap {
 		return out
@@ -516,7 +600,8 @@ func capShellOutput(out string) string {
 //
 // Deliberately NOT blocked — they are either harmless locally or the only
 // way to get a command in or out:
-//   - Ctrl+C (clear the line, then double-press to quit: pi parity),
+//   - Ctrl+C (interrupt a running line; else clear the line, then
+//     double-press to quit: pi parity),
 //   - Ctrl+E / Ctrl+G (sidebar and tool-block view toggles),
 //   - Ctrl+V (pasting a command is the point),
 //   - Alt+M (selecting the shell output needs the mouse),

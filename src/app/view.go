@@ -403,7 +403,7 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		if bl.Err {
 			class = format.StatusError
 		}
-		rows := strings.Split(markdown.Highlight("bash", Short(bl.Text, 400)), "\n")
+		rows := bashBlockRows(bl.Text, blockInner(cw), m.expandTools || bl.Expanded)
 		return framedBlock(rows, cw, blockThemeFor(class)) + "\n\n", false
 	case "compaction", "branch":
 		// pi's compaction/branch summary component: a bold label, a blank
@@ -536,6 +536,47 @@ func codeLang(s string) (lang string, ok bool) {
 		return "diff", true
 	}
 	return "", false
+}
+
+// bashPreviewLines is how many output lines a collapsed bash block shows.
+const bashPreviewLines = 12
+
+// bashBlockRows lays out a local shell echo ("$ cmd" then its output) as
+// frame rows. The text keeps its real line breaks: squeezing it onto one
+// row with ⏎ markers (format.Short) turned `ls` into a single run-on line
+// and broke anything laid out in columns (fastfetch, tables, trees).
+//
+//   - only the command row is highlighted as bash; output is plain text
+//     (chroma would paint words like "test" or "for" as keywords);
+//   - each row is cut to the frame's inner width instead of wrapping, so
+//     column art keeps its shape;
+//   - collapsed, the output stops after bashPreviewLines with a hint;
+//     ctrl+g (or a click) shows everything the block stored.
+func bashBlockRows(text string, inner int, expanded bool) []string {
+	text = strings.ReplaceAll(strings.TrimRight(text, "\n"), "\t", "    ")
+	lines := strings.Split(text, "\n")
+	cmd := lines[0]
+	out := lines[1:]
+	row := cmd
+	if hl := markdown.Highlight("bash", Short(cmd, inner)); hl != "" {
+		row = strings.TrimRight(hl, "\n")
+	}
+	rows := []string{row}
+	hidden := 0
+	if !expanded && len(out) > bashPreviewLines {
+		hidden = len(out) - bashPreviewLines
+		out = out[:bashPreviewLines]
+	}
+	for _, ln := range out {
+		if lipgloss.Width(ln) > inner {
+			ln = Short(ln, inner)
+		}
+		rows = append(rows, ln)
+	}
+	if hidden > 0 {
+		rows = append(rows, toolStyle.Render(fmt.Sprintf("… +%d lines (%s)", hidden, expandHint)))
+	}
+	return rows
 }
 
 // isShell reports whether a tool's output is command output, which gets
@@ -1812,6 +1853,9 @@ func (m Model) renderInput() string {
 			title = "SHELL · " + m.inputStatus()
 		}
 		left = "↵ run · ↑↓ history · ^V paste · ^C clear/quit · Esc exit"
+		if m.shellRunning && shellCanInterrupt {
+			left = "^C interrupt · Esc exit (kills the shell)"
+		}
 	} else if m.followRemote {
 		border = cInputDim
 		title = "EXTERNAL · READ-ONLY"

@@ -140,10 +140,12 @@ func (m Model) updateSelection(msg tea.MouseMsg) (Model, tea.Cmd, bool) {
 			m.sel.Focus = p
 		}
 		if !m.sel.HadDrag && !m.sel.DoubleClick {
-			// Plain click on a tool call or thinking folds/unfolds it.
+			// Plain click on a tool call, thinking or a shell echo
+			// folds/unfolds it.
 			if i := m.chatRowToBlock(msg.Y); i >= 0 && i < len(m.blocks) &&
-				(m.blocks[i].Kind == "tool" || m.blocks[i].Kind == "thinking") {
-				if m.isGroupSummaryRow(i, msg.Y) {
+				(m.blocks[i].Kind == "tool" || m.blocks[i].Kind == "thinking" ||
+					m.blocks[i].Kind == "bash") {
+				if m.blocks[i].Kind != "bash" && m.isGroupSummaryRow(i, msg.Y) {
 					m.blocks[i].GroupOpen = !m.blocks[i].GroupOpen
 				} else {
 					m.blocks[i].Expanded = !m.blocks[i].Expanded
