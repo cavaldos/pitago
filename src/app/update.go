@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1095,7 +1096,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LoginSwitchMsg:
 		m.RefreshLoginKeys(msg.D)
-		m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to key " + msg.Masked + " → pi — reconnecting…"})
+		if msg.Acct != "" {
+			m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to OAuth account " + msg.Acct + " → pi — reconnecting…"})
+		} else {
+			m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to key " + msg.Masked + " → pi — reconnecting…"})
+		}
 		m.Refresh()
 		return m, m.RespawnPi()
 
@@ -1121,10 +1126,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Push the rename prompt on top of /login (login stays at [1] so
 		// Enter/Esc returns to it, never to the main screen).
 		pre := ""
-		if msg.Idx < len(msg.Items) {
+		if msg.OAuth {
+			pre = msg.Name
+		} else if msg.Idx < len(msg.Items) {
 			pre = msg.Items[msg.Idx].Name
 		}
-		r := &Dialog{Kind: "rename", Title: "Rename key — " + msg.Provider,
+		r := &Dialog{Kind: "rename", Title: "Rename key — " + msg.Provider, RenameOAuth: msg.OAuth,
 			Message:       "Name is display-only (pitago keystore). Empty clears it. Enter saves, Esc back to /login.",
 			Filter:        pre,
 			LoginProvider: msg.Provider, LoginEnv: msg.Env,
@@ -3368,13 +3375,17 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		// write is blocking file I/O, so it runs in the Cmd and reports
 		// back with the same message.
 		name := strings.TrimSpace(d.Filter)
-		prov, env, idx := d.LoginProvider, d.LoginEnv, d.RenameIdx
+		prov, env, idx, oauth := d.LoginProvider, d.LoginEnv, d.RenameIdx, d.RenameOAuth
 		keyPath := m.KeyPath
 		m.Dialogs = m.Dialogs[1:]
 		m.drainQueuedDialogs()
 		m.Refresh()
 		return m, func() tea.Msg {
 			msg := RenameKeyMsg{Provider: prov, Env: env, Idx: idx, Name: name}
+			if oauth {
+				msg.Err = pirpc.RenameOAuth(keyPath, prov, idx, name)
+				return msg
+			}
 			msg.Err = pirpc.RenameKey(keyPath, env, idx, name)
 			return msg
 		}
@@ -3847,11 +3858,42 @@ func (m *Model) RefreshLoginKeys(d *Dialog) {
 		d.Payload = append(d.Payload, it.Key)
 		d.Descs = append(d.Descs, desc)
 	}
+	accts, acctActive := pirpc.ListOAuthAccounts(m.KeyPath, prov)
+	for i, a := range accts {
+		mark, desc := "○ ", "Enter to use"
+		if i == acctActive {
+			mark, desc = "● ", "active"
+		}
+		label := a.Label()
+		if label == "" {
+			label = fmt.Sprintf("account %d", i+1)
+		}
+		if n := strings.TrimSpace(a.Name); n != "" && a.Account != "" {
+			label = n + " · " + a.Account
+		}
+		d.Options = append(d.Options, mark+"OAuth · "+label)
+		d.Payload = append(d.Payload, "")
+		if a.Expires > 0 {
+			desc += " · exp " + pirpc.FormatAdded(a.Expires/1000)
+		}
+		d.Descs = append(d.Descs, desc)
+		d.LoginActions = append(d.LoginActions, fmt.Sprintf("acct:%d", i))
+	}
 	if env != "" {
 		d.Options = append(d.Options, "＋ Add new key")
 		d.Payload = append(d.Payload, "")
 		d.Descs = append(d.Descs, "Enter to add")
 		d.LoginActions = append(d.LoginActions, "add")
+	}
+	if info, ok := pirpc.OAuthLoginFor(prov); ok && d.LoginOAuth {
+		desc := info.Label
+		if desc == "" {
+			desc = info.Name
+		}
+		d.Options = append(d.Options, "＋ Add another OAuth account")
+		d.Payload = append(d.Payload, "")
+		d.Descs = append(d.Descs, desc)
+		d.LoginActions = append(d.LoginActions, "oauth")
 	}
 	if d.LoginOAuth {
 		d.Options = append(d.Options, "⊗ Disconnect ("+oauthDesc(d.LoginOAuthExp, d.LoginOAuthAcct)+")")
@@ -3997,6 +4039,11 @@ func (m Model) updateLoginDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 				if onKey {
 					return m.openRenameDialog(d)
 				}
+				if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) {
+					if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+						return m.openOAuthRename(d, idx)
+					}
+				}
 			}
 			// other runes fall through to provider filtering below
 		}
@@ -4083,7 +4130,10 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 		return m, m.OpenOAuthFlow(d.LoginProvider)
 	case "disconnect":
 		return m.disconnectOAuth(d)
-	default: // reload models — stay open, re-import pi first
+	default:
+		if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+			return m.switchOAuthAcct(d, idx)
+		} // reload models — stay open, re-import pi first
 		// SyncFromPi + the authState mirror are blocking file I/O; they run
 		// off the event loop and land as LoginReloadMsg, which then refreshes
 		// the picker and re-counts models in the original order.
@@ -4096,6 +4146,54 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 	}
 }
 
+// openOAuthRename prefills the rename prompt with the account's label.
+func (m Model) openOAuthRename(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		name := ""
+		if accts, _ := pirpc.ListOAuthAccounts(keyPath, prov); idx >= 0 && idx < len(accts) {
+			name = strings.TrimSpace(accts[idx].Name)
+		}
+		return LoginRenameOpenMsg{Provider: prov, Idx: idx, OAuth: true, Name: name}
+	}
+}
+
+// acctIdx parses an "acct:N" login action row.
+func acctIdx(action string) (int, bool) {
+	if !strings.HasPrefix(action, "acct:") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(action, "acct:"))
+	return n, err == nil
+}
+
+// switchOAuthAcct activates saved OAuth account idx (pi follows; respawn
+// applies it). Blocking file I/O, so it runs off the event loop.
+func (m Model) switchOAuthAcct(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		_ = pirpc.SwitchOAuth(keyPath, prov, idx)
+		label := ""
+		if accts, _ := pirpc.ListOAuthAccounts(keyPath, prov); idx >= 0 && idx < len(accts) {
+			label = accts[idx].Label()
+		}
+		if label == "" {
+			label = fmt.Sprintf("#%d", idx+1)
+		}
+		return LoginSwitchMsg{Prov: prov, Acct: label, D: d}
+	}
+}
+
+// deleteOAuthAcct removes saved OAuth account idx (the active one falls back
+// to the next account, or logs pi out when it was the last).
+func (m Model) deleteOAuthAcct(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		_ = pirpc.DeleteOAuthAt(keyPath, prov, idx)
+		return OAuthGoneMsg{Prov: prov, D: d}
+	}
+}
+
 // disconnectOAuth logs a provider out of its pi subscription: drops pi's
 // OAuth entry + pitago's mirror, stays on /login, reconnects behind it.
 // The teardown is blocking file I/O, so it runs off the event loop and lands
@@ -4105,9 +4203,9 @@ func (m Model) disconnectOAuth(d *Dialog) (tea.Model, tea.Cmd) {
 	if prov == "" || !d.LoginOAuth {
 		return m, nil
 	}
-	authPath := m.authPath()
+	authPath, keyPath := m.authPath(), m.KeyPath
 	return m, func() tea.Msg {
-		_ = pirpc.DeletePiAuth(prov)
+		_ = pirpc.DropActiveOAuth(keyPath, prov)
 		pirpc.ForgetAuthState(authPath, prov)
 		pirpc.SyncAuthStateFromPi(authPath)
 		return OAuthGoneMsg{Prov: prov, D: d}
@@ -4132,8 +4230,13 @@ func (m Model) deleteLoginKey(d *Dialog) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if d.KeyCursor >= nk {
-		if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) && d.LoginActions[ai] == "disconnect" {
-			return m.disconnectOAuth(d)
+		if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) {
+			if d.LoginActions[ai] == "disconnect" {
+				return m.disconnectOAuth(d)
+			}
+			if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+				return m.deleteOAuthAcct(d, idx)
+			}
 		}
 		return m, nil
 	}

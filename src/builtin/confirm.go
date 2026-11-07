@@ -332,6 +332,7 @@ func confirmLoginOAuth(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd)
 		}
 		return m, func() tea.Msg {
 			pirpc.SyncFromPi(keyPath)
+			pirpc.SyncOAuthFromPi(keyPath, true)
 			pirpc.SyncAuthStateFromPi(authPath)
 			return app.LoginReloadMsg{D: login}
 		}

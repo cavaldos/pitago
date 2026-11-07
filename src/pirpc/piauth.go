@@ -281,6 +281,8 @@ func SyncFromPi(keyPath string) int {
 	if keyPath == "" {
 		return 0
 	}
+	// OAuth logins are mirrored into their own multi-account store.
+	SyncOAuthFromPi(keyPath, false)
 	m := loadPiRaw(PiAuthPath())
 	if len(m) == 0 {
 		return 0

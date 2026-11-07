@@ -61,7 +61,10 @@ func (m *Model) OpenOAuthFlow(prov string) tea.Cmd {
 		oauth: &oauthState{prov: prov, name: name, lines: []string{"starting pi login…"}}}
 	m.Dialogs = append([]*Dialog{d}, m.Dialogs...)
 	m.Refresh()
+	keyPath := m.KeyPath
 	return func() tea.Msg {
+		// Save the account pi has now BEFORE the login replaces it.
+		pirpc.SyncOAuthFromPi(keyPath, false)
 		s, err := pirpc.StartOAuthLogin(prov)
 		return oauthStartedMsg{D: d, S: s, Err: err}
 	}
@@ -159,8 +162,9 @@ func (m Model) handleOAuthMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 		case "done":
 			st.done, st.prompt = true, nil
-			prov, name, authPath := st.prov, st.name, m.authPath()
+			prov, name, authPath, keyPath := st.prov, st.name, m.authPath(), m.KeyPath
 			cmds = append(cmds, func() tea.Msg {
+				pirpc.SyncOAuthFromPi(keyPath, true) // new login = new account
 				pirpc.SyncAuthStateFromPi(authPath)
 				return OAuthLoggedInMsg{Prov: prov, Name: name}
 			})

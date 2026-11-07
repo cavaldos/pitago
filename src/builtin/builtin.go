@@ -240,14 +240,14 @@ func doLogout(m *app.Model, provider, desc string) tea.Cmd {
 // LogoutDoneMsg / OAuthGoneMsg handlers.
 func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
 	if env == "" {
-		return func() tea.Msg { return teardownOAuth(provider, authPath) }
+		return func() tea.Msg { return teardownOAuth(provider, keyPath, authPath) }
 	}
 	return func() tea.Msg {
 		keysBefore, active := pirpc.ListKeys(keyPath, env)
 		if active < 0 {
 			// No saved keys: maybe an OAuth login in pi — disconnect it.
 			if _, _, ok := pirpc.PiOAuth(provider); ok {
-				return teardownOAuth(provider, authPath)
+				return teardownOAuth(provider, keyPath, authPath)
 			}
 			return app.LogoutDoneMsg{Provider: provider, Kind: "no-keys"}
 		}
@@ -270,8 +270,8 @@ func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
 // teardownOAuth drops pi's OAuth entry and pitago's mirror, reporting which
 // way it went. DeletePiAuth's failure skips the mirror, as before. Shared by
 // the /logout OAuth fallback and the disconnect actions.
-func teardownOAuth(provider, authPath string) app.OAuthGoneMsg {
-	if err := pirpc.DeletePiAuth(provider); err != nil {
+func teardownOAuth(provider, keyPath, authPath string) app.OAuthGoneMsg {
+	if err := pirpc.DropActiveOAuth(keyPath, provider); err != nil {
 		return app.OAuthGoneMsg{Prov: provider, Err: err}
 	}
 	pirpc.ForgetAuthState(authPath, provider)
@@ -284,7 +284,8 @@ func teardownOAuth(provider, authPath string) app.OAuthGoneMsg {
 // I/O, so it runs off the event loop and lands as app.OAuthGoneMsg — which
 // keeps DeletePiAuth's early-out (a failure skips the mirror) intact.
 func doOAuthLogout(m *app.Model, provider, authPath string) tea.Cmd {
-	return func() tea.Msg { return teardownOAuth(provider, authPath) }
+	keyPath := m.KeyPath
+	return func() tea.Msg { return teardownOAuth(provider, keyPath, authPath) }
 }
 
 // respawnPi kills the old pi and respawns keeping the same session (to pick up added/removed keys).

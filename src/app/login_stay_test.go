@@ -181,7 +181,7 @@ func TestLoginOAuthOnlyProvider(t *testing.T) {
 	if !d.LoginOAuth || d.LoginOAuthAcct != "acct-9" {
 		t.Fatalf("oauth = %v %q", d.LoginOAuth, d.LoginOAuthAcct)
 	}
-	if len(d.LoginActions) != 2 || d.LoginActions[0] != "disconnect" || d.LoginActions[1] != "reload" {
+	if len(d.LoginActions) != 3 || d.LoginActions[0] != "oauth" || d.LoginActions[1] != "disconnect" || d.LoginActions[2] != "reload" {
 		t.Fatalf("actions = %v", d.LoginActions)
 	}
 	if loginKeysLen(d) != 0 {
@@ -204,9 +204,9 @@ func TestLoginDisconnectOAuthStays(t *testing.T) {
 	d.Reindex()
 	m.RefreshLoginKeys(d)
 	d.ProvFocus = false
-	d.KeyCursor = 0 // disconnect row (no keys, actions=[disconnect,reload])
+	d.KeyCursor = 1 // disconnect row (no keys, actions=[oauth,disconnect,reload])
 	m.Dialogs = []*Dialog{d}
-	if d.LoginActions[0] != "disconnect" {
+	if d.LoginActions[1] != "disconnect" {
 		t.Fatalf("actions = %v", d.LoginActions)
 	}
 

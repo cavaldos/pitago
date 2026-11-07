@@ -66,6 +66,7 @@ type Dialog struct {
 	ShowKeys          bool            // login: reveal full keys (s toggles, never persisted)
 	RenameIdx         int             // rename flow: key index being renamed (-1 = none)
 	LoginActions      []string        // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
+	RenameOAuth       bool            // rename: target is a saved OAuth account
 	LoginOAuth        bool            // login: selected provider has OAuth in pi
 	LoginOAuthExp     int64           // login: oauth expiry ms epoch (0 = unknown)
 	LoginOAuthAcct    string          // login: oauth account id ("" = unknown)
@@ -534,6 +535,8 @@ type LoginRenameOpenMsg struct {
 	Provider, Env string
 	Items         []pirpc.KeyItem
 	Idx           int
+	OAuth         bool   // rename a saved OAuth account (Idx indexes accounts)
+	Name          string // OAuth: current label
 }
 
 // LoginSwitchMsg reports that "use this key" finished off the event loop:
@@ -541,6 +544,7 @@ type LoginRenameOpenMsg struct {
 // as the notice spells it, read before the write.
 type LoginSwitchMsg struct {
 	Prov, Masked string
+	Acct         string // OAuth account label when an OAuth account was activated
 	D            *Dialog
 }
 
