@@ -12,13 +12,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"pitago/src/tui/teabridge"
 
 	"pitago/src/app"
 	"pitago/src/builtin"
 	"pitago/src/components/theme"
 	"pitago/src/pimark"
 	"pitago/src/pirpc"
+	"pitago/src/tui/teabridge"
 	"pitago/src/update"
 )
 
@@ -134,6 +134,10 @@ func main() {
 	// WithOutput is the default anyway, but stating it makes the raw escape
 	// handoff below explicit: image payloads go straight to the terminal
 	// instead of through the frame, so both must be the same writer.
+	if os.Getenv("PITAGO_UI") == "tview" {
+		runTview(m, pi, *mouse)
+		return
+	}
 	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithOutput(os.Stdout), tea.WithFilter(teabridge.Filter(app.ScrollEventFilter))}
 	if *mouse {
 		progOpts = append(progOpts, tea.WithMouseAllMotion())

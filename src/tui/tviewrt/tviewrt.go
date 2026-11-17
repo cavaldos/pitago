@@ -230,14 +230,27 @@ func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 	return nil
 }
 
+// onMouse must hand the event back: tview reuses the capture's return value
+// for every action of one report, so returning nil on the Move would blank
+// the Down/Up that follows. The frame's MouseHandler then reports it
+// consumed, which is what makes tview redraw.
 func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
-	if r.opts.MouseE == nil {
-		return nil, 0
+	// tcell clamps coordinates to 0,0 until its first resize lands.
+	if r.opts.MouseE == nil || r.w == 0 {
+		return e, a
 	}
 	for _, m := range r.opts.MouseE(e, a) {
 		r.dispatch(m)
 	}
-	return nil, 0
+	return e, a
+}
+
+// MouseHandler swallows every mouse action (the model already saw it via
+// onMouse) and marks it consumed so the frame is redrawn.
+func (f *frame) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+	return func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+		return true, nil
+	}
 }
 
 // frame is the single full-screen primitive of stage 1.

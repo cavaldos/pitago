@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	"pitago/src/tui/ev"
+	"pitago/src/tui/keys"
 )
 
 type pingMsg struct{ n int }
@@ -164,4 +165,36 @@ func TestRawPassthrough(t *testing.T) {
 	r.Send(nil)
 	r.App().QueueUpdateDraw(func() {})
 	waitFor(t, func() bool { return strings.Contains(out.String(), "q=2") })
+}
+
+type mouseModel struct{ got []string }
+
+func (mouseModel) Init() ev.Cmd { return nil }
+func (m mouseModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
+	if mm, ok := msg.(ev.MouseMsg); ok {
+		m.got = append(m.got, fmt.Sprintf("%s@%d,%d", mm.String(), mm.X, mm.Y))
+	}
+	return m, nil
+}
+func (m mouseModel) View() string { return strings.Join(m.got, " ") }
+
+func TestMouseDragReachesModel(t *testing.T) {
+	scr := tcell.NewSimulationScreen("UTF-8")
+	var tr keys.MouseTracker
+	r := New(mouseModel{}, Options{Screen: scr, Mouse: true, MouseE: tr.FromMouse})
+	scr.SetSize(40, 4)
+	go func() { _, _ = r.Run() }()
+	defer r.Stop()
+	waitFor(t, func() bool { return r.Model() != nil && func() bool { _, h := scr.Size(); return h == 4 }() })
+	time.Sleep(50 * time.Millisecond) // let the first resize reach tcell's input processor
+	scr.InjectMouse(3, 1, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(6, 2, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(6, 2, tcell.ButtonNone, tcell.ModNone)
+	waitFor(t, func() bool { return len(r.Model().(mouseModel).got) >= 3 })
+	got := strings.Join(r.Model().(mouseModel).got, " ")
+	for _, want := range []string{"left press@3,1", "left motion@6,2", "release@6,2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("mouse stream %q lacks %q", got, want)
+		}
+	}
 }
