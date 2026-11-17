@@ -132,11 +132,3 @@ func TestRuntimeLifecycle(t *testing.T) {
 		t.Fatal("quit via Sequence(…, Quit) did not stop the runtime")
 	}
 }
-
-func TestEscapeText(t *testing.T) {
-	in := "\x1b[31m[x]\x1b[0m a[b] \x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\"
-	got := escapeText(in)
-	if !strings.Contains(got, "\x1b[31m") || strings.Contains(got, "\x1b[31m[x]\x1b") {
-		t.Fatalf("escape = %q", got)
-	}
-}

@@ -1,8 +1,8 @@
 // Package tviewrt runs an ev.Model on rivo/tview.
 //
 // Stage 1 of the migration ("whole-frame bridge"): the model's View() string
-// is painted into a single full-screen primitive through an ANSI→cell
-// painter, and tcell input is translated to ev messages. Regions of the UI
+// is painted into a single full-screen primitive through the ANSI→cell
+// painter of src/components/cells, and tcell input is translated to ev messages. Regions of the UI
 // are then replaced one by one with native tview primitives (see
 // docs/tview-migration.md) without the event plumbing changing again.
 //
@@ -17,6 +17,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"pitago/src/components/cells"
+
 	"pitago/src/tui/ev"
 )
 
@@ -28,7 +30,7 @@ type Painter func(scr tcell.Screen, x, y, w, h int, frame string)
 type Options struct {
 	Screen tcell.Screen // nil = real terminal (tests pass a SimulationScreen)
 	Mouse  bool         // start with all-motion mouse reporting on
-	Paint  Painter      // nil = PaintTranslate
+	Paint  Painter      // nil = cells.Painter with a fresh cache
 	Key    func(*tcell.EventKey) (ev.KeyMsg, bool)
 	MouseE func(*tcell.EventMouse, tview.MouseAction) []ev.MouseMsg
 	Filter func(ev.Model, ev.Msg) ev.Msg // optional, like tea.WithFilter
@@ -49,7 +51,7 @@ type Runtime struct {
 // New prepares a runtime for m; call Run to start it.
 func New(m ev.Model, opts Options) *Runtime {
 	if opts.Paint == nil {
-		opts.Paint = PaintTranslate
+		opts.Paint = cells.Painter(cells.NewCache(4096))
 	}
 	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m}
 	r.root = &frame{Box: tview.NewBox(), r: r}
