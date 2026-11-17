@@ -56,6 +56,8 @@ type Runtime struct {
 
 	rawMu sync.Mutex
 	raw   bytes.Buffer // terminal-native sequences (kitty APC) flushed before each Show
+
+	exactPaste bool // the screen is wrapped in keys.PasteScreen (see paste.go)
 }
 
 // New prepares a runtime for m; call Run to start it.
@@ -68,7 +70,7 @@ func New(m ev.Model, opts Options) *Runtime {
 	r.ov = widgets.NewOverlay(r.root)
 	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
 	if opts.Screen != nil {
-		r.app.SetScreen(opts.Screen)
+		r.app.SetScreen(r.wrapPaste(opts.Screen))
 	}
 	r.app.SetInputCapture(r.onKey)
 	r.app.SetMouseCapture(r.onMouse)
@@ -125,6 +127,11 @@ func (r *Runtime) Send(msg ev.Msg) {
 
 // Run blocks until the model quits. It returns the final model.
 func (r *Runtime) Run() (ev.Model, error) {
+	if r.opts.Screen == nil {
+		if err := r.openTerminal(); err != nil {
+			return r.Model(), err
+		}
+	}
 	if c := r.model.Init(); c != nil {
 		r.exec(c)
 	}
@@ -289,7 +296,7 @@ func (f *frame) Draw(scr tcell.Screen) {
 // matching Bubble Tea v1.
 func (f *frame) PasteHandler() func(string, func(tview.Primitive)) {
 	return func(text string, _ func(tview.Primitive)) {
-		f.r.dispatch(ev.KeyMsg{Type: ev.KeyRunes, Runes: []rune(text), Paste: true})
+		f.r.dispatch(f.r.pasteMsg(text))
 	}
 }
 
