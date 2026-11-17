@@ -12,6 +12,10 @@
 package tviewrt
 
 import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
@@ -34,6 +38,7 @@ type Options struct {
 	Key    func(*tcell.EventKey) (ev.KeyMsg, bool)
 	MouseE func(*tcell.EventMouse, tview.MouseAction) []ev.MouseMsg
 	Filter func(ev.Model, ev.Msg) ev.Msg // optional, like tea.WithFilter
+	RawOut io.Writer                     // where raw sequences go; nil = the screen tty (or stdout)
 }
 
 // Runtime is a running program.
@@ -46,6 +51,9 @@ type Runtime struct {
 	model ev.Model
 	w, h  int
 	quit  bool
+
+	rawMu sync.Mutex
+	raw   bytes.Buffer // terminal-native sequences (kitty APC) flushed after each Show
 }
 
 // New prepares a runtime for m; call Run to start it.
@@ -62,7 +70,47 @@ func New(m ev.Model, opts Options) *Runtime {
 	r.app.SetInputCapture(r.onKey)
 	r.app.SetMouseCapture(r.onMouse)
 	r.app.SetBeforeDrawFunc(r.beforeDraw)
+	r.app.SetAfterDrawFunc(r.afterDraw)
 	return r
+}
+
+// Raw returns a writer for terminal-native escape sequences that cannot live
+// in the cell grid (kitty image upload/placement). Bytes are buffered and
+// written to the tty right after the next frame is shown. Safe from any
+// goroutine; this is what app.ImageOut is set to under tview.
+func (r *Runtime) Raw() io.Writer { return rawWriter{r} }
+
+type rawWriter struct{ r *Runtime }
+
+func (w rawWriter) Write(p []byte) (int, error) {
+	w.r.rawMu.Lock()
+	defer w.r.rawMu.Unlock()
+	return w.r.raw.Write(p)
+}
+
+// afterDraw flushes buffered raw sequences once tcell has written the frame.
+// Kitty placements use C=1 (cursor does not move) and unicode placeholders,
+// so where the cursor sits does not matter.
+func (r *Runtime) afterDraw(scr tcell.Screen) {
+	r.rawMu.Lock()
+	if r.raw.Len() == 0 {
+		r.rawMu.Unlock()
+		return
+	}
+	b := append([]byte(nil), r.raw.Bytes()...)
+	r.raw.Reset()
+	r.rawMu.Unlock()
+	if r.opts.RawOut != nil {
+		_, _ = r.opts.RawOut.Write(b)
+		return
+	}
+	if tty, ok := scr.Tty(); ok {
+		_, _ = tty.Write(b)
+		return
+	}
+	if r.opts.Screen == nil {
+		_, _ = os.Stdout.Write(b)
+	}
 }
 
 // Send delivers msg from any goroutine (the app.Post hook).
@@ -204,6 +252,11 @@ func (f *frame) Draw(scr tcell.Screen) {
 	f.r.mu.Lock()
 	view := f.r.model.View()
 	f.r.mu.Unlock()
+	if strings.Contains(view, "\x1b_G") || strings.Contains(view, "\x1b]1337;") {
+		for _, s := range cells.Passthrough(view) {
+			_, _ = io.WriteString(f.r.Raw(), s)
+		}
+	}
 	f.r.opts.Paint(scr, x, y, w, h, view)
 }
 

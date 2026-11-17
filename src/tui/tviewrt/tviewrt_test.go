@@ -3,6 +3,7 @@ package tviewrt
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,4 +132,36 @@ func TestRuntimeLifecycle(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("quit via Sequence(…, Quit) did not stop the runtime")
 	}
+}
+
+type imgModel struct{}
+
+func (imgModel) Init() ev.Cmd                       { return nil }
+func (m imgModel) Update(ev.Msg) (ev.Model, ev.Cmd) { return m, nil }
+func (imgModel) View() string {
+	return "\x1b_Ga=T,i=42;AAAA\x1b\\before\x1b[38;5;42m\U0010EEEE̅\x1b[0m after"
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+func TestRawPassthrough(t *testing.T) {
+	scr := tcell.NewSimulationScreen("UTF-8")
+	var out syncBuf
+	r := New(imgModel{}, Options{Screen: scr, RawOut: &out})
+	scr.SetSize(30, 2)
+	go func() { _, _ = r.Run() }()
+	defer r.Stop()
+	waitFor(t, func() bool { return strings.Contains(out.String(), "\x1b_Ga=T,i=42;AAAA\x1b\\") })
+	waitFor(t, func() bool { return strings.HasPrefix(rows(r, scr)[0], "before") })
+	// Raw writes made by the app (app.ImageOut) take the same path.
+	_, _ = r.Raw().Write([]byte("\x1b_Gq=2\x1b\\"))
+	r.Send(nil)
+	r.App().QueueUpdateDraw(func() {})
+	waitFor(t, func() bool { return strings.Contains(out.String(), "q=2") })
 }
