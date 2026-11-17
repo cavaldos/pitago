@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	"github.com/atotto/clipboard"
 	"github.com/aymanbagabas/go-osc52/v2"
@@ -95,10 +96,35 @@ func Osc52String(text string) string {
 }
 
 // osc52Out is where the OSC 52 sequence goes. Bubble Tea owns stdout and
-// paints there, so the sequence is written to stderr; it is a variable so
-// tests can capture the sequence rather than emit a live one that would
-// replace the clipboard of the terminal running `go test`.
+// paints there, so the sequence is written to stderr by default; it is a
+// variable so tests can capture the sequence rather than emit a live one
+// that would replace the clipboard of the terminal running `go test`.
 var osc52Out io.Writer = os.Stderr
+
+var osc52Mu sync.Mutex
+
+// SetOsc52Writer routes OSC 52 sequences to w (nil restores stderr) and
+// returns a func that restores the previous writer.
+//
+// A runtime that owns the terminal sets this to its raw side channel. Under
+// tview that is tviewrt.Runtime.Raw(): the sequence is buffered and written
+// to the tty on the UI goroutine between frames, so it can never land in
+// the middle of a frame tcell is writing, and it still reaches the
+// terminal when stderr is redirected.
+func SetOsc52Writer(w io.Writer) (restore func()) {
+	if w == nil {
+		w = os.Stderr
+	}
+	osc52Mu.Lock()
+	prev := osc52Out
+	osc52Out = w
+	osc52Mu.Unlock()
+	return func() {
+		osc52Mu.Lock()
+		osc52Out = prev
+		osc52Mu.Unlock()
+	}
+}
 
 // writeOsc52 emits the OSC 52 sequence to stderr (the terminal-facing
 // stream in a Bubble Tea app). Returns Channel=Osc52 on success.
@@ -113,7 +139,10 @@ func writeOsc52(text string) Status {
 		status.Err = fmt.Errorf("terminal produced an empty OSC 52 sequence")
 		return status
 	}
-	if _, err := fmt.Fprint(osc52Out, seq); err != nil {
+	osc52Mu.Lock()
+	out := osc52Out
+	osc52Mu.Unlock()
+	if _, err := io.WriteString(out, seq); err != nil { // one write: never split
 		status.Err = err
 		return status
 	}
