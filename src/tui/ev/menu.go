@@ -28,8 +28,9 @@ type MenuResultMsg struct {
 
 // Menu is one top-level entry of a menu bar ("File", "Edit", …).
 type Menu struct {
-	Title string
-	Items []MenuItem
+	Title   string
+	Tooltip string // hover help for the title (runtimes that show tooltips)
+	Items   []MenuItem
 }
 
 // MenuBarProvider is implemented by a model that wants a menu bar above its
