@@ -253,7 +253,16 @@ func (r *Runtime) beforeDraw(scr tcell.Screen) bool {
 func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 	// An open menu owns the keyboard (tview routes to the overlay's top
 	// modal popup).
-	if r.opts.Key == nil || r.ov.Modal() {
+	if r.ov.Modal() {
+		// tview stops the whole application on an unmodified Ctrl+C that
+		// leaves the capture as the original event. Inside a popup Ctrl+C
+		// means "cancel this popup", like Esc.
+		if e.Key() == tcell.KeyCtrlC {
+			return tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
+		}
+		return e
+	}
+	if r.opts.Key == nil {
 		return e
 	}
 	// F10 opens the menu bar, as in most editors.

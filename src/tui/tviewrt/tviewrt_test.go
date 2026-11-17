@@ -310,3 +310,24 @@ func TestMenuBar(t *testing.T) {
 		t.Fatalf("bar/menu clicks leaked to the model: %v", c)
 	}
 }
+
+// Ctrl+C while a menu is open closes the menu; it must not stop the app
+// (tview's default for an uncaptured Ctrl+C).
+func TestCtrlCInMenuDoesNotQuit(t *testing.T) {
+	scr := tcell.NewSimulationScreen("UTF-8")
+	r := New(menuModel{}, Options{Screen: scr, Mouse: true, Key: key})
+	scr.SetSize(40, 10)
+	done := make(chan struct{})
+	go func() { _, _ = r.Run(); close(done) }()
+	defer r.Stop()
+	waitFor(t, func() bool { return strings.HasPrefix(rows(r, scr)[0], "base") })
+	scr.InjectKey(tcell.KeyRune, 'm', tcell.ModNone)
+	waitFor(t, func() bool { return strings.Contains(strings.Join(rows(r, scr), "\n"), "Alpha") })
+	scr.InjectKey(tcell.KeyCtrlC, 0, tcell.ModCtrl)
+	waitFor(t, func() bool { return !strings.Contains(strings.Join(rows(r, scr), "\n"), "Alpha") })
+	select {
+	case <-done:
+		t.Fatal("Ctrl+C in a menu quit the app")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
