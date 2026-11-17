@@ -3,6 +3,8 @@ package clipboard
 import (
 	"bytes"
 	"errors"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -204,5 +206,37 @@ func TestWriteExternalNoHelperInstalledIsNotAnError(t *testing.T) {
 	st := writeExternal("hello")
 	if st.Channel != None || st.Err != nil {
 		t.Fatalf("no installed helper must be None with no error, got %q / %v", st.Channel, st.Err)
+	}
+}
+
+// countingWriter records each Write call separately.
+type countingWriter struct{ writes []string }
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.writes = append(c.writes, string(p))
+	return len(p), nil
+}
+
+func TestSetOsc52WriterRoutesAndRestores(t *testing.T) {
+	t.Setenv("ORCA_WORKTREE_ID", "w")
+	var w countingWriter
+	restore := SetOsc52Writer(&w)
+	st := Write("héllo")
+	restore()
+	if st.Channel != Osc52 || st.Err != nil {
+		t.Fatalf("status %+v", st)
+	}
+	if len(w.writes) != 1 || w.writes[0] != Osc52String("héllo") {
+		t.Fatalf("want the whole sequence in one write, got %q", w.writes)
+	}
+	var later bytes.Buffer
+	defer captureOsc52(&later)()
+	if osc52Out == io.Writer(&w) {
+		t.Fatal("restore did not put the previous writer back")
+	}
+	if r := SetOsc52Writer(nil); osc52Out != io.Writer(os.Stderr) {
+		t.Fatal("nil must mean stderr")
+	} else {
+		r()
 	}
 }
