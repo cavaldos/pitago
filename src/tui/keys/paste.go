@@ -50,6 +50,27 @@ type PasteScreen struct {
 	tcell.Screen
 	pasting bool
 	pending []tcell.Event
+	inited  bool
+}
+
+// Init initializes the wrapped screen once; repeated calls are no-ops until
+// Fini. tview's SetScreen calls Init and drops the error, so a caller that
+// needs the error calls Init first.
+func (p *PasteScreen) Init() error {
+	if p.inited {
+		return nil
+	}
+	if err := p.Screen.Init(); err != nil {
+		return err
+	}
+	p.inited = true
+	return nil
+}
+
+// Fini implements tcell.Screen.
+func (p *PasteScreen) Fini() {
+	p.inited = false
+	p.Screen.Fini()
 }
 
 // NewPasteScreen wraps s.
