@@ -62,6 +62,10 @@ type ContextMenu struct {
 	// OnClose runs once when the menu closes for any reason: selection,
 	// Esc, a press outside, or Overlay.CloseModals.
 	OnClose func()
+	// OnCross, when set on the root menu, makes ← (on the root menu) and
+	// → (on a row without a submenu, at any depth) ask for the neighbouring
+	// menu: dir is -1 or +1. A MenuBar uses it to walk its titles.
+	OnCross func(dir int)
 
 	host       *Overlay
 	parent     *ContextMenu
@@ -326,10 +330,14 @@ func (m *ContextMenu) InputHandler() func(*tcell.EventKey, func(tview.Primitive)
 		case tcell.KeyRight:
 			if m.sel >= 0 && len(m.Items[m.sel].Submenu) > 0 {
 				m.openSub(m.sel, true)
+			} else if r := m.root(); r.OnCross != nil {
+				r.OnCross(+1)
 			}
 		case tcell.KeyLeft:
 			if m.parent != nil {
 				m.Close()
+			} else if m.OnCross != nil {
+				m.OnCross(-1)
 			}
 		case tcell.KeyEsc:
 			m.Close()
