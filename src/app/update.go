@@ -41,7 +41,20 @@ func sideScrollKey(t tea.KeyType) (tea.KeyType, bool) {
 	return t, false
 }
 
+// Update runs one message and then syncs native pickers (tviewrt) with the
+// dialog stack; see nativepicker.go.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if r, ok := msg.(tea.PickerResultMsg); ok {
+		return m.pickerResult(r)
+	}
+	nm, cmd := m.update(msg)
+	if mm, ok := nm.(Model); ok && NativeMenus {
+		return mm.syncNativePicker(cmd)
+	}
+	return nm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Toasts expire by wall clock: prune on every message so a missed
 	// dismissal tick still clears (the tick itself just triggers repaint).
 	m.pruneToasts()

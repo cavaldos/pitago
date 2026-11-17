@@ -22,6 +22,7 @@ import (
 	"github.com/rivo/tview"
 
 	"pitago/src/components/cells"
+	"pitago/src/tui/picker"
 	"pitago/src/tui/widgets"
 
 	"pitago/src/tui/ev"
@@ -50,6 +51,8 @@ type Runtime struct {
 	ov   *widgets.Overlay  // root primitive: popups (menus, tooltips) above the frame
 	bar  *widgets.ClickBar // menu bar row above the frame (nil without ev.MenuBarProvider)
 	top  int               // rows above the frame: 1 with a menu bar, else 0
+
+	pickers map[string]*picker.Picker // open native pickers by tag
 
 	mu    sync.Mutex // guards model against Model() readers off-loop
 	model ev.Model
@@ -181,6 +184,14 @@ func (r *Runtime) dispatch(msg ev.Msg) {
 		return
 	case ev.OpenMenuMsg:
 		r.openMenu(m)
+		return
+	case ev.OpenPickerMsg:
+		r.openPicker(m)
+		return
+	case ev.ClosePickerMsg:
+		if p := r.pickers[m.Tag]; p != nil {
+			p.Close()
+		}
 		return
 	case ev.BatchMsg:
 		for _, c := range m {
@@ -400,4 +411,42 @@ func (r *Runtime) openBarMenu(id string) {
 		menu.OpenBelow(r.ov, rect)
 		return
 	}
+}
+
+// openPicker shows an ev.OpenPickerMsg as a native picker.Picker. Its
+// outcome is dispatched back as ev.PickerResultMsg on the UI goroutine.
+func (r *Runtime) openPicker(m ev.OpenPickerMsg) {
+	if r.pickers == nil {
+		r.pickers = map[string]*picker.Picker{}
+	}
+	if old := r.pickers[m.Tag]; old != nil {
+		old.Close()
+	}
+	p := picker.New(m.Title)
+	p.Message, p.Footer, p.Filterable = m.Message, m.Footer, m.Filterable
+	items := make([]picker.Item, len(m.Items))
+	for i, it := range m.Items {
+		items[i] = picker.Item{ID: it.ID, Label: it.Label, Hint: it.Hint, Section: it.Section, Disabled: it.Disabled}
+	}
+	p.SetItems(items)
+	if m.Filter != "" {
+		p.SetFilter(m.Filter)
+	}
+	if m.Selected != "" {
+		p.SetSelected(m.Selected)
+	}
+	tag := m.Tag
+	done := false
+	finish := func(res ev.PickerResultMsg) {
+		if done {
+			return
+		}
+		done = true
+		delete(r.pickers, tag)
+		r.dispatch(res)
+	}
+	p.OnSelect = func(id string) { finish(ev.PickerResultMsg{Tag: tag, ID: id}) }
+	p.OnCancel = func() { finish(ev.PickerResultMsg{Tag: tag, Cancelled: true}) }
+	r.pickers[tag] = p
+	p.Open(r.ov)
 }

@@ -3636,7 +3636,7 @@ func (m Model) view() string {
 	// The /mcp screens are a floating window over the transcript, like
 	// every other dialog here (see renderMcpOverlay), so they take the
 	// normal frame composition and never stand in for the editor.
-	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" {
+	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" && !m.nativePickerOpen() {
 		if m.Dialogs[0].Kind == "team" {
 			return m.renderFloatingTeamDashboard()
 		}

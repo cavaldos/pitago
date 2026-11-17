@@ -92,6 +92,7 @@ type Dialog struct {
 	SubOffset         int         // subagents overlay: detail scroll offset from tail
 	SubHeader         string      // subagents overlay: detail activity header
 	oauth             *oauthState // oauthFlow: in-TUI OAuth login state
+	pickerTag         string      // native picker shown for this dialog under tviewrt ("" = drawn as text)
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -118,8 +119,10 @@ type Model struct {
 	vp                  viewport.Model
 	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
 	ta                  textarea.Model
-	SideWidth           int  // sidebar width from dragging its divider (0 = default); see sideW
-	sideDrag            bool // left button held on the sidebar divider
+	SideWidth           int    // sidebar width from dragging its divider (0 = default); see sideW
+	sideDrag            bool   // left button held on the sidebar divider
+	nativePicker        string // tag of the native picker the runtime has open ("" = none)
+	pickerSeq           int    // last native picker tag number
 	Pi                  *pirpc.Client
 	liveBridge          *live.Bridge     // foreign Pi SSE bridge (read-only)
 	liveTail            *live.Tail       // foreign Pi session-file tail (read-only, any running pi)
