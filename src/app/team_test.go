@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"
 )

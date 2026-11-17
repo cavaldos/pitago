@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // shell.go — "!" on an empty editor switches the editor into shell mode.

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Two-pane model picker: left = providers, right = scoped models.

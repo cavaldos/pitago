@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	terminal_image "pitago/src/components/terminal_image"
 	"pitago/src/pirpc"

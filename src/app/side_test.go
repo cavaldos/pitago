@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Fresh models hide MCP + Plugins + Commands (Sidebar tab default) but keep

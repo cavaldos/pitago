@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/ext"
 	"pitago/src/pirpc"

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	tea "pitago/src/tui/ev"
 )
 
 // Two columns: left = step names, right = the selected step's detail.

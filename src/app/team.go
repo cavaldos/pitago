@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	tea "pitago/src/tui/ev"
 )
 
 const (

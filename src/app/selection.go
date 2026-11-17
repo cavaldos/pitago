@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rivo/uniseg"
+	tea "pitago/src/tui/ev"
 )
 
 // Point is an absolute chat-content coordinate: Line is 0-based within the

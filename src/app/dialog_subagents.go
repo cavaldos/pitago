@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // subagentsScopeActive / Finished are the Dialog.Scope values (Tab toggles).

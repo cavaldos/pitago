@@ -1,6 +1,6 @@
 package app
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "pitago/src/tui/ev"
 
 // plan_toggle.go — Tab toggles plan mode.
 //

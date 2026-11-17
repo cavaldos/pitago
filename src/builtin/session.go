@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/app"
 	"pitago/src/components/format"

@@ -3,8 +3,8 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // sideClickableAt reports whether (x, y) is a sidebar row that reacts to a

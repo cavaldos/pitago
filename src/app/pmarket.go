@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Marketplace: search and install new pi packages from the npm registry

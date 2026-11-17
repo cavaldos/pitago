@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // The screenshot: a trackpad swipe floods "[<Cb;Cx;CyM" reports that arrive

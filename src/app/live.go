@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/live"
 	"pitago/src/pirpc"
@@ -28,8 +28,8 @@ func (m Model) runLiveBridge() tea.Cmd {
 	generation := m.liveGeneration
 	return func() tea.Msg {
 		cmd := bridge.Start(context.Background(), func(message live.Message) {
-			if ProgRef != nil {
-				ProgRef.Send(liveMsg{generation: generation, message: message})
+			if Post != nil {
+				Post(liveMsg{generation: generation, message: message})
 			}
 		})
 		cmd()
@@ -50,8 +50,8 @@ func (m Model) runLiveTail() tea.Cmd {
 	generation := m.liveGeneration
 	return func() tea.Msg {
 		tail.Start(context.Background(), func(message live.Message) {
-			if ProgRef != nil {
-				ProgRef.Send(liveMsg{generation: generation, message: message})
+			if Post != nil {
+				Post(liveMsg{generation: generation, message: message})
 			}
 		})()
 		return nil

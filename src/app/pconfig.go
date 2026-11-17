@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/theme"
 	"pitago/src/pirpc"

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // scrollModel is a ready model holding n chat lines of transcript, so a
@@ -204,7 +204,7 @@ func BenchmarkWheelScrollLongChat(b *testing.B) {
 					}
 					if mode == "re_render_per_event" {
 						var c tea.Cmd
-						m.vp, c = m.vp.Update(ev)
+						m.vp, c = vpUpdate(m.vp, ev)
 						_ = c
 						m.Refresh()
 						continue

@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"
 )

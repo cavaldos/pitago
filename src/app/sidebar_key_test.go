@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Ctrl+E toggles the sidebar. Ctrl+B used to, but herdr (a terminal

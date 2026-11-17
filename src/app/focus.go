@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/filetree"
 	"pitago/src/components/markdown"

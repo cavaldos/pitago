@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/ext"
 

@@ -1,6 +1,6 @@
 package app
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "pitago/src/tui/ev"
 
 // Live /trajectory: while the window is open, every pi event that can add
 // or finish a step re-reads the session tree in the background and swaps

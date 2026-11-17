@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/format"
 	"pitago/src/pirpc"

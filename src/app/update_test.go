@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"
 )

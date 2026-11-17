@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/pet"
@@ -289,9 +289,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mm.Button == tea.MouseButtonWheelLeft || mm.Button == tea.MouseButtonWheelRight) {
 		var c tea.Cmd
 		if m.overSide(mm.X) {
-			m.sideVp, c = m.sideVp.Update(msg)
+			m.sideVp, c = vpUpdate(m.sideVp, msg)
 		} else {
-			m.vp, c = m.vp.Update(msg)
+			m.vp, c = vpUpdate(m.vp, msg)
 			// Reports the filter coalesced away still count.
 			if n := takeWheelCarry(); n > 0 {
 				m.vp.ScrollDown(n * 3)
@@ -1252,7 +1252,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.liveBridge != nil {
 			m.liveBridge.SetOwnPID(msg.client.PID())
 		}
-		msg.client.SetOnEvent(func(e pirpc.Event) { ProgRef.Send(piEventMsg{e}) })
+		msg.client.SetOnEvent(func(e pirpc.Event) { Post(piEventMsg{e}) })
 		m.Status = "reloading…"
 		m.Refresh()
 		return m, m.fetchAll()
@@ -1600,7 +1600,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					km := msg
 					km.Alt = false // viewport KeyMap matches "up", not "alt+up"
 					var c tea.Cmd
-					m.sideVp, c = m.sideVp.Update(km)
+					m.sideVp, c = vpUpdate(m.sideVp, km)
 					return m, c
 				}
 			}
@@ -1608,7 +1608,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				km := msg
 				km.Type = plain // viewport KeyMap matches plain keys
 				var c tea.Cmd
-				m.sideVp, c = m.sideVp.Update(km)
+				m.sideVp, c = vpUpdate(m.sideVp, km)
 				return m, c
 			}
 		}
@@ -1905,7 +1905,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.JumpToLatest()
 			return m, nil
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome:
-			m.vp, cmd = m.vp.Update(msg)
+			m.vp, cmd = vpUpdate(m.vp, msg)
 			return m, cmd
 		}
 	}
@@ -1917,7 +1917,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wasBrowsing {
 			oldVal = m.ta.Value()
 		}
-		m.ta, cmd = m.ta.Update(msg)
+		m.ta, cmd = taUpdate(m.ta, msg)
 		cmds = append(cmds, cmd)
 		if wasBrowsing && m.ta.Value() != oldVal {
 			m.histIdx = -1 // edited a recalled message → back to live input
@@ -1931,9 +1931,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mm, ok := msg.(tea.MouseMsg); ok && mm.Action == tea.MouseActionPress &&
 			(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) &&
 			m.overSide(mm.X) {
-			m.sideVp, cmd = m.sideVp.Update(msg)
+			m.sideVp, cmd = vpUpdate(m.sideVp, msg)
 		} else {
-			m.vp, cmd = m.vp.Update(msg)
+			m.vp, cmd = vpUpdate(m.vp, msg)
 		}
 		cmds = append(cmds, cmd)
 	}

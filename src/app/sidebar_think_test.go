@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // stripSideBox splits a rendered sidebar into plain lines with the box

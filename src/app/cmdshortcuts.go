@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // Hub-assigned Alt shortcuts for /commands (Skills/Prompts/Extensions tabs).

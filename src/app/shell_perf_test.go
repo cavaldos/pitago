@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Per-keystroke cost, measured the way the user feels it: one typed

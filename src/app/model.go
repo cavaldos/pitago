@@ -7,8 +7,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/favorite"
@@ -1203,9 +1203,9 @@ func (m *Model) setChatContent(s string) {
 func (m *Model) wheelTo(x int, msg tea.MouseMsg) tea.Cmd {
 	var c tea.Cmd
 	if m.overSide(x) {
-		m.sideVp, c = m.sideVp.Update(msg)
+		m.sideVp, c = vpUpdate(m.sideVp, msg)
 	} else {
-		m.vp, c = m.vp.Update(msg)
+		m.vp, c = vpUpdate(m.vp, msg)
 	}
 	return c
 }
@@ -1717,15 +1717,16 @@ func mergeCommands(builtins []Builtin, cmds []pirpc.RepoCommand) []pirpc.RepoCom
 	return out
 }
 
-// ProgRef lets respawns rewire the pi event stream (tea.Program.Send is
-// thread-safe). Set once from main before Run.
-var ProgRef *tea.Program
+// Post delivers a message into the running UI program from any goroutine
+// (respawns use it to rewire the pi event stream). Set once from main before
+// Run; nil in tests, which drive Update directly.
+var Post tea.Sender
 
 // WireClient routes a pi client's events into the UI program.
 func WireClient(c *pirpc.Client) {
 	c.SetOnEvent(func(e pirpc.Event) {
-		if ProgRef != nil {
-			ProgRef.Send(piEventMsg{e})
+		if Post != nil {
+			Post(piEventMsg{e})
 		}
 	})
 }
