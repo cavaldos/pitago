@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textarea"
+	"pitago/src/components/textarea"
 
 	"pitago/src/components/mention"
 )

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textarea"
+	"pitago/src/components/textarea"
 	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"

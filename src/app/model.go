@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/textarea"
 	tea "pitago/src/tui/ev"
 	"pitago/src/tui/viewport"
 

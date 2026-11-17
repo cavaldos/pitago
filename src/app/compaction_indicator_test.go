@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
+	"pitago/src/components/textarea"
 
 	"pitago/src/pirpc"
 )

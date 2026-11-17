@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"pitago/src/components/textarea"
 	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/format"
