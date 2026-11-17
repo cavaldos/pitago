@@ -31,6 +31,10 @@ Branch: `feat/tview-migration` (from `main`). Peer branches merge into it:
 | P4 | native ChatView (`src/tui/chatview`, `tview/render`), TextArea input, sidebar, header, toasts | in progress |
 | P5 | dialogs (pickers → config → dashboards → tree/focus/pet) | todo |
 | P6 | mouse selection/hover/drag on cells; drop mouseleak/scroll_filter | todo |
+| M1 | sidebar divider drag (prefs.sideWidth) | done |
+| M2 | widget kit `src/tui/widgets`; Overlay is the tviewrt root | done |
+| M3 | right-click context menus at the pointer: chat block, input (`ev.OpenMenuMsg` → `MenuResultMsg`) | done (tview); Bubble Tea keeps the dialog |
+| M4 | clickable header/status segments, tooltips, `⋯` buttons, sidebar row menus | todo |
 | P7 | tests on SimulationScreen goldens | ongoing |
 | P8 | remove teabridge, bubbles, lipgloss; tview default | todo |
 

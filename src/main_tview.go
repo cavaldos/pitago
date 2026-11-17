@@ -24,6 +24,7 @@ func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
 		Filter: app.ScrollEventFilter,
 	})
 	app.Post = rt.Send
+	app.NativeMenus = rt.Menus()
 	app.ImageOut = rt.Raw()
 	app.WireClient(pi)
 	if _, err := rt.Run(); err != nil {

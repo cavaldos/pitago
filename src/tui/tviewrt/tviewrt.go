@@ -22,6 +22,7 @@ import (
 	"github.com/rivo/tview"
 
 	"pitago/src/components/cells"
+	"pitago/src/tui/widgets"
 
 	"pitago/src/tui/ev"
 )
@@ -46,6 +47,7 @@ type Runtime struct {
 	app  *tview.Application
 	opts Options
 	root *frame
+	ov   *widgets.Overlay // root primitive: popups (menus, tooltips) above the frame
 
 	mu    sync.Mutex // guards model against Model() readers off-loop
 	model ev.Model
@@ -63,7 +65,8 @@ func New(m ev.Model, opts Options) *Runtime {
 	}
 	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m}
 	r.root = &frame{Box: tview.NewBox(), r: r}
-	r.app.SetRoot(r.root, true).EnableMouse(opts.Mouse).EnablePaste(true)
+	r.ov = widgets.NewOverlay(r.root)
+	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
 	if opts.Screen != nil {
 		r.app.SetScreen(opts.Screen)
 	}
@@ -155,6 +158,9 @@ func (r *Runtime) dispatch(msg ev.Msg) {
 	case ev.MouseModeMsg:
 		r.app.EnableMouse(m.All)
 		return
+	case ev.OpenMenuMsg:
+		r.openMenu(m)
+		return
 	case ev.BatchMsg:
 		for _, c := range m {
 			r.exec(c)
@@ -223,7 +229,9 @@ func (r *Runtime) beforeDraw(scr tcell.Screen) bool {
 }
 
 func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
-	if r.opts.Key == nil {
+	// An open menu owns the keyboard (tview routes to the overlay's top
+	// modal popup).
+	if r.opts.Key == nil || r.ov.Modal() {
 		return e
 	}
 	if k, ok := r.opts.Key(e); ok {
@@ -238,7 +246,9 @@ func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 // consumed, which is what makes tview redraw.
 func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
 	// tcell clamps coordinates to 0,0 until its first resize lands.
-	if r.opts.MouseE == nil || r.w == 0 {
+	// An open menu owns the pointer; the overlay routes the event to it
+	// (and closes it on a press outside, swallowing that click).
+	if r.opts.MouseE == nil || r.w == 0 || r.ov.Modal() {
 		return e, a
 	}
 	for _, m := range r.opts.MouseE(e, a) {
@@ -281,4 +291,35 @@ func (f *frame) PasteHandler() func(string, func(tview.Primitive)) {
 	return func(text string, _ func(tview.Primitive)) {
 		f.r.dispatch(ev.KeyMsg{Type: ev.KeyRunes, Runes: []rune(text), Paste: true})
 	}
+}
+
+// Menus reports that this runtime can show native context menus
+// (ev.OpenMenuMsg). The Bubble Tea runtime cannot.
+func (r *Runtime) Menus() bool { return true }
+
+// openMenu shows an ev.OpenMenuMsg as a widgets.ContextMenu. The choice is
+// dispatched back as ev.MenuResultMsg on the UI goroutine.
+func (r *Runtime) openMenu(m ev.OpenMenuMsg) {
+	if len(m.Items) == 0 {
+		return
+	}
+	menu := widgets.NewContextMenu(toWidgetItems(m.Items))
+	tag := m.Tag
+	menu.OnSelect = func(id string) { r.dispatch(ev.MenuResultMsg{Tag: tag, ID: id}) }
+	menu.OpenAt(r.ov, m.X, m.Y)
+}
+
+func toWidgetItems(in []ev.MenuItem) []widgets.MenuItem {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]widgets.MenuItem, len(in))
+	for i, it := range in {
+		out[i] = widgets.MenuItem{
+			ID: it.ID, Label: it.Label, Shortcut: it.Shortcut,
+			Disabled: it.Disabled, Separator: it.Separator,
+			Submenu: toWidgetItems(it.Submenu),
+		}
+	}
+	return out
 }

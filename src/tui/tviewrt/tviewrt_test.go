@@ -198,3 +198,47 @@ func TestMouseDragReachesModel(t *testing.T) {
 		}
 	}
 }
+
+type menuModel struct{ picked string }
+
+func (menuModel) Init() ev.Cmd { return nil }
+func (m menuModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
+	switch x := msg.(type) {
+	case ev.KeyMsg:
+		return m, func() ev.Msg {
+			return ev.OpenMenuMsg{Tag: "t", X: 2, Y: 1, Items: []ev.MenuItem{{ID: "a", Label: "Alpha"}, {ID: "b", Label: "Beta"}}}
+		}
+	case ev.MenuResultMsg:
+		m.picked = x.Tag + "/" + x.ID
+	}
+	return m, nil
+}
+func (m menuModel) View() string { return "base " + m.picked }
+
+func TestNativeMenuRoundTrip(t *testing.T) {
+	scr := tcell.NewSimulationScreen("UTF-8")
+	var tr keys.MouseTracker
+	r := New(menuModel{}, Options{Screen: scr, Mouse: true, Key: key, MouseE: tr.FromMouse})
+	scr.SetSize(40, 10)
+	go func() { _, _ = r.Run() }()
+	defer r.Stop()
+	waitFor(t, func() bool { return strings.HasPrefix(rows(r, scr)[0], "base") })
+	scr.InjectKey(tcell.KeyRune, 'm', tcell.ModNone)
+	// The menu is drawn by the overlay at (2,1); find the "Beta" row.
+	var by, bx int
+	waitFor(t, func() bool {
+		for y, row := range rows(r, scr) {
+			if i := strings.Index(row, "Beta"); i >= 0 {
+				by, bx = y, len([]rune(row[:i]))
+				return true
+			}
+		}
+		return false
+	})
+	// Keys go to the open menu, not the model: ↓ moves, it doesn't reopen.
+	time.Sleep(30 * time.Millisecond)
+	scr.InjectMouse(bx, by, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(bx, by, tcell.ButtonNone, tcell.ModNone)
+	waitFor(t, func() bool { return r.Model().(menuModel).picked == "t/b" })
+	waitFor(t, func() bool { return !strings.Contains(strings.Join(rows(r, scr), "\n"), "Alpha") })
+}

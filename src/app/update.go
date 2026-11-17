@@ -306,6 +306,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.MenuResultMsg:
+		return m.menuResult(msg)
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = msg.Width, msg.Height
 		mainW := m.mainW()
@@ -1497,6 +1499,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Chat-only: sidebars keep their own click handlers below. The
 		// bound is the painted chat frame, not m.vp — rows below it are the
 		// task widget or a plugin panel, not transcript blocks.
+		// ttt-style context menu at the pointer when the runtime can draw
+		// one; otherwise the full-screen block-actions dialog below.
+		if m.Mouse && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
+			if cmd, ok := m.rightClickMenu(msg); ok {
+				return m, cmd
+			}
+		}
 		if m.Mouse && msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonRight && !m.overSide(msg.X) &&
 			msg.Y >= 1 && msg.Y <= m.chatViewport().Height {
