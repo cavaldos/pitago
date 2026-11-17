@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/pirpc"
 )

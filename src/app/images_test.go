@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	terminal_image "pitago/src/components/terminal_image"

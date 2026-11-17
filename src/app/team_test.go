@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/pirpc"
 )

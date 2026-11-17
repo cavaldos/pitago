@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/pet"

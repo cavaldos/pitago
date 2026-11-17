@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/favorite"

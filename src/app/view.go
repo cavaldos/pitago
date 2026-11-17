@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/format"
 	"pitago/src/components/markdown"

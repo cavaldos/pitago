@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 )
 
 // scrollModel is a ready model holding n chat lines of transcript, so a

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
+	"pitago/src/tui/viewport"
 )
 
 func jumpTestModel(blocks ...Block) Model {

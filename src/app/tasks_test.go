@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/pirpc"
 )

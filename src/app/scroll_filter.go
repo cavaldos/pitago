@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 )
 
 // ScrollEventFilter drops the mouse messages that Bubble Tea can only answer
