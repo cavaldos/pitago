@@ -419,7 +419,7 @@ func TestPendingPassthrough(t *testing.T) {
 	defer s.Fini()
 	draw(t, v, s)
 	d, _ := terminal_image.Diacritic(0)
-	if string(cell(s, 0, 0).Runes) != terminal_image.PlaceholderChar+string(d) {
+	if string(cell(s, 0, 0).Runes) != terminal_image.PlaceholderChar+string(d)+string(d) {
 		t.Fatalf("placeholder cell %q", string(cell(s, 0, 0).Runes))
 	}
 }

@@ -53,7 +53,7 @@ type Runtime struct {
 	quit  bool
 
 	rawMu sync.Mutex
-	raw   bytes.Buffer // terminal-native sequences (kitty APC) flushed after each Show
+	raw   bytes.Buffer // terminal-native sequences (kitty APC) flushed before each Show
 }
 
 // New prepares a runtime for m; call Run to start it.
@@ -76,7 +76,8 @@ func New(m ev.Model, opts Options) *Runtime {
 
 // Raw returns a writer for terminal-native escape sequences that cannot live
 // in the cell grid (kitty image upload/placement). Bytes are buffered and
-// written to the tty right after the next frame is shown. Safe from any
+// written to the tty just before the next frame is shown (tview runs
+// root.Draw → afterDraw → Show), so a payload precedes the frame that uses it. Safe from any
 // goroutine; this is what app.ImageOut is set to under tview.
 func (r *Runtime) Raw() io.Writer { return rawWriter{r} }
 
@@ -88,7 +89,8 @@ func (w rawWriter) Write(p []byte) (int, error) {
 	return w.r.raw.Write(p)
 }
 
-// afterDraw flushes buffered raw sequences once tcell has written the frame.
+// afterDraw flushes buffered raw sequences before tcell shows the frame (tview
+// calls the after-draw hook ahead of Screen.Show; keep it that way).
 // Kitty placements use C=1 (cursor does not move) and unicode placeholders,
 // so where the cursor sits does not matter.
 func (r *Runtime) afterDraw(scr tcell.Screen) {

@@ -282,10 +282,16 @@ func PlaceholderRow(id uint64, row, cols int) (string, bool) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\x1b[38;5;%dm", id&0xff)
-	b.WriteString(PlaceholderChar)
-	b.WriteRune(rd)
-	if cols > 1 {
-		b.WriteString(strings.Repeat(PlaceholderChar, cols-1))
+	// Every cell carries its row AND column diacritic. Kitty lets bare cells
+	// inherit from the placeholder to their left on screen, but a cell-grid
+	// renderer (tcell) repaints single dirty cells and popups can cover an
+	// image's left part, so self-describing cells are the only safe form.
+	for c := 0; c < cols; c++ {
+		b.WriteString(PlaceholderChar)
+		b.WriteRune(rd)
+		if cd, ok := Diacritic(c); ok {
+			b.WriteRune(cd)
+		}
 	}
 	b.WriteString("\x1b[39m")
 	return b.String(), true

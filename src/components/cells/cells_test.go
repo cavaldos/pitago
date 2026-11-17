@@ -179,13 +179,11 @@ func TestKittyPlaceholderRow(t *testing.T) {
 			t.Fatalf("id %d: %d cells, width %d", id, len(ln), ln.Width())
 		}
 		d, _ := terminal_image.Diacritic(3)
-		if ln[0].Grapheme != terminal_image.PlaceholderChar+string(d) {
-			t.Fatalf("first cell %q lost its row diacritic", ln[0].Grapheme)
-		}
 		fg := def.Foreground(tcell.PaletteColor(int(id)))
 		for i, c := range ln {
-			if i > 0 && c.Grapheme != terminal_image.PlaceholderChar {
-				t.Fatalf("cell %d = %q", i, c.Grapheme)
+			cd, _ := terminal_image.Diacritic(i)
+			if c.Grapheme != terminal_image.PlaceholderChar+string(d)+string(cd) {
+				t.Fatalf("id %d cell %d = %q, want row+col diacritics", id, i, c.Grapheme)
 			}
 			if c.Style != fg {
 				t.Fatalf("id %d cell %d style %+v", id, i, c.Style)
@@ -361,7 +359,8 @@ func TestDrawKeepsCombining(t *testing.T) {
 	s.Show()
 	cs := screenRow(s, 0)
 	d, _ := terminal_image.Diacritic(2)
-	if string(cs[0].Runes) != terminal_image.PlaceholderChar+string(d) {
+	c0, _ := terminal_image.Diacritic(0)
+	if string(cs[0].Runes) != terminal_image.PlaceholderChar+string(d)+string(c0) {
 		t.Fatalf("cell0 runes %q", string(cs[0].Runes))
 	}
 	if fg, _, _ := cs[0].Style.Decompose(); fg != tcell.PaletteColor(42) {
