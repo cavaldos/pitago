@@ -10,8 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
-
+	"pitago/src/components/cellwidth"
 	"pitago/src/pirpc"
 )
 
@@ -186,7 +185,7 @@ func horizontalViewport(rows []renderedRow, width int) []Line {
 func Width(ln Line) int {
 	w := 0
 	for _, s := range ln {
-		w += runewidth.StringWidth(s.Text)
+		w += cellwidth.StringWidth(s.Text)
 	}
 	return w
 }
@@ -208,13 +207,13 @@ func SliceColumns(ln Line, start, length int) Line {
 	var out Line
 	for _, s := range ln {
 		var b strings.Builder
-		for _, r := range s.Text {
-			w := runewidth.RuneWidth(r)
+		cellwidth.Graphemes(s.Text, func(g string, w int) bool {
 			if col >= start && col+w <= end {
-				b.WriteRune(r)
+				b.WriteString(g)
 			}
 			col += w
-		}
+			return true
+		})
 		if b.Len() > 0 {
 			s.Text = b.String()
 			out = append(out, s)

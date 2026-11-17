@@ -3,7 +3,7 @@ package format
 import (
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/cellwidth"
 )
 
 func TestPrettyArgs(t *testing.T) {
@@ -190,10 +190,10 @@ func TestShortNeverExceedsWidth(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := Short(c.s, c.n)
-		if w := lipgloss.Width(got); c.n >= 1 && w > c.n {
+		if w := cellwidth.Width(got); c.n >= 1 && w > c.n {
 			t.Fatalf("Short(%q, %d) = %q (width %d)", c.s, c.n, got, w)
 		}
-		if c.n >= 1 && lipgloss.Width(c.s) > c.n && !containsEllipsis(got) {
+		if c.n >= 1 && cellwidth.Width(c.s) > c.n && !containsEllipsis(got) {
 			t.Fatalf("Short(%q, %d) = %q, want …", c.s, c.n, got)
 		}
 	}
@@ -203,7 +203,7 @@ func TestFitExactWidth(t *testing.T) {
 	for _, w := range []int{5, 20, 40} {
 		for _, s := range []string{"", "ab", "Xiaomi Token Plan (Singapore) no key", "héllo wörld"} {
 			got := Fit(s, w)
-			if gw := lipgloss.Width(got); gw != w {
+			if gw := cellwidth.Width(got); gw != w {
 				t.Fatalf("Fit(%q, %d) width = %d", s, w, gw)
 			}
 		}
