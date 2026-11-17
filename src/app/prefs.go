@@ -42,6 +42,7 @@ type Prefs struct {
 	Background      string            `json:"background,omitempty"`      // app surface: an opencode background slug, "" = the terminal's own
 	TaskWidgetOff   bool              `json:"taskWidgetOff,omitempty"`   // hide the above-editor task widget
 	ShellBinary     string            `json:"shellBinary,omitempty"`     // shell mode program: "$SHELL" (default) or an absolute path; "" = follow $SHELL
+	SideWidth       int               `json:"sideWidth,omitempty"`       // sidebar width set by dragging its divider (0 = default)
 }
 
 // TaskWidgetVisible reports whether the above-editor task widget should paint.

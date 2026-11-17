@@ -72,14 +72,14 @@ func TestSidebarFitsHeight(t *testing.T) {
 }
 
 // Regression (screenshot): lipgloss Width() covers padding, not the border,
-// so the box rendered 2 cells wider than sideW and left the content short of
+// so the box rendered 2 cells wider than defaultSideW and left the content short of
 // the right edge. Every row must now reach winW with no gap beside the chat.
 func TestSidebarFillsWidth(t *testing.T) {
 	m := tallModel(t)
 	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = tm.(Model)
-	if w := lipgloss.Width(m.renderSidebar()); w != sideW {
-		t.Fatalf("sidebar box is %d cells, want %d", w, sideW)
+	if w := lipgloss.Width(m.renderSidebar()); w != defaultSideW {
+		t.Fatalf("sidebar box is %d cells, want %d", w, defaultSideW)
 	}
 	for i, ln := range strings.Split(m.View(), "\n") {
 		if w := lipgloss.Width(ln); w != m.winW {
@@ -122,8 +122,8 @@ func TestSidebarToolsOnlyShowsInvokedCallsInBlockOrder(t *testing.T) {
 		t.Fatalf("TOOLS section contains non-tool transcript data:\n%s", out)
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if w := lipgloss.Width(line); w > sideInnerW {
-			t.Fatalf("sidebar line is %d cells, want <= %d: %q", w, sideInnerW, line)
+		if w := lipgloss.Width(line); w > (defaultSideW - 4) {
+			t.Fatalf("sidebar line is %d cells, want <= %d: %q", w, (defaultSideW - 4), line)
 		}
 	}
 }

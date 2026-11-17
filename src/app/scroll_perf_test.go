@@ -18,7 +18,7 @@ func scrollModel(t testing.TB, n int) Model {
 	m.baseVpH = 23
 	m.hideSide = true
 	m.vp = viewport.New(116, 23)
-	m.sideVp = viewport.New(sideInnerW, 10)
+	m.sideVp = viewport.New((defaultSideW - 4), 10)
 	m.blocks = make([]Block, n)
 	for i := range m.blocks {
 		m.blocks[i] = Block{Kind: "assistant", Text: fmt.Sprintf("answer %d\ndetail line one\ndetail line two", i)}

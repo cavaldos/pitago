@@ -248,7 +248,7 @@ func (m Model) renderPet(inner int) string {
 		}
 		row := astyle.Render(pet.ClassicFace(m.pet.status, m.pet.tick)) + " " +
 			statusBarStyle.Render(Short(m.petLabel(), labelW))
-		return row + "\n" + sep() + "\n"
+		return row + "\n" + m.sep() + "\n"
 	}
 	p := m.petShown()
 	frame := m.petFrame()
@@ -274,7 +274,7 @@ func (m Model) renderPet(inner int) string {
 		}
 		rows = append(rows, astyle.Render(ln))
 	}
-	rows = append(rows, sep())
+	rows = append(rows, m.sep())
 	return strings.Join(rows, "\n") + "\n"
 }
 

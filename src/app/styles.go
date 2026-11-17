@@ -10,9 +10,31 @@ import (
 	"pitago/src/components/theme"
 )
 
-const sideW = 34 // sidebar width
+// defaultSideW is the sidebar width until the user drags its divider
+// (Model.SideWidth, persisted in prefs). minSideW keeps the section rows
+// legible; minChatW is what the chat keeps when the sidebar grows.
+const (
+	defaultSideW = 34
+	minSideW     = 26
+	minChatW     = 40
+)
 
-const sideInnerW = sideW - 4 // sidebar content width (box minus border 2 + padding 2)
+// sideW is the sidebar box width: the dragged width clamped to the window,
+// or the default.
+func (m Model) sideW() int {
+	if m.SideWidth <= 0 {
+		return defaultSideW
+	}
+	return clampSideW(m.SideWidth, m.winW)
+}
+
+// sideInnerW is the sidebar content width (box minus border 2 + padding 2).
+func (m Model) sideInnerW() int { return m.sideW() - 4 }
+
+func clampSideW(w, winW int) int {
+	hi := max(minSideW, winW-minChatW)
+	return min(hi, max(minSideW, w))
+}
 
 const maxRecent = recent.MaxRecent // recent models kept in the sidebar
 

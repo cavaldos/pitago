@@ -54,7 +54,7 @@ func ScrollEventFilter(m tea.Model, msg tea.Msg) tea.Msg {
 		// A chat drag selection reads motion (press → motion* → release):
 		// while one is active every report extends the focus. Otherwise
 		// no binding reads motion; see above.
-		if md.sel.Active {
+		if md.sel.Active || md.sideDrag {
 			return msg
 		}
 		// Hover highlight reads motion, but only a change in which

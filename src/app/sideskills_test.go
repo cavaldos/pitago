@@ -51,7 +51,7 @@ func bashExec(cmd, output string) Block {
 // section would advertise the installed catalogue it exists to hide.
 func TestSkillsSectionHiddenUntilUsed(t *testing.T) {
 	m := New(nil, t.TempDir())
-	if out := m.renderSkillsSection(sideInnerW); out != "" {
+	if out := m.renderSkillsSection((defaultSideW - 4)); out != "" {
 		t.Fatalf("unused session must render no skills section, got:\n%s", out)
 	}
 	if out := stripANSI(m.buildSidebarContent()); strings.Contains(out, "SKILLS") {
@@ -411,12 +411,12 @@ func TestSkillsDescriptionElides(t *testing.T) {
 	m.Cmds = []pirpc.RepoCommand{skillCmd("archify", "/s/archify/SKILL.md",
 		"Create polished, validated architecture and workflow diagrams as explorable HTML")}
 	m.blocks = []Block{readSkill("/s/archify")}
-	row := strings.Split(strings.TrimRight(m.renderSkillsSection(sideInnerW), "\n"), "\n")[1]
+	row := strings.Split(strings.TrimRight(m.renderSkillsSection((defaultSideW-4)), "\n"), "\n")[1]
 	if !strings.Contains(stripANSI(row), "…") {
 		t.Fatalf("long description must elide: %q", stripANSI(row))
 	}
-	if w := lipgloss.Width(row); w > sideInnerW {
-		t.Fatalf("row is %d cells wide, over %d: %q", w, sideInnerW, row)
+	if w := lipgloss.Width(row); w > (defaultSideW - 4) {
+		t.Fatalf("row is %d cells wide, over %d: %q", w, (defaultSideW - 4), row)
 	}
 }
 
@@ -428,7 +428,7 @@ func TestSkillsCapsLongList(t *testing.T) {
 		m.Cmds = append(m.Cmds, skillCmd(n, "/s/"+n+"/SKILL.md", ""))
 		m.blocks = append(m.blocks, readSkill("/s/"+n))
 	}
-	out := stripANSI(m.renderSkillsSection(sideInnerW))
+	out := stripANSI(m.renderSkillsSection((defaultSideW - 4)))
 	if !strings.Contains(out, "SKILLS (14)") {
 		t.Fatalf("header must count every skill used:\n%s", out)
 	}
@@ -474,12 +474,12 @@ func TestSkillsRowsFitNarrowSidebar(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.Cmds = []pirpc.RepoCommand{skillCmd("archify", "/s/archify/SKILL.md", "a fairly long description here")}
 	m.blocks = []Block{readSkill("/s/archify"), readSkill("/s/another-skill")}
-	for _, line := range strings.Split(strings.TrimRight(m.renderSkillsSection(sideInnerW), "\n"), "\n") {
-		if w := lipgloss.Width(line); w > sideInnerW {
-			t.Errorf("row is %d cells wide, over the %d-cell column: %q", w, sideInnerW, line)
+	for _, line := range strings.Split(strings.TrimRight(m.renderSkillsSection((defaultSideW-4)), "\n"), "\n") {
+		if w := lipgloss.Width(line); w > (defaultSideW - 4) {
+			t.Errorf("row is %d cells wide, over the %d-cell column: %q", w, (defaultSideW - 4), line)
 		}
 	}
-	for _, inner := range []int{6, 8, 12, 20, sideInnerW} {
+	for _, inner := range []int{6, 8, 12, 20, (defaultSideW - 4)} {
 		rows := strings.Split(strings.TrimRight(m.renderSkillsSection(inner), "\n"), "\n")
 		if len(rows) < 3 {
 			t.Fatalf("inner=%d: expected header + 2 rows, got %q", inner, rows)

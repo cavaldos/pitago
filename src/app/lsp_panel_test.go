@@ -116,7 +116,7 @@ func TestGroupLspDiagnostics(t *testing.T) {
 // The section renders from a fixture payload, grouped, inside the column.
 func TestRenderLspSectionFromFixture(t *testing.T) {
 	m := lspModel(t, lspFixture)
-	out := lspPlain(m.renderLspSection(sideInnerW))
+	out := lspPlain(m.renderLspSection((defaultSideW - 4)))
 	// The title is the server that produced the data, like pi's "pi-lens"
 	// header — not a hardcoded "LSP".
 	if !strings.Contains(out, "gopls") {
@@ -163,7 +163,7 @@ func lspPlain(s string) string {
 
 // Rows carry L<line> and no column — pi's shape.
 func TestLspRowDropsTheColumn(t *testing.T) {
-	out := lspPlain(lspModel(t, lspFixture).renderLspSection(sideInnerW))
+	out := lspPlain(lspModel(t, lspFixture).renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "L12") || !strings.Contains(out, "L40") {
 		t.Errorf("rows must carry L<line>:\n%s", out)
 	}
@@ -270,12 +270,12 @@ func TestLspCountSpelling(t *testing.T) {
 		"a.go:1:1: error gopls E1: one\n" +
 		"a.go:2:1: error gopls E2: two\n" +
 		"a.go:3:1: warning gopls W3: three\n"
-	row := lspPlain(lspFileRow("a.go", 2, 1, sideInnerW))
+	row := lspPlain(lspFileRow("a.go", 2, 1, (defaultSideW - 4)))
 	if !strings.Contains(row, "● a.go") || !strings.Contains(row, "2E1W") {
 		t.Errorf("file row = %q", row)
 	}
-	if !strings.Contains(lspPlain(lspModel(t, out).renderLspSection(sideInnerW)), "2E1W") {
-		t.Errorf("section must draw the per-file counts:\n%s", lspModel(t, out).renderLspSection(sideInnerW))
+	if !strings.Contains(lspPlain(lspModel(t, out).renderLspSection((defaultSideW - 4))), "2E1W") {
+		t.Errorf("section must draw the per-file counts:\n%s", lspModel(t, out).renderLspSection((defaultSideW - 4)))
 	}
 }
 
@@ -306,9 +306,9 @@ func TestRenderLspSectionRespectsWidth(t *testing.T) {
 	long := "src/a_very_long_directory_tree/with/many/segments/and/a_long_file_name.go:1234:56: error some-extremely-long-source-name: " +
 		strings.Repeat("very long diagnostic message ", 10)
 	m := lspModel(t, long)
-	for _, line := range strings.Split(strings.TrimRight(m.renderLspSection(sideInnerW), "\n"), "\n") {
-		if w := lipgloss.Width(line); w > sideInnerW {
-			t.Errorf("row is %d cells wide, over the %d-cell column: %q", w, sideInnerW, line)
+	for _, line := range strings.Split(strings.TrimRight(m.renderLspSection((defaultSideW-4)), "\n"), "\n") {
+		if w := lipgloss.Width(line); w > (defaultSideW - 4) {
+			t.Errorf("row is %d cells wide, over the %d-cell column: %q", w, (defaultSideW - 4), line)
 		}
 	}
 }
@@ -318,7 +318,7 @@ func TestRenderLspSectionRespectsWidth(t *testing.T) {
 func TestLspDiagRowRespectsWidth(t *testing.T) {
 	d := LspDiagnostic{File: "a/b/c.go", Line: 1234, Col: 56, Severity: lspSevError,
 		Source: "some-extremely-long-source-name", Code: "X1", Message: strings.Repeat("boom ", 40)}
-	for _, inner := range []int{sideInnerW, 40, 30, 24, 20, 16, 12, 8, 4, 1, 0} {
+	for _, inner := range []int{(defaultSideW - 4), 40, 30, 24, 20, 16, 12, 8, 4, 1, 0} {
 		row := lspDiagRow(d, inner)
 		if w := lipgloss.Width(strings.TrimRight(row, "\n")); w > inner && inner > 0 {
 			t.Errorf("inner=%d: row is %d cells wide: %q", inner, w, row)
@@ -330,11 +330,11 @@ func TestLspDiagRowRespectsWidth(t *testing.T) {
 // that never ran, a clean run, and a missing language server are three
 // different problems and must not look alike.
 func TestRenderLspSectionEmptyStates(t *testing.T) {
-	if out := lspModel(t, "").renderLspSection(sideInnerW); !strings.Contains(out, "run lsp_diagnostics") {
+	if out := lspModel(t, "").renderLspSection((defaultSideW - 4)); !strings.Contains(out, "run lsp_diagnostics") {
 		t.Errorf("no tool result must say so:\n%s", out)
 	}
 	clean := "gopls LSP diagnostics: 0 diagnostic(s) across 1 file(s).\n\nsrc/app/clean.go: no diagnostics"
-	out := lspPlain(lspModel(t, clean).renderLspSection(sideInnerW))
+	out := lspPlain(lspModel(t, clean).renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "gopls clean") {
 		t.Errorf("a clean run must name the server, not shrug:\n%s", out)
 	}
@@ -345,7 +345,7 @@ func TestRenderLspSectionEmptyStates(t *testing.T) {
 	// The real-world trap: every server was missing, so there are zero
 	// diagnostics — but the reason must surface, or the panel looks broken.
 	skipped := "Skipped unavailable default LSP server(s): biome, ty, gopls, rubocop."
-	out = lspPlain(lspModel(t, skipped).renderLspSection(sideInnerW))
+	out = lspPlain(lspModel(t, skipped).renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "no LSP server available") {
 		t.Errorf("missing servers must be reported:\n%s", out)
 	}
@@ -378,12 +378,12 @@ func TestRenderLspSectionCollapsed(t *testing.T) {
 	if LspCollapsed() {
 		ToggleLspCollapsed()
 	}
-	out := lspPlain(m.renderLspSection(sideInnerW))
+	out := lspPlain(m.renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "▾") || !strings.Contains(out, "staticcheck") {
 		t.Fatalf("open section must show the mark and rows:\n%s", out)
 	}
 	ToggleLspCollapsed()
-	out = lspPlain(m.renderLspSection(sideInnerW))
+	out = lspPlain(m.renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "▸") || strings.Contains(out, "staticcheck") {
 		t.Fatalf("folded section must show the mark and no rows:\n%s", out)
 	}
@@ -401,7 +401,7 @@ func TestRenderLspSectionCapsRows(t *testing.T) {
 		n := strconv.Itoa(i)
 		b.WriteString("src/app/x.go:" + n + ":1: error gopls: boom " + n + "\n")
 	}
-	out := lspPlain(lspModel(t, b.String()).renderLspSection(sideInnerW))
+	out := lspPlain(lspModel(t, b.String()).renderLspSection((defaultSideW - 4)))
 	if !strings.Contains(out, "+20 more") {
 		t.Errorf("want a +N more line after %d rows:\n%s", lspRowsMax, out)
 	}
@@ -431,7 +431,7 @@ func TestLspDiagnosticsMemoNoGoroutineLeak(t *testing.T) {
 	m := lspModel(t, lspFixture)
 	for i := 0; i < 500; i++ {
 		m.lspDiags()
-		m.renderLspSection(sideInnerW)
+		m.renderLspSection((defaultSideW - 4))
 	}
 	if after := runtime.NumGoroutine(); after > before {
 		t.Errorf("rendering leaked goroutines: %d -> %d", before, after)

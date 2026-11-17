@@ -1098,7 +1098,7 @@ func (m Model) renderPluginsSection(inner int) string {
 			}
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1182,7 +1182,7 @@ func (m Model) renderMcpSection(inner int) string {
 	var b strings.Builder
 	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("MCP Servers (%d) %s", len(m.MCP), foldMark(SideMCP))) + "\n")
 	if SideFolded(SideMCP) {
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 		return b.String()
 	}
 	for _, s := range m.MCP {
@@ -1222,7 +1222,7 @@ func (m Model) renderMcpSection(inner int) string {
 		b.WriteString(statusBarStyle.Render(" ") + dot + " " +
 			lipgloss.NewStyle().Foreground(cText).Render(name) + suffix + "\n")
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1238,7 +1238,7 @@ func (m Model) renderTodosSection(inner int) string {
 	}
 	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("Todos (%d/%d) %s", done, len(m.Todos), foldMark(SideTodos))) + "\n")
 	if SideFolded(SideTodos) {
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 		return b.String()
 	}
 	if len(m.Todos) == 0 {
@@ -1275,7 +1275,7 @@ func (m Model) renderTodosSection(inner int) string {
 			b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more", hidden)) + "\n")
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1399,7 +1399,7 @@ func (m Model) renderLspSection(inner int) string {
 			}
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1665,6 +1665,6 @@ func (m Model) renderSubagentsSection(inner int) string {
 	if hidden := len(m.Subagents) - len(shown); hidden > 0 {
 		b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more · %s", hidden, m.subagentsMoreHint())) + "\n")
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }

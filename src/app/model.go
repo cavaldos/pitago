@@ -118,6 +118,8 @@ type Model struct {
 	vp                  viewport.Model
 	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
 	ta                  textarea.Model
+	SideWidth           int  // sidebar width from dragging its divider (0 = default); see sideW
+	sideDrag            bool // left button held on the sidebar divider
 	Pi                  *pirpc.Client
 	liveBridge          *live.Bridge     // foreign Pi SSE bridge (read-only)
 	liveTail            *live.Tail       // foreign Pi session-file tail (read-only, any running pi)
@@ -1566,6 +1568,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
+	m.SideWidth = prefs.SideWidth
 	// Resolved once here: $SHELL is read from the environment, and a Cmd
 	// must never read the model it was built from.
 	m.shellBinPref = prefs.ShellBinary

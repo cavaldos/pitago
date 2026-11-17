@@ -16,7 +16,7 @@ import (
 func TestStreamingCoalescesToFrame(t *testing.T) {
 	m := Model{tools: make(map[string]int), curAsst: -1, curThink: -1, ready: true}
 	m.vp = viewport.New(100, 20)
-	m.sideVp = viewport.New(sideInnerW, 10)
+	m.sideVp = viewport.New((defaultSideW - 4), 10)
 	ev := piEventMsg{pirpc.Event{Type: "message_update",
 		Raw: []byte(`{"assistantMessageEvent":{"type":"text_delta","delta":"hi"}}`)}}
 

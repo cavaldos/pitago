@@ -134,8 +134,8 @@ func (m Model) applyHover(body string) string {
 // applyLevelHover re-renders the thinking-level row at viewport line i with
 // only the hovered level highlighted, not the whole row.
 func (m Model) applyLevelHover(lines []string, i int) string {
-	rows := m.renderThinkRows(sideInnerW, m.hoverLevel)
-	for r, row := range m.thinkLevelRows(sideInnerW) {
+	rows := m.renderThinkRows(m.sideInnerW(), m.hoverLevel)
+	for r, row := range m.thinkLevelRows(m.sideInnerW()) {
 		for _, l := range row {
 			if l == m.hoverLevel && r < len(rows) {
 				lines[i] = rows[r]

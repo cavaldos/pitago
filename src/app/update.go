@@ -324,13 +324,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.ready {
 			m.vp = viewport.New(mainW, vpH)
-			m.sideVp = viewport.New(sideInnerW, m.sideContentH())
+			m.sideVp = viewport.New(m.sideInnerW(), m.sideContentH())
 			m.chatContent = "" // fresh viewport holds no content yet
 			m.ready = true
 		} else {
 			m.vp.Width = mainW
 			m.vp.Height = vpH
-			m.sideVp.Width = sideInnerW
+			m.sideVp.Width = m.sideInnerW()
 			m.syncSideH() // reserves the quit-arm footer line while armed
 			if m.cmdOpen || m.atOpen || m.isInlineUI() || m.inputOpen() || m.teamPanelActive() {
 				// Resizing with a popup open must keep the winH budget:
@@ -1468,6 +1468,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.RespawnPi(), pluginTickCmd())
 
 	case tea.MouseMsg:
+		// Sidebar divider drag (ttt-style resize): press on the sidebar's
+		// left border, drag, release. Checked first so the press never
+		// starts a chat selection or a sidebar click.
+		if m2, handled := m.updateSideDrag(msg); handled {
+			return m2, nil
+		}
 		// Hover highlight: the filter forwards motion only when the
 		// clickable row under the pointer changed.
 		if msg.Action == tea.MouseActionMotion && !m.sel.Active {

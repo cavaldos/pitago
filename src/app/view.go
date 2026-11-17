@@ -22,7 +22,7 @@ func (m Model) showSide() bool { return !m.hideSide && m.winW >= 80 }
 func (m Model) mainW() int {
 	w := m.winW - 2 // single column margin
 	if m.showSide() {
-		w = m.winW - sideW // chat + sidebar, flush against the right edge
+		w = m.winW - m.sideW() // chat + sidebar, flush against the right edge
 	}
 	if w < 30 {
 		w = 30
@@ -1471,7 +1471,7 @@ func (m Model) thinkLevelAt(x, y int) (string, bool) {
 	if head < 0 {
 		return "", false
 	}
-	rows := m.thinkLevelRows(sideInnerW)
+	rows := m.thinkLevelRows(m.sideInnerW())
 	ri := y - 1 + m.sideVp.YOffset - head - 1
 	if ri < 0 || ri >= len(rows) {
 		return "", false
@@ -1496,7 +1496,7 @@ func (m Model) thinkLevelAt(x, y int) (string, bool) {
 // scrolled.
 
 func (m Model) buildSidebarContent() string {
-	inner := sideInnerW
+	inner := m.sideInnerW()
 	var b strings.Builder
 	if m.SideVisible(SidePet) {
 		b.WriteString(m.renderPet(inner))
@@ -1526,7 +1526,7 @@ func (m Model) buildSidebarContent() string {
 			file = pirpc.Shorten(file)
 		}
 		b.WriteString(statusBarStyle.Render(Short(file, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideModel) {
@@ -1564,7 +1564,7 @@ func (m Model) buildSidebarContent() string {
 			tokLine = "tok " + FmtNum(used)
 		}
 		b.WriteString(statusBarStyle.Render(Short(tokLine, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideStats) {
@@ -1606,7 +1606,7 @@ func (m Model) buildSidebarContent() string {
 			uncached = fmtComma(m.Stats.In + m.Stats.CacheWrite)
 		}
 		b.WriteString(statusBarStyle.Render(Short("cached "+cached+" · uncached "+uncached, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideCost) {
@@ -1615,7 +1615,7 @@ func (m Model) buildSidebarContent() string {
 			for _, r := range rows {
 				b.WriteString(statusBarStyle.Render(r) + "\n")
 			}
-			b.WriteString(sep() + "\n")
+			b.WriteString(m.sep() + "\n")
 		}
 	}
 
@@ -1636,7 +1636,7 @@ func (m Model) buildSidebarContent() string {
 			}
 		}
 		b.WriteString(toolStyle.Render(m.recentHint()) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideCommands) {
@@ -1682,7 +1682,7 @@ func (m Model) buildSidebarContent() string {
 				row := mark + " " + statusBarStyle.Render(bl.ToolName) + toolStyle.Render(" · "+state)
 				b.WriteString(truncANSI(row, inner) + "\n")
 			}
-			b.WriteString(sep() + "\n")
+			b.WriteString(m.sep() + "\n")
 		}
 	}
 	if m.SideVisible(SideSkills) {
@@ -1737,29 +1737,29 @@ func (m Model) invokedTools() []Block {
 // renderSidebar draws the sidebar box around the visible sideVp slice.
 // lipgloss Height covers the content only (border adds 2), so size it by
 // sideContentH to keep the outer box exactly sideH tall. Width likewise
-// covers padding, not the border: sideInnerW+2 lands the box on sideW.
+// covers padding, not the border: m.sideInnerW()+2 lands the box on m.sideW().
 func (m Model) renderSidebar() string {
 	h := m.sideContentH()
 	body := m.applyHover(m.sideVp.View())
 	if !m.quitArmed() {
-		return sideStyle.Width(sideInnerW + 2).Height(h).Render(body)
+		return sideStyle.Width(m.sideInnerW() + 2).Height(h).Render(body)
 	}
 	// armed: viewport already shrunk by one line (syncSideH), so the
 	// warning pins to the bottom-right corner of the box.
-	return sideStyle.Width(sideInnerW + 2).Height(h).Render(body + "\n" + quitArmFooter())
+	return sideStyle.Width(m.sideInnerW() + 2).Height(h).Render(body + "\n" + m.quitArmFooter())
 }
 
 // quitArmFooter is the 1-line bottom-right sidebar warning (yellow).
-func quitArmFooter() string {
+func (m Model) quitArmFooter() string {
 	s := "press Ctrl+C again to quit"
-	if w := lipgloss.Width(s); w < sideInnerW {
-		s = strings.Repeat(" ", sideInnerW-w) + s
+	if w := lipgloss.Width(s); w < m.sideInnerW() {
+		s = strings.Repeat(" ", m.sideInnerW()-w) + s
 	}
 	return warnStyle.Render(s)
 }
 
-func sep() string {
-	return sepStyle.Render(strings.Repeat("─", sideInnerW))
+func (m Model) sep() string {
+	return sepStyle.Render(strings.Repeat("─", m.sideInnerW()))
 }
 
 func (m Model) sideH() int {
