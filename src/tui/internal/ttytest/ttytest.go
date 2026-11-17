@@ -97,6 +97,18 @@ func (t *Tty) Reset() {
 // non-UTF-8 locale, so the locale is part of what is being tested.
 func Screen(t testing.TB, tty *Tty, term string) tcell.Screen {
 	t.Helper()
+	s := Uninitialized(t, tty, term)
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// Uninitialized is Screen without Init, for tview.Application.SetScreen,
+// which calls Init itself. Initializing a tcell screen twice starts two
+// main loops over the same state (a data race).
+func Uninitialized(t testing.TB, tty *Tty, term string) tcell.Screen {
+	t.Helper()
 	t.Setenv("LANG", "en_US.UTF-8")
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	t.Setenv("LINES", "")
@@ -107,9 +119,6 @@ func Screen(t testing.TB, tty *Tty, term string) tcell.Screen {
 	}
 	s, err := tcell.NewTerminfoScreenFromTtyTerminfo(tty, ti)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(); err != nil {
 		t.Fatal(err)
 	}
 	return s

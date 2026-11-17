@@ -172,7 +172,7 @@ func (b *imageBox) Draw(s tcell.Screen) {
 //   - each APC write is a single tty.Write, never split across frames.
 func TestSideChannelInTview(t *testing.T) {
 	tty := ttytest.NewTty(60, 16)
-	s := ttytest.Screen(t, tty, "xterm-kitty")
+	s := ttytest.Uninitialized(t, tty, "xterm-kitty") // SetScreen calls Init
 	app := tview.NewApplication().SetScreen(s)
 	ch := &Channel{}
 	ch.Install(app)
