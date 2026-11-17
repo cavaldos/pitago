@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"pitago/src/app"
+	"pitago/src/components/clipboard"
 	"pitago/src/pirpc"
 	"pitago/src/tui/keys"
 	"pitago/src/tui/tviewrt"
@@ -27,6 +28,9 @@ func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
 	})
 	app.Post = rt.Send
 	app.ImageOut = rt.Raw()
+	// OSC 52 copies ride the same raw channel: one tty write, on the UI
+	// goroutine, before Show — never interleaved with tcell's own output.
+	defer clipboard.SetOsc52Writer(rt.Raw())()
 	app.WireClient(pi)
 	if _, err := rt.Run(); err != nil {
 		fmt.Println("Error:", err)
