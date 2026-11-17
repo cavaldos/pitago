@@ -34,6 +34,26 @@ Branch: `feat/tview-migration` (from `main`). Peer branches merge into it:
 | P7 | tests on SimulationScreen goldens | ongoing |
 | P8 | remove teabridge, bubbles, lipgloss; tview default | todo |
 
+## Mouse-first UX (target: ttt-like, github.com/eugenioenko/ttt)
+
+Already in pitago: wheel scroll, drag-select in chat, hover highlight,
+clickable sidebar rows, right-click → block actions dialog.
+
+| Interaction | Where in pitago | Built from |
+|---|---|---|
+| Drag divider to resize | chat ↔ sidebar width, chat ↔ input height (persist in prefs) | `widgets.Splitter` |
+| Right-click context menu at pointer | chat block (copy/code/table/retry…), sidebar rows (session, recent model), input (paste/clear) | `widgets.ContextMenu` (replaces the full-screen block-actions dialog) |
+| Click status/header segments | model → model picker, thinking level, ctx %, LSP, MCP, plugins | `widgets.ClickBar` |
+| `⋯` menu buttons | sidebar sections, panels, dialogs | `widgets.MenuButton` |
+| Hover popups | truncated text, tool call details, diagnostics, toasts | `widgets.Tooltip` |
+| Click to place cursor / drag-select in input | input editor | app textarea + `PointAt` |
+| Click list items, click outside to close | every dialog/picker | native tview lists (P5) |
+
+Popups live in an overlay layer above the frame (`widgets.Overlay`, root of
+`tviewrt`), so they work during the whole-frame bridge stage, before every
+region is native. Geometry that the app owns (sidebar width, input height)
+stays app state, changed by `ev` messages from the widgets.
+
 ## Known issues / watch list
 
 - The `ev` import is still aliased `tea` in `src/app` (renaming collides with
