@@ -179,7 +179,10 @@ func (b *ClickBar) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, fun
 			return false, nil
 		}
 		switch a {
-		case actLeftClick:
+		// tview turns any second click within DoubleClickInterval into a
+		// DoubleClick, wherever it lands: clicking "File" then quickly
+		// "Edit" must still open Edit.
+		case actLeftClick, actLeftDouble:
 			if b.OnClick != nil {
 				b.OnClick(id, x, y)
 			}

@@ -25,3 +25,21 @@ type MenuResultMsg struct {
 	Tag string
 	ID  string
 }
+
+// Menu is one top-level entry of a menu bar ("File", "Edit", …).
+type Menu struct {
+	Title string
+	Items []MenuItem
+}
+
+// MenuBarProvider is implemented by a model that wants a menu bar above its
+// frame. The runtime calls MenuBar on its UI goroutine whenever it draws the
+// bar or opens one of its menus, so labels (✓ toggles) stay current. A pick
+// arrives as MenuResultMsg{Tag: MenuBarTag, ID}. An empty result hides the
+// bar. Runtimes without native menus never call it.
+type MenuBarProvider interface {
+	MenuBar() []Menu
+}
+
+// MenuBarTag is the MenuResultMsg tag of menu bar picks.
+const MenuBarTag = "menubar"

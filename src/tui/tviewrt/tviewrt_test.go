@@ -242,3 +242,71 @@ func TestNativeMenuRoundTrip(t *testing.T) {
 	waitFor(t, func() bool { return r.Model().(menuModel).picked == "t/b" })
 	waitFor(t, func() bool { return !strings.Contains(strings.Join(rows(r, scr), "\n"), "Alpha") })
 }
+
+type barModel struct {
+	h      int
+	picked string
+	clicks []string
+}
+
+func (barModel) Init() ev.Cmd { return nil }
+func (m barModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
+	switch x := msg.(type) {
+	case ev.WindowSizeMsg:
+		m.h = x.Height
+	case ev.MenuResultMsg:
+		m.picked = x.Tag + "/" + x.ID
+	case ev.MouseMsg:
+		if x.Action == ev.MouseActionPress {
+			m.clicks = append(m.clicks, fmt.Sprintf("%d,%d", x.X, x.Y))
+		}
+	}
+	return m, nil
+}
+func (m barModel) View() string { return fmt.Sprintf("frame h=%d", m.h) }
+func (barModel) MenuBar() []ev.Menu {
+	return []ev.Menu{
+		{Title: "File", Items: []ev.MenuItem{{ID: "new", Label: "New"}, {ID: "quit", Label: "Quit"}}},
+		{Title: "Edit", Items: []ev.MenuItem{{ID: "paste", Label: "Paste"}}},
+	}
+}
+
+// A MenuBarProvider gets a bar on row 0; the model sees a frame one row
+// shorter and frame-relative mouse coordinates; a bar pick comes back as
+// MenuResultMsg{MenuBarTag}.
+func TestMenuBar(t *testing.T) {
+	scr := tcell.NewSimulationScreen("UTF-8")
+	var tr keys.MouseTracker
+	r := New(barModel{}, Options{Screen: scr, Mouse: true, Key: key, MouseE: tr.FromMouse})
+	scr.SetSize(40, 10)
+	go func() { _, _ = r.Run() }()
+	defer r.Stop()
+	waitFor(t, func() bool {
+		rs := rows(r, scr)
+		return strings.HasPrefix(rs[0], " File  Edit") && rs[1] == "frame h=9"
+	})
+	time.Sleep(30 * time.Millisecond)
+	scr.InjectMouse(5, 4, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(5, 4, tcell.ButtonNone, tcell.ModNone)
+	waitFor(t, func() bool { c := r.Model().(barModel).clicks; return len(c) == 1 && c[0] == "5,3" })
+	// Click "Edit" → its menu drops below; click "Paste".
+	scr.InjectMouse(8, 0, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(8, 0, tcell.ButtonNone, tcell.ModNone)
+	var py, px int
+	waitFor(t, func() bool {
+		for y, row := range rows(r, scr) {
+			if i := strings.Index(row, "Paste"); i >= 0 && y > 0 {
+				py, px = y, len([]rune(row[:i]))
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(30 * time.Millisecond)
+	scr.InjectMouse(px, py, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(px, py, tcell.ButtonNone, tcell.ModNone)
+	waitFor(t, func() bool { return r.Model().(barModel).picked == ev.MenuBarTag+"/paste" })
+	if c := r.Model().(barModel).clicks; len(c) != 1 {
+		t.Fatalf("bar/menu clicks leaked to the model: %v", c)
+	}
+}

@@ -17,6 +17,8 @@ import (
 func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
 	ensureUTF8Locale()
 	var tracker keys.MouseTracker
+	// Before New: the runtime asks the model for its menu bar at build time.
+	app.NativeMenus = true
 	rt := tviewrt.New(m, tviewrt.Options{
 		Mouse:  mouse,
 		Key:    keys.FromKey,
@@ -24,7 +26,6 @@ func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
 		Filter: app.ScrollEventFilter,
 	})
 	app.Post = rt.Send
-	app.NativeMenus = rt.Menus()
 	app.ImageOut = rt.Raw()
 	app.WireClient(pi)
 	if _, err := rt.Run(); err != nil {

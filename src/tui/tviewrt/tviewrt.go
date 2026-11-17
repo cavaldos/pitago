@@ -47,7 +47,9 @@ type Runtime struct {
 	app  *tview.Application
 	opts Options
 	root *frame
-	ov   *widgets.Overlay // root primitive: popups (menus, tooltips) above the frame
+	ov   *widgets.Overlay  // root primitive: popups (menus, tooltips) above the frame
+	bar  *widgets.ClickBar // menu bar row above the frame (nil without ev.MenuBarProvider)
+	top  int               // rows above the frame: 1 with a menu bar, else 0
 
 	mu    sync.Mutex // guards model against Model() readers off-loop
 	model ev.Model
@@ -67,7 +69,19 @@ func New(m ev.Model, opts Options) *Runtime {
 	}
 	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m}
 	r.root = &frame{Box: tview.NewBox(), r: r}
-	r.ov = widgets.NewOverlay(r.root)
+	var base tview.Primitive = r.root
+	if p, ok := m.(ev.MenuBarProvider); ok && len(p.MenuBar()) > 0 {
+		// The model's frame starts one row lower; WindowSizeMsg, mouse Y
+		// and menu positions are translated, so the model never knows.
+		r.top = 1
+		r.bar = widgets.NewClickBar()
+		r.bar.OnClick = func(id string, _, _ int) { r.openBarMenu(id) }
+		r.syncBar()
+		base = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(r.bar, 1, 0, false).
+			AddItem(r.root, 0, 1, true)
+	}
+	r.ov = widgets.NewOverlay(base)
 	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
 	if opts.Screen != nil {
 		r.app.SetScreen(r.wrapPaste(opts.Screen))
@@ -230,8 +244,9 @@ func (r *Runtime) beforeDraw(scr tcell.Screen) bool {
 	w, h := scr.Size()
 	if w != r.w || h != r.h {
 		r.w, r.h = w, h
-		r.dispatch(ev.WindowSizeMsg{Width: w, Height: h})
+		r.dispatch(ev.WindowSizeMsg{Width: w, Height: h - r.top})
 	}
+	r.syncBar()
 	return false
 }
 
@@ -240,6 +255,11 @@ func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 	// modal popup).
 	if r.opts.Key == nil || r.ov.Modal() {
 		return e
+	}
+	// F10 opens the menu bar, as in most editors.
+	if e.Key() == tcell.KeyF10 && r.bar != nil && len(r.bar.Segments) > 0 {
+		r.openBarMenu(r.bar.Segments[0].ID)
+		return nil
 	}
 	if k, ok := r.opts.Key(e); ok {
 		r.dispatch(k)
@@ -258,7 +278,12 @@ func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.Even
 	if r.opts.MouseE == nil || r.w == 0 || r.ov.Modal() {
 		return e, a
 	}
+	// The menu bar row belongs to the bar (tview routes it there).
+	if _, y := e.Position(); y < r.top {
+		return e, a
+	}
 	for _, m := range r.opts.MouseE(e, a) {
+		m.Y -= r.top
 		r.dispatch(m)
 	}
 	return e, a
@@ -313,7 +338,7 @@ func (r *Runtime) openMenu(m ev.OpenMenuMsg) {
 	menu := widgets.NewContextMenu(toWidgetItems(m.Items))
 	tag := m.Tag
 	menu.OnSelect = func(id string) { r.dispatch(ev.MenuResultMsg{Tag: tag, ID: id}) }
-	menu.OpenAt(r.ov, m.X, m.Y)
+	menu.OpenAt(r.ov, m.X, m.Y+r.top)
 }
 
 func toWidgetItems(in []ev.MenuItem) []widgets.MenuItem {
@@ -329,4 +354,41 @@ func toWidgetItems(in []ev.MenuItem) []widgets.MenuItem {
 		}
 	}
 	return out
+}
+
+// syncBar refreshes the menu bar titles from the model.
+func (r *Runtime) syncBar() {
+	if r.bar == nil {
+		return
+	}
+	p, _ := r.model.(ev.MenuBarProvider)
+	var segs []widgets.Segment
+	if p != nil {
+		for _, mm := range p.MenuBar() {
+			segs = append(segs, widgets.Segment{ID: mm.Title, Text: " " + mm.Title + " "})
+		}
+	}
+	r.bar.SetSegments(segs...)
+}
+
+// openBarMenu drops down the menu bar entry titled id. Items are read from
+// the model at open time, so toggle checkmarks are current.
+func (r *Runtime) openBarMenu(id string) {
+	p, ok := r.model.(ev.MenuBarProvider)
+	if !ok {
+		return
+	}
+	for _, mm := range p.MenuBar() {
+		if mm.Title != id || len(mm.Items) == 0 {
+			continue
+		}
+		rect, ok := r.bar.SegmentRect(id)
+		if !ok {
+			return
+		}
+		menu := widgets.NewContextMenu(toWidgetItems(mm.Items))
+		menu.OnSelect = func(item string) { r.dispatch(ev.MenuResultMsg{Tag: ev.MenuBarTag, ID: item}) }
+		menu.OpenBelow(r.ov, rect)
+		return
+	}
 }
