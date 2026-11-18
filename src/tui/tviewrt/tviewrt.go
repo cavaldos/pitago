@@ -54,6 +54,9 @@ type Runtime struct {
 
 	pickers map[string]*picker.Picker // open native pickers by tag
 
+	divHover, divDrag string // ev.Divider ID under the pointer / being dragged
+	hover             *widgets.Hover
+
 	mu    sync.Mutex // guards model against Model() readers off-loop
 	model ev.Model
 	w, h  int
@@ -83,6 +86,10 @@ func New(m ev.Model, opts Options) *Runtime {
 		r.ov.Base = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(r.bar, 1, 0, false).
 			AddItem(r.root, 0, 1, true)
+	}
+	r.hover = widgets.NewHover(r.ov, func(f func()) { r.app.QueueUpdateDraw(f) })
+	if r.bar != nil {
+		r.bar.Hover = r.hover
 	}
 	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
 	if opts.Screen != nil {
@@ -296,9 +303,18 @@ func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.Even
 	if r.opts.MouseE == nil || r.w == 0 || r.ov.Modal() {
 		return e, a
 	}
+	x, y := e.Position()
+	if a == tview.MouseLeftUp {
+		r.divDrag = ""
+	}
 	// The menu bar row belongs to the bar (tview routes it there).
-	if _, y := e.Position(); y < r.top {
+	if y < r.top {
+		r.divHover = ""
 		return e, a
+	}
+	r.trackDivider(x, y-r.top, a)
+	if a == tview.MouseMove {
+		r.updateTooltip(x, y-r.top)
 	}
 	for _, m := range r.opts.MouseE(e, a) {
 		m.Y -= r.top
@@ -333,6 +349,7 @@ func (f *frame) Draw(scr tcell.Screen) {
 		}
 	}
 	f.r.opts.Paint(scr, x, y, w, h, view)
+	f.r.paintDividers(scr, x, y, h)
 }
 
 // PasteHandler turns a bracketed paste into one KeyRunes/Paste message,
@@ -424,4 +441,72 @@ func (r *Runtime) openPicker(m ev.OpenPickerMsg) {
 	p.OnCancel = func() { finish(ev.PickerResultMsg{Tag: tag, Cancelled: true}) }
 	r.pickers[tag] = p
 	p.Open(r.ov)
+}
+
+// trackDivider records which model divider (ev.DividerProvider) the pointer
+// hovers or drags, for visual feedback only: the drag itself is the
+// model's (it sees the same mouse messages).
+func (r *Runtime) trackDivider(x, y int, a tview.MouseAction) {
+	r.divHover = ""
+	p, ok := r.model.(ev.DividerProvider)
+	if !ok {
+		return
+	}
+	for _, d := range p.Dividers() {
+		if x == d.X && y >= d.Y && y < d.Y+d.H {
+			r.divHover = d.ID
+			if a == tview.MouseLeftDown {
+				r.divDrag = d.ID
+			}
+		}
+	}
+}
+
+// paintDividers restyles the hovered/dragged divider column: │ → ┃.
+func (r *Runtime) paintDividers(scr tcell.Screen, ox, oy, h int) {
+	if r.divHover == "" && r.divDrag == "" {
+		return
+	}
+	p, ok := r.model.(ev.DividerProvider)
+	if !ok {
+		return
+	}
+	st := widgets.DefaultSplitterStyles()
+	for _, d := range p.Dividers() {
+		style := st.Hover
+		switch d.ID {
+		case r.divDrag:
+			style = st.Drag
+		case r.divHover:
+		default:
+			continue
+		}
+		for y := d.Y; y < d.Y+d.H && y < h; y++ {
+			c, comb, _, _ := scr.GetContent(ox+d.X, oy+y)
+			switch c {
+			case '│':
+				c = '┃'
+			case '╭', '╮':
+				c = '┏'
+			case '╰', '╯':
+				c = '┗'
+			}
+			scr.SetContent(ox+d.X, oy+y, c, comb, style)
+		}
+	}
+}
+
+// updateTooltip asks the model (ev.TooltipProvider) what is under the
+// pointer and shows it after the hover delay.
+func (r *Runtime) updateTooltip(x, y int) {
+	p, ok := r.model.(ev.TooltipProvider)
+	if !ok || r.hover == nil {
+		return
+	}
+	key, rc, text := p.Tooltip(x, y)
+	if key == "" || text == "" {
+		r.hover.Out()
+		return
+	}
+	r.hover.Over("frame:"+key, widgets.Rect{X: rc.X, Y: rc.Y + r.top, W: rc.W, H: rc.H}, text)
 }

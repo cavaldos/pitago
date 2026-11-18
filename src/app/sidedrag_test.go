@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -103,5 +104,27 @@ func TestSideDragMotionPassesFilter(t *testing.T) {
 	m.sideDrag = true
 	if ScrollEventFilter(m, tea.MouseMsg{X: 50, Y: 4, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft}) == nil {
 		t.Fatal("filter dropped drag motion")
+	}
+}
+
+func TestSideDividerDoubleClickResets(t *testing.T) {
+	m := dragModel(t)
+	m = mouse(m, m.mainW(), 5, tea.MouseActionPress, tea.MouseButtonLeft)
+	m = mouse(m, 60, 5, tea.MouseActionRelease, tea.MouseButtonNone)
+	if m.sideW() != 60 {
+		t.Fatalf("drag: %d", m.sideW())
+	}
+	m.sideDividerPress = time.Time{}
+	m = mouse(m, m.mainW(), 5, tea.MouseActionPress, tea.MouseButtonLeft)
+	m = mouse(m, m.mainW(), 5, tea.MouseActionRelease, tea.MouseButtonNone)
+	m = mouse(m, m.mainW(), 5, tea.MouseActionPress, tea.MouseButtonLeft)
+	if m.sideW() != defaultSideW || m.sideDrag {
+		t.Fatalf("double-click: side=%d drag=%v", m.sideW(), m.sideDrag)
+	}
+	if d := m.Dividers(); len(d) != 1 || d[0].X != m.mainW() {
+		t.Fatalf("dividers %+v", d)
+	}
+	if k, _, _ := m.Tooltip(m.mainW(), 5); k != "divider" {
+		t.Fatal("divider tooltip")
 	}
 }

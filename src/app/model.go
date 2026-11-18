@@ -119,10 +119,11 @@ type Model struct {
 	vp                  viewport.Model
 	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
 	ta                  textarea.Model
-	SideWidth           int    // sidebar width from dragging its divider (0 = default); see sideW
-	sideDrag            bool   // left button held on the sidebar divider
-	nativePicker        string // tag of the native picker the runtime has open ("" = none)
-	pickerSeq           int    // last native picker tag number
+	SideWidth           int       // sidebar width from dragging its divider (0 = default); see sideW
+	sideDrag            bool      // left button held on the sidebar divider
+	sideDividerPress    time.Time // last press on the sidebar divider (double-click resets)
+	nativePicker        string    // tag of the native picker the runtime has open ("" = none)
+	pickerSeq           int       // last native picker tag number
 	Pi                  *pirpc.Client
 	liveBridge          *live.Bridge     // foreign Pi SSE bridge (read-only)
 	liveTail            *live.Tail       // foreign Pi session-file tail (read-only, any running pi)
