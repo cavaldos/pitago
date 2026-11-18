@@ -36,7 +36,8 @@ Branch: `feat/tview-migration` (from `main`). Peer branches merge into it:
 | M3 | right-click context menus at the pointer: chat block, input (`ev.OpenMenuMsg` → `MenuResultMsg`) | done (tview); Bubble Tea keeps the dialog |
 | M4 | clickable header/status segments, tooltips, `⋯` buttons, sidebar row menus | todo |
 | P7 | tests on SimulationScreen goldens | ongoing |
-| P8 | remove teabridge, bubbles, lipgloss; tview default | todo |
+| P8a | tview is the default UI (PITAGO_UI=tea = legacy fallback) | done |
+| P8b | remove teabridge, bubbles, lipgloss | todo |
 
 ## Mouse-first UX (target: ttt-like, github.com/eugenioenko/ttt)
 

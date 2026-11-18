@@ -134,7 +134,9 @@ func main() {
 	// WithOutput is the default anyway, but stating it makes the raw escape
 	// handoff below explicit: image payloads go straight to the terminal
 	// instead of through the frame, so both must be the same writer.
-	if os.Getenv("PITAGO_UI") == "tview" {
+	// tview is the default UI. PITAGO_UI=tea keeps the legacy Bubble Tea
+	// runtime available as a fallback until it is removed.
+	if os.Getenv("PITAGO_UI") != "tea" {
 		runTview(m, pi, *mouse)
 		return
 	}
