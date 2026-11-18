@@ -58,6 +58,11 @@ type Overlay struct {
 	Base  tview.Primitive
 	Hover *Hover
 
+	// Sticky primitives (a menu bar) keep getting the mouse while a modal
+	// popup is open, instead of the press-outside-closes rule: hovering
+	// another bar title switches menus, pressing the open title closes it.
+	Sticky []tview.Primitive
+
 	layers  []layer
 	swallow swallowState
 }
@@ -238,6 +243,16 @@ func (o *Overlay) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func
 			return true, capture
 		}
 		if o.topModal() != nil {
+			for _, p := range o.Sticky {
+				if p == nil || !rectOf(p).Contains(x, y) {
+					continue
+				}
+				if h := p.MouseHandler(); h != nil {
+					_, capture := h(a, e, setFocus)
+					return true, capture
+				}
+				return true, nil
+			}
 			if isPress(a) {
 				o.CloseModals()
 				o.swallow = swallowUntilUp
