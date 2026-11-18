@@ -99,6 +99,9 @@ func (m Model) Tooltip(x, y int) (string, tea.Rect, string) {
 	if m.onSideDivider(x, y) {
 		return "divider", tea.Rect{X: x, Y: y, W: 1, H: 1}, "Drag to resize the sidebar · double-click to reset"
 	}
+	if NativeMenus && y == 0 && x < m.mainW() {
+		return "header", tea.Rect{X: 0, Y: 0, W: m.mainW(), H: 1}, "Click for session info · right-click for more"
+	}
 	if m.inputAt(x, y) && y == m.inputFooterY() {
 		return "stats", tea.Rect{X: 0, Y: y, W: m.mainW(), H: 1}, m.statsTooltip()
 	}
@@ -124,5 +127,22 @@ func (m Model) statsTooltip() string {
 	if m.Stats.ContextPct > 0 {
 		s += "\nContext: " + FmtNum(m.Stats.TokensTotal) + " tokens"
 	}
-	return s + "\nRight-click for model, thinking and compact"
+	return s + "\nClick to change model · right-click for thinking and compact"
+}
+
+// barClick makes the header and the input's status line clickable (only
+// where the runtime draws native menus, i.e. tview). Acts on release so a
+// press that turns into a drag never fires.
+func (m *Model) barClick(msg tea.MouseMsg) (tea.Cmd, bool) {
+	if !NativeMenus || !m.Mouse || !m.ready || len(m.Dialogs) > 0 || m.sel.Active ||
+		msg.Action != tea.MouseActionRelease {
+		return nil, false
+	}
+	switch {
+	case msg.Y == 0 && msg.X < m.mainW():
+		return m.runSlash("/name"), true
+	case m.inputAt(msg.X, msg.Y) && msg.Y == m.inputFooterY():
+		return m.runSlash("/model"), true
+	}
+	return nil, false
 }

@@ -1489,6 +1489,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m2, handled := m.updateSideDrag(msg); handled {
 			return m2, nil
 		}
+		// Header / status-line buttons (tview runtime): click the header for
+		// session info, the input's status line for the model picker.
+		if cmd, ok := m.barClick(msg); ok {
+			return m, cmd
+		}
 		// Hover highlight: the filter forwards motion only when the
 		// clickable row under the pointer changed.
 		if msg.Action == tea.MouseActionMotion && !m.sel.Active {
