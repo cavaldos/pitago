@@ -48,9 +48,9 @@ type Runtime struct {
 	app  *tview.Application
 	opts Options
 	root *frame
-	ov   *widgets.Overlay  // root primitive: popups (menus, tooltips) above the frame
-	bar  *widgets.ClickBar // menu bar row above the frame (nil without ev.MenuBarProvider)
-	top  int               // rows above the frame: 1 with a menu bar, else 0
+	ov   *widgets.Overlay // root primitive: popups (menus, tooltips) above the frame
+	bar  *widgets.MenuBar // menu bar row above the frame (nil without ev.MenuBarProvider)
+	top  int              // rows above the frame: 1 with a menu bar, else 0
 
 	pickers map[string]*picker.Picker // open native pickers by tag
 
@@ -72,19 +72,18 @@ func New(m ev.Model, opts Options) *Runtime {
 	}
 	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m}
 	r.root = &frame{Box: tview.NewBox(), r: r}
-	var base tview.Primitive = r.root
+	r.ov = widgets.NewOverlay(r.root)
 	if p, ok := m.(ev.MenuBarProvider); ok && len(p.MenuBar()) > 0 {
 		// The model's frame starts one row lower; WindowSizeMsg, mouse Y
 		// and menu positions are translated, so the model never knows.
 		r.top = 1
-		r.bar = widgets.NewClickBar()
-		r.bar.OnClick = func(id string, _, _ int) { r.openBarMenu(id) }
-		r.syncBar()
-		base = tview.NewFlex().SetDirection(tview.FlexRow).
+		r.bar = widgets.NewMenuBar(r.ov, r.barMenus, func(_, id string) {
+			r.dispatch(ev.MenuResultMsg{Tag: ev.MenuBarTag, ID: id})
+		})
+		r.ov.Base = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(r.bar, 1, 0, false).
 			AddItem(r.root, 0, 1, true)
 	}
-	r.ov = widgets.NewOverlay(base)
 	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
 	if opts.Screen != nil {
 		r.app.SetScreen(r.wrapPaste(opts.Screen))
@@ -257,13 +256,17 @@ func (r *Runtime) beforeDraw(scr tcell.Screen) bool {
 		r.w, r.h = w, h
 		r.dispatch(ev.WindowSizeMsg{Width: w, Height: h - r.top})
 	}
-	r.syncBar()
 	return false
 }
 
 func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 	// An open menu owns the keyboard (tview routes to the overlay's top
 	// modal popup).
+	// The menu bar owns F10, Alt+mnemonics and, while one of its menus is
+	// open, ←/→/Esc.
+	if r.bar != nil && r.bar.HandleKey(e) {
+		return nil
+	}
 	if r.ov.Modal() {
 		// tview stops the whole application on an unmodified Ctrl+C that
 		// leaves the capture as the original event. Inside a popup Ctrl+C
@@ -275,11 +278,6 @@ func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 	}
 	if r.opts.Key == nil {
 		return e
-	}
-	// F10 opens the menu bar, as in most editors.
-	if e.Key() == tcell.KeyF10 && r.bar != nil && len(r.bar.Segments) > 0 {
-		r.openBarMenu(r.bar.Segments[0].ID)
-		return nil
 	}
 	if k, ok := r.opts.Key(e); ok {
 		r.dispatch(k)
@@ -376,41 +374,18 @@ func toWidgetItems(in []ev.MenuItem) []widgets.MenuItem {
 	return out
 }
 
-// syncBar refreshes the menu bar titles from the model.
-func (r *Runtime) syncBar() {
-	if r.bar == nil {
-		return
-	}
-	p, _ := r.model.(ev.MenuBarProvider)
-	var segs []widgets.Segment
-	if p != nil {
-		for _, mm := range p.MenuBar() {
-			segs = append(segs, widgets.Segment{ID: mm.Title, Text: " " + mm.Title + " "})
-		}
-	}
-	r.bar.SetSegments(segs...)
-}
-
-// openBarMenu drops down the menu bar entry titled id. Items are read from
-// the model at open time, so toggle checkmarks are current.
-func (r *Runtime) openBarMenu(id string) {
+// barMenus maps the model's menu bar for widgets.MenuBar (read at draw
+// and open time, so ✓ toggles stay current).
+func (r *Runtime) barMenus() []widgets.BarMenu {
 	p, ok := r.model.(ev.MenuBarProvider)
 	if !ok {
-		return
+		return nil
 	}
+	var out []widgets.BarMenu
 	for _, mm := range p.MenuBar() {
-		if mm.Title != id || len(mm.Items) == 0 {
-			continue
-		}
-		rect, ok := r.bar.SegmentRect(id)
-		if !ok {
-			return
-		}
-		menu := widgets.NewContextMenu(toWidgetItems(mm.Items))
-		menu.OnSelect = func(item string) { r.dispatch(ev.MenuResultMsg{Tag: ev.MenuBarTag, ID: item}) }
-		menu.OpenBelow(r.ov, rect)
-		return
+		out = append(out, widgets.BarMenu{Title: mm.Title, Tooltip: mm.Tooltip, Items: toWidgetItems(mm.Items)})
 	}
+	return out
 }
 
 // openPicker shows an ev.OpenPickerMsg as a native picker.Picker. Its
