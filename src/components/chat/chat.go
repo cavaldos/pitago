@@ -33,6 +33,9 @@ func NewImage(data, mime string) Image {
 
 // Block is one rendered unit in the chat column.
 type Block struct {
+	// Streaming is render-only: set on the render copy of the reply still
+	// arriving, so it renders in cached segments. Never stored.
+	Streaming   bool
 	Kind        string // user, assistant, thinking, tool, bash, notice
 	Text        string
 	ToolName    string

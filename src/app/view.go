@@ -160,6 +160,13 @@ func (m *Model) renderBlocks() string {
 		// one-time upload, and a cached replay would resend the payload on
 		// every frame. Re-rendering them is a few string concats.
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
+		// The reply still streaming renders in cached segments (only its
+		// growing tail re-renders per frame); once the turn ends the key
+		// changes and the canonical whole-document render takes over.
+		if m.thinking && i == m.curAsst && bl.Kind == "assistant" {
+			bl.Streaming = true
+			key ^= 0x9e3779b97f4a7c15
+		}
 		head := m.toolGroup[i]
 		if head >= 0 {
 			key ^= m.toolGroupKey(i)
@@ -356,7 +363,11 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		return s, false
 	case "assistant":
 		icon = statusBarStyle.Render("●")
-		body = strings.TrimSuffix(renderMarkdown(m, bl.Text, cw), "\n")
+		if bl.Streaming {
+			body = strings.TrimSuffix(renderMarkdownStreaming(m, bl.Text, cw), "\n")
+		} else {
+			body = strings.TrimSuffix(renderMarkdown(m, bl.Text, cw), "\n")
+		}
 		// Footer opencode-style: model · thinking · wall time of the prompt
 		// that produced this reply (issue #15). Baked at settle, so it never
 		// ticks in the transcript; it rides on the turn's last reply, where
@@ -506,6 +517,14 @@ const maxSummaryChars = 8000
 // renderMarkdown renders assistant output with the Go renderer (Glamour
 // tables/lists/bold, Chroma fenced code) wrapped to the chat width. Plain text comes back unchanged from markdown.Render and keeps the
 // old unstyled render. File paths linkify against the session cwd.
+// renderMarkdownStreaming is renderMarkdown for a reply still arriving.
+func renderMarkdownStreaming(m *Model, src string, width int) string {
+	if out := markdown.RenderCwdStreaming(src, width, m.cwd); out != src {
+		return out
+	}
+	return lipgloss.NewStyle().Foreground(cText).Width(width).Render(src)
+}
+
 func renderMarkdown(m *Model, src string, width int) string {
 	if out := markdown.RenderCwd(src, width, m.cwd); out != src {
 		return out
