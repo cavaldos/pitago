@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestConsecutiveToolCallsFoldIntoSummary(t *testing.T) {
+func TestConsecutiveActivityFoldsIntoSummary(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.vp.Width, m.vp.Height = 120, 20
 	m.blocks = []Block{
@@ -17,7 +17,7 @@ func TestConsecutiveToolCallsFoldIntoSummary(t *testing.T) {
 		{Kind: "tool", ToolName: "read", ToolArgs: "/a/solo.md", ToolStatus: "done"},
 	}
 	out := stripANSI(m.renderBlocks())
-	if !strings.Contains(out, "Read 2 files, ran 1 shell command") {
+	if !strings.Contains(out, "2 reads, 1 command") {
 		t.Fatalf("missing summary row:\n%s", out)
 	}
 	if strings.Contains(out, "README.md") || strings.Contains(out, "find src") {
@@ -29,9 +29,37 @@ func TestConsecutiveToolCallsFoldIntoSummary(t *testing.T) {
 
 	m.blocks[0].GroupOpen = true
 	out = stripANSI(m.renderBlocks())
-	for _, want := range []string{"Read 2 files", "README.md", "pyproject.toml", "find src"} {
+	for _, want := range []string{"2 reads, 1 command", "README.md", "pyproject.toml", "find src"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("open group missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestThinkingAndCommandsFoldTogether(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.vp.Width, m.vp.Height = 120, 20
+	m.blocks = []Block{
+		{Kind: "bash", Text: "$ echo one"},
+		{Kind: "thinking", Text: "considering"},
+		{Kind: "tool", ToolName: "read", ToolStatus: "done"},
+		{Kind: "tool", ToolName: "write", ToolStatus: "done"},
+	}
+	out := stripANSI(m.renderBlocks())
+	if !strings.Contains(out, "1 command, 1 thought, 1 read, 1 tool") {
+		t.Fatalf("missing activity summary:\n%s", out)
+	}
+	for _, hidden := range []string{"$ echo one", "considering"} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("folded activity %q is still rendered:\n%s", hidden, out)
+		}
+	}
+
+	m.blocks[0].GroupOpen = true
+	out = stripANSI(m.renderBlocks())
+	for _, visible := range []string{"$ echo one", "considering"} {
+		if !strings.Contains(out, visible) {
+			t.Fatalf("expanded group missing %q:\n%s", visible, out)
 		}
 	}
 }
@@ -44,7 +72,7 @@ func TestToolGroupSummaryRunning(t *testing.T) {
 		{Kind: "tool", ToolName: "glob", ToolStatus: "running"},
 	}
 	out := stripANSI(m.renderBlocks())
-	if !strings.Contains(out, "Searching for 2 patterns…") {
+	if !strings.Contains(out, "2 tools…") {
 		t.Fatalf("running summary wrong:\n%s", out)
 	}
 }

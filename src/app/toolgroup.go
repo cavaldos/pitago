@@ -10,37 +10,20 @@ import (
 	"pitago/src/components/format"
 )
 
-// Tool-call grouping, Claude Code style: a run of back-to-back read-only
-// calls (read, shell, search, ls) folds into one summary row —
-//
-//	● Read 3 files, ran 1 shell command (click to expand)
-//
-// instead of one row per call. A click on the summary opens the group
-// (the summary stays as a header, the calls render below it); ctrl+g
-// shows every call regardless.
-
-// toolGroupVerb describes one groupable tool kind for the summary row.
-type toolGroupVerb struct {
-	done, running  string
-	single, plural string
-}
-
-var toolGroupVerbs = map[string]toolGroupVerb{
-	"read": {"read", "reading", "file", "files"},
-	"bash": {"ran", "running", "shell command", "shell commands"},
-	"grep": {"searched for", "searching for", "pattern", "patterns"},
-	"glob": {"searched for", "searching for", "pattern", "patterns"},
-	"find": {"searched for", "searching for", "pattern", "patterns"},
-	"ls":   {"listed", "listing", "directory", "directories"},
-}
+// Consecutive thinking and tool activity folds into a clickable summary row.
 
 // groupableTool reports whether a block can join a summary group.
 func groupableTool(bl Block) bool {
-	if bl.Kind != "tool" || len(bl.Images) > 0 {
+	switch bl.Kind {
+	case "thinking":
+		return strings.TrimSpace(bl.Text) != ""
+	case "bash":
+		return true
+	case "tool":
+		return len(bl.Images) == 0
+	default:
 		return false
 	}
-	_, ok := toolGroupVerbs[strings.ToLower(strings.TrimSpace(bl.ToolName))]
-	return ok
 }
 
 // invisibleBlock reports blocks renderOneBlock skips, which must not break
@@ -144,7 +127,7 @@ func (m *Model) renderToolGroupSummary(head, w int) string {
 	members := m.groupMembers(head)
 	running, failed := false, false
 	type tally struct {
-		verb  toolGroupVerb
+		label string
 		count int
 	}
 	var order []string
@@ -157,33 +140,35 @@ func (m *Model) renderToolGroupSummary(head, w int) string {
 		case format.StatusError:
 			failed = true
 		}
-		v := toolGroupVerbs[strings.ToLower(strings.TrimSpace(bl.ToolName))]
-		// Same verb+noun (grep/glob/find) share one tally.
-		key := v.done + "|" + v.single
+		key, label := "tool", "tool"
+		switch {
+		case bl.Kind == "thinking":
+			key, label = "thought", "thought"
+		case bl.Kind == "bash":
+			key, label = "command", "command"
+		case strings.EqualFold(strings.TrimSpace(bl.ToolName), "bash"):
+			key, label = "command", "command"
+		case strings.EqualFold(strings.TrimSpace(bl.ToolName), "read"):
+			key, label = "read", "read"
+		}
 		if t, ok := counts[key]; ok {
 			t.count++
 		} else {
-			counts[key] = &tally{verb: v, count: 1}
+			counts[key] = &tally{label: label, count: 1}
 			order = append(order, key)
 		}
 	}
 	parts := make([]string, 0, len(order))
 	for _, key := range order {
 		t := counts[key]
-		verb, noun := t.verb.done, t.verb.plural
-		if running {
-			verb = t.verb.running
+		label := t.label
+		if t.count != 1 {
+			label += "s"
 		}
-		if t.count == 1 {
-			noun = t.verb.single
-		}
-		parts = append(parts, fmt.Sprintf("%s %d %s", verb, t.count, noun))
+		parts = append(parts, fmt.Sprintf("%d %s", t.count, label))
 	}
 	text := strings.Join(parts, ", ")
-	if text != "" {
-		text = strings.ToUpper(text[:1]) + text[1:]
-	}
-	if running {
+	if text != "" && running {
 		text += "…"
 	}
 

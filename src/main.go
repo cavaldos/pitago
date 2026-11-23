@@ -95,6 +95,12 @@ func main() {
 	if ext, err := pirpc.InstallTreeExt(); err == nil {
 		opts.Extensions = append(opts.Extensions, ext)
 	}
+	// pitago's herdr extension: report agent turn state from pi's RPC mode so
+	// herdr tracks real prompt boundaries instead of guessing from process
+	// activity (which fired on every tool round, including bash completions).
+	if ext, err := pirpc.InstallHerdrExt(); err == nil {
+		opts.Extensions = append(opts.Extensions, ext)
+	}
 	pi, err := pirpc.Spawn(opts)
 	if err != nil {
 		fmt.Println("Cannot start pi:", err)
