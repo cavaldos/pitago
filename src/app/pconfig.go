@@ -372,14 +372,27 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 		// Enter applies) and the background set behind them. Accent hex
 		// rides the desc so a row stays filterable.
 		msg = "↑↓ previews live · → background column · Enter applies · Esc closes"
-		for _, n := range theme.Names() {
-			opts = append(opts, n)
+		for i, n := range theme.Names() {
+			opts = append(opts, fmt.Sprintf("%02d %s", i+1, n))
 			desc := theme.Get(n).Accent
 			if n == m.currentTheme() {
 				desc = "✓ current · " + desc
 			}
 			descs = append(descs, desc)
 			payload = append(payload, "theme:"+n)
+		}
+		// A palette with its own surface (the converted TTT themes)
+		// offers it first in the background column: picking the palette
+		// applies it automatically, and this row is the way back after
+		// trying one of the slugs below.
+		if t := theme.Get(m.currentTheme()); t.Bg != "" {
+			opts = append(opts, bgOwn)
+			desc := t.Bg
+			if m.currentBackground() == bgOwn {
+				desc = "✓ current · " + desc
+			}
+			descs = append(descs, desc)
+			payload = append(payload, psecActBg+bgOwn)
 		}
 		for _, b := range theme.Backgrounds() {
 			opts = append(opts, b)
@@ -1210,7 +1223,15 @@ func (m Model) hubRows(d *Dialog, idxs []int, curRi, listW, win int, bg, focused
 // and ✓ on the picked one.
 func (m Model) bgRow(name string, cur bool, w int) string {
 	sw := lipgloss.NewStyle().Render("  ")
-	if hex := theme.BackgroundHex(name, theme.Get(m.currentTheme()).Light); hex != "" {
+	// "own" paints the active palette's shipped surface; every other
+	// row is a hub slug.
+	hex := ""
+	if name == bgOwn {
+		hex = theme.Get(m.currentTheme()).Bg
+	} else {
+		hex = theme.BackgroundHex(name, theme.Get(m.currentTheme()).Light)
+	}
+	if hex != "" {
 		sw = lipgloss.NewStyle().Background(lipgloss.Color(hex)).Render("  ")
 	}
 	mark := ""

@@ -12,8 +12,14 @@ import (
 
 func (m Model) NativePalette() tea.NativePalette {
 	t := theme.Get(m.ThemeName)
+	// A palette that ships its own surface (the TTT set) paints it
+	// whenever it is the picked background, like Model.bgColor.
+	surface := theme.BackgroundHex(m.Background, t.Light)
+	if m.Background == bgOwn {
+		surface = t.Bg
+	}
 	return tea.NativePalette{
-		Surface: theme.BackgroundHex(m.Background, t.Light),
+		Surface: surface,
 		Text:    t.Text, Muted: t.Muted, Accent: t.Accent, Border: t.Border,
 		HiBg: t.HiBg, HiFg: t.HiFg, Green: t.Green, Red: t.Red,
 	}

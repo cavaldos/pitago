@@ -22,7 +22,7 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
   (`OriginPitago`, e.g. `/recent`); everything from `get_commands`
   (extension/prompt/skill) is extension-side and runs via Prompt forwarding.
 
-## src/pirpc (stdlib only: os/exec + encoding/json + bufio)
+## src/pirpc (stdlib only: os/exec + encoding/json + bufio; net/http for provider quota)
 
 - Spawn `pi --mode rpc [-c] [--provider X] [--model Y]`, stderr → /tmp/pitago-pi-stderr.log
 - `pitago -ne` / `--no-extensions` forwards pi's own `-ne` to the child, so no discovered,
@@ -106,6 +106,31 @@ src/pirpc/client.go  <-JSONL->  pi --mode rpc
 - `/mcp` MCP server manager + pi's per-server action menu (`Sign in` / `Tools` / `Reconnect` / `Sign out` / `Exposure` / `Disable`, or `Enable` for a disabled server), plus the `/mcp login|logout|reconnect <server>` subcommands
 - `/settings` overlay: model, thinking, steering/follow-up modes, auto-compact, auto-retry
 - `/login` / `/logout`: API-key keystore (0600) + auto-respawn pi; OAuth guided via stock pi
+- `/quota` + the sidebar QUOTA panel: pi has no quota RPC and no quota concept, so pitago
+  asks each provider's own console endpoint directly (OpenCode Go `…/inference/go/v1/usage`,
+  OpenCode Zen `…/console/api/policies/current-budgets`) with the key the user selected. A
+  snapshot is cached for 90s (`pirpc.QuotaCached`) and refetched when the dialog opens or a
+  turn settles after the TTL lapsed — the fetch is a `tea.Cmd` with a 6s client timeout, so
+  two slow endpoints never block a render. Every credential change invalidates the cache
+  (`pirpc.QuotaInvalidate`) before the refresh: cached numbers belong to the key that was
+  active when they were fetched, so switching keys must not keep showing the old key's usage.
+  Credentials come from pitago's keystore first, then pi's auth.json (READ-ONLY here: it is
+  BOM-sensitive and holds OAuth tokens), then the provider's env var as the last resort. The
+  twins are split deliberately: `OPENCODE_GO_API_KEY` is the Go adapter's own name, while pi's
+  shared `OPENCODE_API_KEY` is claimed by the Zen row, because one var cannot say which twin
+  it was exported for.
+- The QUOTA panel follows the opencode-quota shape: `QUOTA (n)`, one group line per provider
+  (`label · plan`), then one row per window `name [bar] percent% reset`. The bar fills with
+  the percent LEFT and carries a `┃` even-use mark where a linear burn would be — only for
+  windows whose duration is verified (rolling 5h, weekly 7d; monthly is unknown, so no mark).
+  Percent and reset are right-aligned columns; the reset clock is dropped before the bar when
+  the sidebar is narrow, and every row fits `sideInnerW()` at `minSideW`. Unconfigured
+  providers are skipped, a window without a parseable percent shows a dash instead of a fake
+  0%, and a provider with only a sentence prints ONE line: dim for a `Note` (Zen's
+  permission-gated budget endpoint answers 403 for a healthy key), red for an `Err`. The dialog
+  speaks the same vocabulary and spells out that its numbers are percent LEFT. Codex is
+  increment 2: one more adapter behind `pirpc.FetchProviderQuota`, which says "quota tracking
+  not supported yet" for every other id.
 - `/reload` + 45s background poll + post-turn refresh → auto-detect new pi commands
 
 ## Out of scope (YAGNI)

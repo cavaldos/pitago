@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -106,33 +107,68 @@ func TestOpenThemeLandsInHub(t *testing.T) {
 	if d.ProvFocus {
 		t.Error("themes should be browsable immediately (right pane focused)")
 	}
-	// The right pane lists every palette, then every background: two
-	// columns of one row list.
+	// The right pane lists every palette (indexed), then every
+	// background: two columns of one row list.
 	if len(d.Options) != len(theme.Names())+len(theme.Backgrounds()) {
 		t.Fatalf("section lists %d rows, want %d palettes + %d backgrounds",
 			len(d.Options), len(theme.Names()), len(theme.Backgrounds()))
 	}
 	found := false
-	for i, n := range d.Options {
-		switch {
-		case i < len(theme.Names()):
-			if n == "dracula" {
-				found = true
-				if !strings.Contains(d.Descs[i], "✓ current") {
-					t.Errorf("active theme row should be marked: %q", d.Descs[i])
-				}
+	for i, name := range theme.Names() {
+		if got, want := d.Options[i], fmt.Sprintf("%02d %s", i+1, name); got != want {
+			t.Errorf("palette row %d = %q, want indexed %q", i, got, want)
+		}
+		if d.Payload[i] != "theme:"+name {
+			t.Errorf("row %q payload = %q, want theme:%s", d.Options[i], d.Payload[i], name)
+		}
+		if name == "dracula" {
+			found = true
+			if !strings.Contains(d.Descs[i], "✓ current") {
+				t.Errorf("active theme row should be marked: %q", d.Descs[i])
 			}
-			if d.Payload[i] != "theme:"+n {
-				t.Errorf("row %q payload = %q, want theme:%s", n, d.Payload[i], n)
-			}
-		default:
-			if d.Payload[i] != "bg:"+n {
-				t.Errorf("background row %q payload = %q, want bg:%s", n, d.Payload[i], n)
-			}
+		}
+	}
+	for j, b := range theme.Backgrounds() {
+		i := len(theme.Names()) + j
+		if d.Payload[i] != "bg:"+b {
+			t.Errorf("background row %q payload = %q, want bg:%s", d.Options[i], d.Payload[i], b)
 		}
 	}
 	if !found {
 		t.Fatal("the active theme should be in its own list")
+	}
+}
+
+// A converted TTT palette ships its own surface: applying it switches
+// the background to "own" automatically, a builtin palette hands control
+// back to the terminal background, and an explicit hub choice overrides.
+func TestTTTThemeBringsOwnBackground(t *testing.T) {
+	defer ApplyTheme(theme.Get("default")) // globals: don't leak into other tests
+	m := New(nil, t.TempDir())
+	m.SetTheme("vermeer")
+	if m.ThemeName != "vermeer" {
+		t.Fatalf("want vermeer, got %q", m.ThemeName)
+	}
+	if m.Background != bgOwn {
+		t.Fatalf("ttt theme should auto-pick its own bg, got %q", m.Background)
+	}
+	if got, want := m.bgColor(), theme.Get("vermeer").Bg; got != want {
+		t.Fatalf("bg surface = %q, want the palette's own %q", got, want)
+	}
+	// an explicit background choice overrides; re-selecting the palette
+	// brings its shipped surface back
+	m.SetBackground(theme.Transparent)
+	if m.Background != theme.Transparent {
+		t.Fatal("explicit background choice should override")
+	}
+	m.SetTheme("vermeer")
+	if m.Background != bgOwn {
+		t.Fatal("re-selecting a ttt theme should restore its own bg")
+	}
+	// leaving the ttt set restores the terminal background
+	m.SetTheme("dracula")
+	if m.Background != theme.Transparent {
+		t.Fatalf("builtin theme should drop the own-bg state, got %q", m.Background)
 	}
 }
 

@@ -76,6 +76,7 @@ func (m Model) MenuBar() []tea.Menu {
 			{ID: "cmd:/mcp", Label: "MCP Servers…"},
 			{ID: "cmd:/login", Label: "Login…"},
 		}},
+		{Title: "Quota", Items: m.quotaMenuItems()},
 		{Title: "Help", Items: []tea.MenuItem{
 			{ID: "act:commands", Label: "All Commands", Shortcut: "/"},
 			{ID: "cmd:/shortcuts", Label: "Keyboard Shortcuts"},
@@ -84,6 +85,21 @@ func (m Model) MenuBar() []tea.Menu {
 			{ID: "cmd:/update", Label: "Check for Updates"},
 		}},
 	}
+}
+
+// quotaMenuItems opens /quota, with the active provider's windows listed
+// (disabled, read-only) above it when a snapshot exists.
+func (m Model) quotaMenuItems() []tea.MenuItem {
+	var items []tea.MenuItem
+	if q, ok := m.currentQuota(); ok {
+		for _, r := range quotaPanelRows(q, 48) {
+			items = append(items, tea.MenuItem{Label: r.Text, Disabled: true})
+		}
+		if len(items) > 0 {
+			items = append(items, tea.MenuItem{Separator: true})
+		}
+	}
+	return append(items, tea.MenuItem{ID: "cmd:/quota", Label: "Provider Quota…"})
 }
 
 func check(on bool) string {

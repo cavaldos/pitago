@@ -1638,6 +1638,23 @@ func (m Model) buildSidebarContent() string {
 		}
 	}
 
+	if m.SideVisible(SideQuota) {
+		// A real quota panel in the opencode-quota shape: one group line per
+		// provider and one row per window, `name [bar] percent% reset`, the
+		// bar filled by the percent LEFT so the block reads as a fuel gauge.
+		// The header carries the provider count because that is what the
+		// panel is about, and nothing renders at all until the first async
+		// fetch lands (same rule as COST), so a session without a
+		// quota-tracked key pays no rows and no separator.
+		if rows := m.sideQuotaRows(); len(rows) > 0 {
+			b.WriteString(sideTitleStyle.Render(m.sideQuotaTitle(rows)) + "\n")
+			for _, r := range rows {
+				b.WriteString(r.Style.Render(r.Text) + "\n")
+			}
+			b.WriteString(m.sep() + "\n")
+		}
+	}
+
 	if m.SideVisible(SideRecent) {
 		b.WriteString(sideTitleStyle.Render("RECENT MODELS") + "\n")
 		if len(m.recentModels) == 0 {
@@ -2115,6 +2132,9 @@ func (m Model) renderDialog() string {
 	}
 	if d.Kind == "login" && len(d.Provs) > 0 {
 		return m.renderLoginDialog(d)
+	}
+	if d.Kind == "quota" {
+		return m.renderQuotaDialog(d)
 	}
 	if d.Kind == "trajectory" {
 		return m.renderTrajectoryDialog(d)

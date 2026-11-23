@@ -40,14 +40,20 @@ type Theme struct {
 	ToolNeutral                         string // quiet fill: output with no execution state
 	Tool                                ToolPalette
 	HiBg, HiFg                          string
+	// Bg is the palette's own background surface. Picking such a theme
+	// paints it automatically instead of leaving the surface to the
+	// hub's background column (see app.applyTheme). The converted TTT
+	// editor palettes carry one; pitago's own leave it empty.
+	Bg string
 	// Light marks a palette designed for a light terminal. It only picks
 	// which background variant the hub's background column offers
 	// (Backgrounds), so a light palette never gets a dark surface.
 	Light bool
 }
 
-// builtins: Default keeps today's opencode-like monochrome exactly.
-var builtins = []Theme{
+// builtinThemes: Default keeps today's opencode-like monochrome exactly.
+// builtins appends the converted TTT editor palettes (ttt.go) to these.
+var builtinThemes = []Theme{
 	{
 		Name:   "default",
 		Accent: "15", Border: "240", Muted: "243", Text: "252", Code: "250",
@@ -289,6 +295,10 @@ var builtins = []Theme{
 		Plan: "#BB9AF7",
 	},
 }
+
+// builtins is pitago's own palettes plus the converted TTT editor themes
+// (ttt.go), so Get/Names see both sets as one list.
+var builtins = append(builtinThemes, tttThemes...)
 
 // Transparent is the background choice that keeps the terminal's own
 // background: no fill at all, which is pitago's default look.

@@ -212,7 +212,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			MarketStarsMsg, MarketSortMsg, PluginChangeMsg, PluginTickMsg,
 			LoginSyncedMsg, LoginReloadMsg, OAuthGoneMsg, SettingWrittenMsg,
 			LoginSwitchMsg, LoginDeleteMsg, LoginRenameOpenMsg, LogoutDoneMsg,
-			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg:
+			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg, QuotaMsg:
 		default:
 			return m, nil
 		}
@@ -330,6 +330,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ModelLbl = msg.state.Model.ID
+		m.ModelProv = msg.state.Model.Provider
 		if m.ModelLbl == "" {
 			m.ModelLbl = msg.state.Model.Name
 		}
@@ -381,7 +382,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.RefreshFollow()
 		// Fresh pi: the sidebar's thinking-level list is model-specific and
 		// was just thrown away with the old process.
-		return m, tea.Batch(m.ensureTaskTick(), m.FetchLevels())
+		// The quota snapshot is fetched once here too, stale-only and off
+		// the event loop: /quota and the QUOTA section are already populated
+		// by the time the first turn ends.
+		return m, tea.Batch(m.ensureTaskTick(), m.FetchLevels(), m.RefreshQuota(true))
 
 	case piEventMsg:
 		if m.followRemote {
@@ -429,6 +433,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevLbl, prevLvl := m.ModelLbl, m.thinkLvl
 			if lbl != "" {
 				m.ModelLbl = lbl
+				m.ModelProv = msg.state.Model.Provider
 			}
 			m.thinkLvl = msg.state.ThinkingLevel
 			// The level list belongs to the model: refetch when either the
@@ -722,6 +727,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		} else {
 			m.ModelLbl = msg.Label
+			if msg.Provider != "" {
+				m.ModelProv = msg.Provider
+			}
 			id := msg.ID
 			if id == "" {
 				id = msg.Label
@@ -989,6 +997,30 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, nil
 
+	case QuotaMsg:
+		// A snapshot fetched BEFORE the one on screen is stale: a slow
+		// agent_settled fetch can land after the user's explicit Enter
+		// refresh, and letting it win would put the older numbers back on
+		// screen. The guard is skipped for an empty snapshot (At zero = no
+		// rows were fetched), which must still be able to clear the panel
+		// after the last key is deleted.
+		if !msg.At.IsZero() && msg.At.Before(m.quotaAt) {
+			return m, nil
+		}
+		// The fetch ran off the event loop; the snapshot feeds the sidebar
+		// panel AND an open /quota dialog, which is rebuilt in place so a
+		// refetch lands in the rows the user is looking at. quotaAt is the
+		// snapshot's own clock, not time.Now(): a cache-served snapshot must
+		// print its real age instead of "just now".
+		m.quota = msg.Quotas
+		m.quotaAt = msg.At
+		if msg.Err != nil {
+			m.NotifyErr("quota: " + msg.Err.Error())
+		}
+		m.RefreshQuotaDialog()
+		m.Refresh()
+		return m, nil
+
 	case SettingsRefreshMsg:
 		if msg.Err != nil {
 			m.AddBlock(Block{Kind: "notice", Text: msg.Err.Error(), Err: true})
@@ -1027,9 +1059,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			d.ProvFocus = false
 			m.Refresh()
-			return m, m.RespawnPi()
+			return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 		}
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case RenameKeyMsg:
 		if msg.Err != nil {
@@ -1053,7 +1085,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to key " + msg.Masked + " → pi — reconnecting…"})
 		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginDeleteMsg:
 		m.RefreshLoginKeys(msg.D)
@@ -1071,7 +1103,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Prov, msg.Masked, pirpc.MaskKey(msg.Left[0]), len(msg.Left))})
 		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginRenameOpenMsg:
 		// Push the rename prompt on top of /login (login stays at [1] so
@@ -1126,7 +1158,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Provider, msg.Masked, pirpc.MaskKey(msg.Left[0]), len(msg.Left))})
 		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginSyncedMsg:
 		// The picker build needs the real Model and the union-import that
@@ -1163,7 +1195,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.AddBlock(Block{Kind: "notice", Text: "disconnected OAuth " + msg.Prov + " (pi + pitago) — reconnecting…"})
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case SettingWrittenMsg:
 		if msg.Err != nil {
@@ -2083,7 +2115,10 @@ func (m Model) applyEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.refreshPiTasks()
 		m.refreshSubagents(false)
 		m.Refresh()
-		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
+		// The turn just spent tokens, so the quota snapshot is the stale one;
+		// RefreshQuota(true) is a no-op inside the 90s TTL (no extra traffic
+		// on a burst of replies) and a single fetch outside it.
+		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled(), m.RefreshQuota(true))
 	case "agent_end":
 		// Per-round boundary, NOT turn end: pi runs agent_start…agent_end
 		// per round and agent_settled once when fully idle (see pi's

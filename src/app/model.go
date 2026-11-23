@@ -172,6 +172,7 @@ type Model struct {
 	cwd                 string
 	focusLast           *focusLast // where /focus was left (a bare /focus reopens it)
 	ModelLbl            string
+	ModelProv           string   // provider id of the active model ("" = unknown); picks the QUOTA panel
 	CurAgent            string   // last-picked /subagents entry (shown on the input bar)
 	AppVersion          string   // pitago build version for the welcome header ("" = omit)
 	UpdateAvail         string   // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
@@ -189,7 +190,9 @@ type Model struct {
 	lastSpeed           float64 // tok/s of last turn
 	ws                  wsData  // workspace git status (polled)
 	Stats               pirpc.Stats
-	sessBreak           []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
+	sessBreak           []pirpc.CostBreak     // sidebar COST section (connect + /session refresh)
+	quota               []pirpc.ProviderQuota // /quota dialog + sidebar QUOTA panel (async fetch, 90s TTL)
+	quotaAt             time.Time             // newest ProviderQuota.FetchedAt in quota (age line, stale-message guard)
 	queue               pirpc.Queue
 	Todos               []TodoItem      // tracked from todo-tool calls (sidebar)
 	MCP                 []McpServer     // pi agent-dir MCP snapshot (sidebar)

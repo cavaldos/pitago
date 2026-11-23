@@ -84,6 +84,24 @@ func (m Model) nativeDialog(d *Dialog, v ev.SettingsView) ev.SettingsView {
 		v.Details = strings.Join(lines[min(max(d.TrajOff, 0), max(0, len(lines)-1)):], "\n")
 	case "askUser":
 		v.Help = "↑↓ choose · Enter confirm · Esc cancel"
+	case "quota":
+		// The list names the providers; the details pane draws the selected
+		// one as the same panel the sidebar shows (title, bars, verdict).
+		v.Help = "↑↓ move · Enter refetch · Esc close"
+		for i := range rows.Rows {
+			if p := rows.Rows[i].Index; p < len(m.quota) && p < len(d.Providers) {
+				rows.Rows[i].Label = m.quota[p].Label
+			}
+		}
+		v.Panes = []ev.SettingsPane{{}, rows}
+		v.Details = ""
+		if sel := rows.Selected; sel >= 0 && sel < len(d.Providers) {
+			for _, q := range m.quota {
+				if q.Provider == d.Providers[sel] {
+					v.Details = quotaPanelText(q, max(30, (m.winW-6)/2-4))
+				}
+			}
+		}
 	case "pet":
 		if rows.Selected >= 0 {
 			v.Details = strings.Join(petDemoLines(d.Options[rows.Selected], m.petShown().Name), "\n")
@@ -107,7 +125,7 @@ func (m Model) nativeDialog(d *Dialog, v ev.SettingsView) ev.SettingsView {
 
 func longDetails(kind string) bool {
 	switch kind {
-	case "sessions", "trajectory", "askUser", "pet":
+	case "sessions", "trajectory", "askUser", "pet", "quota":
 		return true
 	}
 	return false

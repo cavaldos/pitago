@@ -15,6 +15,15 @@ func (m *Model) applyTheme(name string) {
 	ApplyTheme(t)
 	m.ThemeName = t.Name
 	_ = theme.Save(m.themePath, t.Name)
+	// A palette that ships its own background (the converted TTT set)
+	// brings it along: no hand-pairing, the surface follows the theme.
+	// Leaving that set restores the terminal background.
+	switch {
+	case t.Bg != "":
+		m.setBackground(bgOwn, true)
+	case m.Background == bgOwn:
+		m.setBackground(theme.Transparent, true)
+	}
 	m.ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(cInput)
 	m.ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(cMuted)
 	m.ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(cMuted)
@@ -57,10 +66,20 @@ func (m *Model) setBackground(name string, persist bool) {
 	}
 }
 
+// bgOwn is the background state that paints the active palette's own
+// surface (Theme.Bg, carried by the converted TTT themes). Selecting
+// such a palette switches to it automatically; any explicit choice in
+// the hub's background column overrides it again.
+const bgOwn = "own"
+
 // bgColor is the surface paintBG fills the frame with, or "" when the
 // terminal background shows through. The light/dark variant follows the
-// active palette, so a light theme never gets a dark surface.
+// active palette, so a light theme never gets a dark surface; a palette
+// with its own Bg paints exactly that, whatever the column says.
 func (m Model) bgColor() string {
+	if m.Background == bgOwn {
+		return theme.Get(m.ThemeName).Bg
+	}
 	return theme.BackgroundHex(m.Background, theme.Get(m.ThemeName).Light)
 }
 

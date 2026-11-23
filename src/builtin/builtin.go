@@ -1499,6 +1499,21 @@ func All() []app.Builtin {
 			},
 		},
 		{
+			// Provider quota is not a pi concept: no RPC carries usage, so
+			// pitago reads each provider's own console endpoint (see
+			// src/pirpc/quota.go). Opening the dialog IS the refetch trigger —
+			// the user asking "what now?" is exactly when the 90s cache must
+			// be bypassed — and QuotaMsg rebuilds the open dialog in place.
+			Name: "quota", Desc: "Provider usage/quota — OpenCode Go windows, Zen budgets (read-only)", Usage: "/quota",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				d := app.QuotaDialog(m.Quota(), m.QuotaAt())
+				m.Dialogs = append(m.Dialogs, d)
+				m.Refresh()
+				return m.RefreshQuota(false)
+			},
+		},
+		{
 			Name: "update", Desc: "Check + install pitago update (pitago)", Usage: "/update",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {

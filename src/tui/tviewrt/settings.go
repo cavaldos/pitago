@@ -199,6 +199,9 @@ func (p *settingsPanel) draw(scr tcell.Screen, x, y, w, h int, v ev.SettingsView
 			detailW = 40
 		} else {
 			detailW = min(44, panelW/3)
+			if v.Kind == "quota" {
+				detailW = panelW / 2 // options and the panel split 50/50
+			}
 		}
 	}
 	var widths [3]int

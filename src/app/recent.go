@@ -49,6 +49,11 @@ func (m Model) sideRowsBeforeRecent() int {
 			n += 2 + len(r) // COST header + rows + sep
 		}
 	}
+	if m.SideVisible(SideQuota) {
+		if r := m.sideQuotaRows(); len(r) > 0 {
+			n += 2 + len(r) // QUOTA header + rows + sep (renders nothing while empty)
+		}
+	}
 	return n
 }
 

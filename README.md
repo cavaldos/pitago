@@ -97,6 +97,7 @@ RPC; extension/prompt/skill commands come from pi's `get_commands` and run serve
 | `/settings`                                            | Agent settings, saved to `~/.pi/agent/settings.json`                                                                               |
 | `/pitago-setting`                                      | Pitago hub: agent, skills, prompts, extensions, plugins, MCP, tasks, theme, login                                                  |
 | `/login` · `/logout`                                   | Manage API keys + pi OAuth/subscriptions                                                                                           |
+| `/quota`                                               | Provider quota panel: OpenCode Go windows + OpenCode Zen budget, percent LEFT with reset countdown (read-only endpoints, 90s cache) |
 | `/live`                                                | Attach read-only to a running `pi` session                                                                                         |
 | `/reload`                                              | Reload extensions                                                                                                                  |
 | `/new` · `/resume` · `/session`                        | New session · resume picker · session management                                                                                   |

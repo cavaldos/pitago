@@ -30,6 +30,7 @@ const (
 	SideModel     = "model"
 	SideStats     = "stats"
 	SideCost      = "cost"
+	SideQuota     = "quota"
 	SideRecent    = "recent"
 	SideCommands  = "commands"
 	SidePlugins   = "plugins"
@@ -44,7 +45,7 @@ const (
 
 // sideOrder is the Sidebar tab row order (top-to-bottom like the sidebar).
 var sideOrder = []string{
-	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
+	SidePet, SideSession, SideModel, SideStats, SideCost, SideQuota, SideRecent,
 	SideCommands, SidePlugins, SideMCP, SideLSP, SideTodos, SideTools,
 	SideSkills, SideSubagents, SideWorkspace,
 }
@@ -62,6 +63,11 @@ func sideLabel(key string) string {
 		return "Stats"
 	case SideCost:
 		return "Cost"
+	case SideQuota:
+		// Visible by default (DefaultSideVisible only hides MCP/Plugins/
+		// Commands): an unconfigured provider renders zero rows, so the
+		// section costs nothing until a key the endpoint knows about exists.
+		return "Quota"
 	case SideRecent:
 		return "Recent models"
 	case SideCommands:
