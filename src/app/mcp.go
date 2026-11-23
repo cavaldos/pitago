@@ -378,8 +378,8 @@ func McpStateLine(srv pirpc.McpServerInfo) string {
 		return "failed"
 	case "connected":
 		out := "connected · " + mcpPlural(len(srv.Tools), "tool")
-		if srv.Resources > 0 {
-			out += " · " + mcpPlural(srv.Resources, "resource")
+		if srv.Resources {
+			out += " · resources"
 		}
 		return out
 	case "connecting":

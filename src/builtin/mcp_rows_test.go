@@ -105,9 +105,9 @@ func TestMcpRowDescsMatchPi(t *testing.T) {
 		want string
 	}{
 		{
-			name: "connected counts tools and resources",
-			srv:  mcpSrv(func(s *pirpc.McpServerInfo) { s.Tools = []string{"a", "b"}; s.Resources = 3 }),
-			want: "connected · 2 tools · 3 resources · codemode · global",
+			name: "connected with resources",
+			srv:  mcpSrv(func(s *pirpc.McpServerInfo) { s.Tools = []string{"a", "b"}; s.Resources = true }),
+			want: "connected · 2 tools · resources · codemode · global",
 		},
 		{
 			name: "one tool is singular",

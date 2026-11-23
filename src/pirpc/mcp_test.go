@@ -33,8 +33,8 @@ const piMcpListJSON = `{
       "transport": "npx -y @suekou/mcp-notion-server",
       "state": "connected",
       "tools": ["notion_search", "notion_fetch"],
-      "resources": 2,
-      "resourceTemplates": 0
+      "resources": true,
+      "resourceTemplates": false
     }
   ],
   "errors": []
@@ -56,7 +56,7 @@ func TestParseMcpListPiPayload(t *testing.T) {
 		t.Errorf("the full connection error must survive the decode, got %q", failed.Error)
 	}
 	live := list.Servers[1]
-	if live.State != "connected" || len(live.Tools) != 2 || live.Resources != 2 {
+	if live.State != "connected" || len(live.Tools) != 2 || !live.Resources || live.ResourceTemplates {
 		t.Errorf("connected server = %+v", live)
 	}
 	if live.Scope != "global" || live.Source == "" || live.Exposure != "codemode" {

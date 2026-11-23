@@ -19,7 +19,7 @@ func mcpTestServers() []pirpc.McpServerInfo {
 			Error: "spawn npx ENOENT\nsecond line"},
 		{Name: "docs", Scope: "project", Source: "/p/.pi/mcp.json", Enabled: true,
 			Exposure: "direct", Transport: "https://example.com/mcp", State: "connected",
-			Tools: []string{"search"}, Resources: 1},
+			Tools: []string{"search"}, Resources: true},
 	}
 }
 
@@ -257,7 +257,7 @@ func TestMcpStateLineMatchesPi(t *testing.T) {
 		{"needs sign-in", pirpc.McpServerInfo{Enabled: true, State: "needs-auth"}, "needs sign-in"},
 		{"failed with error", pirpc.McpServerInfo{Enabled: true, State: "failed", Error: "boom\nmore"}, "failed: boom"},
 		{"failed without error", pirpc.McpServerInfo{Enabled: true, State: "failed"}, "failed"},
-		{"connected counts", pirpc.McpServerInfo{Enabled: true, State: "connected", Tools: []string{"a", "b"}, Resources: 4}, "connected · 2 tools · 4 resources"},
+		{"connected counts", pirpc.McpServerInfo{Enabled: true, State: "connected", Tools: []string{"a", "b"}, Resources: true}, "connected · 2 tools · resources"},
 		{"connected one tool", pirpc.McpServerInfo{Enabled: true, State: "connected", Tools: []string{"a"}}, "connected · 1 tool"},
 		{"connecting", pirpc.McpServerInfo{Enabled: true, State: "connecting"}, "connecting…"},
 		{"no state yet", pirpc.McpServerInfo{Enabled: true}, "starting"},
@@ -697,7 +697,7 @@ func TestMcpRootRowCarriesNoDescriptionText(t *testing.T) {
 	m.ta.SetWidth(m.mainW() - 6)
 	srv := pirpc.McpServerInfo{Name: "notion", Scope: "global", Source: "/a/mcp.json",
 		Enabled: true, Exposure: "direct", State: "connected", Transport: "npx -y @notionhq/notion-mcp-server",
-		Tools: []string{"a", "b", "c", "d"}, Resources: 4, ResourceTemplates: 2}
+		Tools: []string{"a", "b", "c", "d"}, Resources: true, ResourceTemplates: true}
 	um, _ := m.Update(McpMsg{
 		Options: []string{"notion"},
 		Descs:   []string{"connected · 4 tools · 4 resources · direct · global"},

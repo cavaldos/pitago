@@ -44,7 +44,7 @@ const (
 // mirrors what pi prints (verified against pi 0.99.1): name, scope
 // (global|project), source (the mcp.json that defines it), enabled,
 // exposure, transport (the command line, or the URL for HTTP
-// servers), state, the tool names, the resource counts and the full
+// servers), state, the tool names, resource availability flags and the full
 // connection error.
 type McpServerInfo struct {
 	Name              string   `json:"name"`
@@ -55,8 +55,8 @@ type McpServerInfo struct {
 	Transport         string   `json:"transport"`
 	State             string   `json:"state"`
 	Tools             []string `json:"tools"`
-	Resources         int      `json:"resources"`
-	ResourceTemplates int      `json:"resourceTemplates"`
+	Resources         bool     `json:"resources"`
+	ResourceTemplates bool     `json:"resourceTemplates"`
 	Error             string   `json:"error"`
 	// ToolExposure carries the PER-TOOL exposure overrides pi prints
 	// (dist/extensions/mcp/cli.js:376, `report.toolExposure =
