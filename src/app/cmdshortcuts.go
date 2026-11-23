@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // Hub-assigned Alt shortcuts for /commands (Skills/Prompts/Extensions tabs).
@@ -33,6 +33,14 @@ func shortcutLabelOf(km tea.KeyMsg) (string, bool) {
 func shortcutReserved(label string) bool {
 	if label == "alt+m" {
 		return true
+	}
+	// tviewrt's menu bar opens File/Edit/Selection/View/Options/Help on
+	// Alt+F/E/S/V/O/H.
+	if NativeMenus {
+		switch label {
+		case "alt+f", "alt+e", "alt+s", "alt+v", "alt+o", "alt+h":
+			return true
+		}
 	}
 	if len(label) == 5 && strings.HasPrefix(label, "alt+") {
 		if c := label[4]; c >= '1' && c <= '5' {

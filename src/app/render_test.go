@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/textarea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"
 )

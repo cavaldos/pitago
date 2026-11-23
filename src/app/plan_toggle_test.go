@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"pitago/src/pirpc"
+	tea "pitago/src/tui/ev"
 )
 
 func planToggleModel(t *testing.T, cmds ...pirpc.RepoCommand) Model {

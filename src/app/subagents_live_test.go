@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"pitago/src/pirpc"
+	tea "pitago/src/tui/ev"
 )
 
 func TestSubagentLiveTracking(t *testing.T) {

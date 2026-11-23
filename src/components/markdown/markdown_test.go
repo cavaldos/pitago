@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/cellwidth"
 )
 
 // frameCols returns the display-cell positions of every table frame glyph.
@@ -13,7 +13,7 @@ func frameCols(r string) []int {
 	var out []int
 	for i := range rs {
 		if strings.ContainsRune("│┼┬┴├┤┌┐└┘", rs[i]) {
-			out = append(out, lipgloss.Width(string(rs[:i])))
+			out = append(out, cellwidth.Width(string(rs[:i])))
 		}
 	}
 	return out

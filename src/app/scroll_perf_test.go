@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 )
 
 // scrollModel is a ready model holding n chat lines of transcript, so a
@@ -18,7 +18,7 @@ func scrollModel(t testing.TB, n int) Model {
 	m.baseVpH = 23
 	m.hideSide = true
 	m.vp = viewport.New(116, 23)
-	m.sideVp = viewport.New(sideInnerW, 10)
+	m.sideVp = viewport.New((defaultSideW - 4), 10)
 	m.blocks = make([]Block, n)
 	for i := range m.blocks {
 		m.blocks[i] = Block{Kind: "assistant", Text: fmt.Sprintf("answer %d\ndetail line one\ndetail line two", i)}
@@ -54,26 +54,6 @@ func TestWheelScrollDoesNotRepaintTranscript(t *testing.T) {
 	}
 	if m.vp.YOffset == 0 {
 		t.Fatal("wheel up over the chat did not scroll it")
-	}
-}
-
-// The same holds for wheel reports that arrive as scrubbed KeyRunes after a
-// split read (the trackpad path): the burst scrolls, but paints nothing.
-func TestScrollLeakDoesNotRepaintTranscript(t *testing.T) {
-	m := scrollModel(t, 400)
-	// "[<64;10;5M" — SGR wheel-up press at column 10.
-	burst := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[<64;10;5M")}
-	paints := countPaints(t, func() {
-		for i := 0; i < 20; i++ {
-			tm, _ := m.Update(burst)
-			m = tm.(Model)
-		}
-	})
-	if paints != 0 {
-		t.Fatalf("20 leaked wheel events repainted the transcript %d time(s), want 0", paints)
-	}
-	if m.vp.YOffset == 0 {
-		t.Fatal("leaked wheel up did not scroll the chat")
 	}
 }
 
@@ -204,7 +184,7 @@ func BenchmarkWheelScrollLongChat(b *testing.B) {
 					}
 					if mode == "re_render_per_event" {
 						var c tea.Cmd
-						m.vp, c = m.vp.Update(ev)
+						m.vp, c = vpUpdate(m.vp, ev)
 						_ = c
 						m.Refresh()
 						continue

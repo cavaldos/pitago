@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"pitago/src/components/textarea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/pirpc"
 )

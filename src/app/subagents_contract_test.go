@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 )
 
 // Row creators vs family-only tools. A control/query tool acts on an existing

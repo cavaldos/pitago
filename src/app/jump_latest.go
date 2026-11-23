@@ -3,9 +3,9 @@ package app
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 )
 
 // Jump to latest — pi parity: once the user scrolls away from the newest

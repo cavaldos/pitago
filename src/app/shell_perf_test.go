@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 )
 
 // Per-keystroke cost, measured the way the user feels it: one typed
@@ -29,7 +29,7 @@ func shellPerfModel(t testing.TB, shellOn bool) Model {
 	m.baseVpH = 23
 	m.hideSide = true
 	m.vp = viewport.New(116, 23)
-	m.sideVp = viewport.New(sideInnerW, 10)
+	m.sideVp = viewport.New((defaultSideW - 4), 10)
 	m.blocks = make([]Block, 400)
 	for i := range m.blocks {
 		m.blocks[i] = Block{Kind: "assistant", Text: "answer\ndetail line one\ndetail line two"}

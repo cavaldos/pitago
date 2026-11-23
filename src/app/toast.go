@@ -40,15 +40,15 @@ func (m *Model) NotifyErr(text string) { m.AddBlock(Block{Kind: "notice", Text: 
 // countdown and prunes on expiry. Each toastTickMsg reschedules while a
 // popup remains, so the loop runs only while something is visible.
 func scheduleToastTick() {
-	if ProgRef == nil {
+	if Post == nil {
 		return
 	}
-	time.AfterFunc(time.Second, func() { ProgRef.Send(toastTickMsg{}) })
+	time.AfterFunc(time.Second, func() { Post(toastTickMsg{}) })
 }
 
 // pushToast appends a toast, caps the stack, and starts the tick loop.
 // Expiry also runs opportunistically on every Update, so a missed tick
-// still clears (no timers in tests — ProgRef is nil there).
+// still clears (no timers in tests — Post is nil there).
 func (m *Model) pushToast(text string, isErr bool) {
 	m.pruneToasts()
 	now := time.Now()

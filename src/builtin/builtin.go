@@ -3,11 +3,12 @@ package builtin
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/app"
 	"pitago/src/components/palette"
@@ -240,14 +241,14 @@ func doLogout(m *app.Model, provider, desc string) tea.Cmd {
 // LogoutDoneMsg / OAuthGoneMsg handlers.
 func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
 	if env == "" {
-		return func() tea.Msg { return teardownOAuth(provider, authPath) }
+		return func() tea.Msg { return teardownOAuth(provider, keyPath, authPath) }
 	}
 	return func() tea.Msg {
 		keysBefore, active := pirpc.ListKeys(keyPath, env)
 		if active < 0 {
 			// No saved keys: maybe an OAuth login in pi — disconnect it.
 			if _, _, ok := pirpc.PiOAuth(provider); ok {
-				return teardownOAuth(provider, authPath)
+				return teardownOAuth(provider, keyPath, authPath)
 			}
 			return app.LogoutDoneMsg{Provider: provider, Kind: "no-keys"}
 		}
@@ -270,8 +271,8 @@ func logoutCmd(keyPath, authPath, provider, env string) tea.Cmd {
 // teardownOAuth drops pi's OAuth entry and pitago's mirror, reporting which
 // way it went. DeletePiAuth's failure skips the mirror, as before. Shared by
 // the /logout OAuth fallback and the disconnect actions.
-func teardownOAuth(provider, authPath string) app.OAuthGoneMsg {
-	if err := pirpc.DeletePiAuth(provider); err != nil {
+func teardownOAuth(provider, keyPath, authPath string) app.OAuthGoneMsg {
+	if err := pirpc.DropActiveOAuth(keyPath, provider); err != nil {
 		return app.OAuthGoneMsg{Prov: provider, Err: err}
 	}
 	pirpc.ForgetAuthState(authPath, provider)
@@ -284,7 +285,8 @@ func teardownOAuth(provider, authPath string) app.OAuthGoneMsg {
 // I/O, so it runs off the event loop and lands as app.OAuthGoneMsg — which
 // keeps DeletePiAuth's early-out (a failure skips the mirror) intact.
 func doOAuthLogout(m *app.Model, provider, authPath string) tea.Cmd {
-	return func() tea.Msg { return teardownOAuth(provider, authPath) }
+	keyPath := m.KeyPath
+	return func() tea.Msg { return teardownOAuth(provider, keyPath, authPath) }
 }
 
 // respawnPi kills the old pi and respawns keeping the same session (to pick up added/removed keys).
@@ -761,6 +763,14 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 	if fr.local {
 		save := applyLocalSetting(m, fr, next)
 		st.HideThinking = m.HideThinking
+		st.Tidy = m.Tidy
+		if fr.path != "" {
+			st.Vals = maps.Clone(st.Vals)
+			if st.Vals == nil {
+				st.Vals = make(map[string]string)
+			}
+			st.Vals[fr.path] = next
+		}
 		st.AutocompleteMax = palette.Win
 		st.ShellBinary = m.ShellBinaryPref()
 		opts, descs, cats := settingsOptions(st)
@@ -1288,6 +1298,13 @@ func All() []app.Builtin {
 			return exportSession(m, arg)
 		}),
 		{
+			Name: "focus", Desc: "Pick a file, select lines, ask the AI about only that code (saves tokens)", Usage: "/focus [path[:start-end]]",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				return m.OpenFocus(arg)
+			},
+		},
+		{
 			Name: "trajectory", Desc: "Harness-style run trace (numbered steps · Enter views full step)", Usage: "/trajectory [all|tools|messages]",
 			Origin: OriginPitago,
 			Run: func(m *app.Model, arg string) tea.Cmd {
@@ -1479,6 +1496,21 @@ func All() []app.Builtin {
 					Text: "unknown pet: " + arg + " — /pet lists all " + strconv.Itoa(len(pet.Entries())), Err: true})
 				m.Refresh()
 				return nil
+			},
+		},
+		{
+			// Provider quota is not a pi concept: no RPC carries usage, so
+			// pitago reads each provider's own console endpoint (see
+			// src/pirpc/quota.go). Opening the dialog IS the refetch trigger —
+			// the user asking "what now?" is exactly when the 90s cache must
+			// be bypassed — and QuotaMsg rebuilds the open dialog in place.
+			Name: "quota", Desc: "Provider usage/quota — OpenCode Go windows, Zen budgets (read-only)", Usage: "/quota",
+			Origin: OriginPitago,
+			Run: func(m *app.Model, arg string) tea.Cmd {
+				d := app.QuotaDialog(m.Quota(), m.QuotaAt())
+				m.Dialogs = append(m.Dialogs, d)
+				m.Refresh()
+				return m.RefreshQuota(false)
 			},
 		},
 		{

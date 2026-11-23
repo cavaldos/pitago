@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	tea "pitago/src/tui/ev"
 )
 
 const (
@@ -899,10 +899,13 @@ func renderRawTeamDetail(m Model, d *Dialog, contentW int) string {
 }
 
 func (m Model) renderTeamDashboardPanel(d *Dialog, panelW int) string {
-	contentW := max(20, panelW-8)
+	return dlgStyle.Width(panelW).Render(m.teamDashboardBody(d, max(20, panelW-8)))
+}
+
+func (m Model) teamDashboardBody(d *Dialog, contentW int) string {
 	if d.TeamDetail && isTeamDetailText(d.Message) {
 		body := renderRawTeamDetail(m, d, contentW)
-		return dlgStyle.Width(panelW).Render(runewidth.Truncate(d.Title+" · detail", contentW, "…") + "\n" + body)
+		return runewidth.Truncate(d.Title+" · detail", contentW, "…") + "\n" + body
 	}
 	data := parseTeamDashboard(d.Message)
 	workers := teamWorkers(data)
@@ -910,7 +913,7 @@ func (m Model) renderTeamDashboardPanel(d *Dialog, panelW int) string {
 	d.TeamTab = teamTab(d)
 	if d.TeamDetail && len(workers) > 0 {
 		body := renderFocusedTeamDetail(m, d, data, workers[d.Cursor], contentW)
-		return dlgStyle.Width(panelW).Render(runewidth.Truncate(d.Title+" · detail", contentW, "…") + "\n" + body)
+		return runewidth.Truncate(d.Title+" · detail", contentW, "…") + "\n" + body
 	}
 
 	var b strings.Builder
@@ -936,7 +939,7 @@ func (m Model) renderTeamDashboardPanel(d *Dialog, panelW int) string {
 		b.WriteString("\n" + toolStyle.Render(follow))
 	}
 	b.WriteString("\n" + toolStyle.Render("Enter · 1-4 tabs · r refresh · q close"))
-	return dlgStyle.Width(panelW).Render(strings.TrimSuffix(b.String(), "\n"))
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // ansiWindow returns a display-cell window while preserving escape sequences,

@@ -3,7 +3,7 @@ package builtin
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/app"
 	"pitago/src/components/pet"

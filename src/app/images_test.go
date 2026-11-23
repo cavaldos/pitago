@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	terminal_image "pitago/src/components/terminal_image"
@@ -205,13 +205,14 @@ func oversizedPNGPayload(t *testing.T) string {
 	return base64.StdEncoding.EncodeToString(raw)
 }
 
-// Ids must stay in 1..255: the placeholder foreground color carries only
-// 8 bits, so an out-of-range id would render as someone else's image.
+// Ids must stay in 16..255: the placeholder foreground color carries only
+// 8 bits, so an out-of-range id would render as someone else's image, and
+// tcell emits palette colors below 16 as ESC[3x/9x instead of 38;5;N.
 func TestImageIDStaysInEightBitRange(t *testing.T) {
 	st := newImageRenderState()
-	for i := 0; i < 255; i++ {
+	for i := 0; i < 240; i++ {
 		id := st.allocImageID()
-		if id < 1 || id > 255 {
+		if id < 16 || id > 255 {
 			t.Fatalf("id %d out of range at %d", id, i)
 		}
 		st.up[uint64(i)] = id

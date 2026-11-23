@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/pirpc"
 )

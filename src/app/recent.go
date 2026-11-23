@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/recent"
 )
@@ -25,7 +25,7 @@ const (
 // fixed, because the level list arrives asynchronously (GetLevels) and is
 // empty until it does — an empty list simply means no extra rows.
 func (m Model) sideModelRows() int {
-	return sideModelRows + len(m.thinkLevelLines(sideInnerW))
+	return sideModelRows + len(m.thinkLevelLines(m.sideInnerW()))
 }
 
 // sideRowsBeforeRecent counts the sidebar content rows above the RECENT
@@ -47,6 +47,11 @@ func (m Model) sideRowsBeforeRecent() int {
 	if m.SideVisible(SideCost) {
 		if r := m.sideCostRows(); len(r) > 0 {
 			n += 2 + len(r) // COST header + rows + sep
+		}
+	}
+	if m.SideVisible(SideQuota) {
+		if r := m.sideQuotaRows(); len(r) > 0 {
+			n += 2 + len(r) // QUOTA header + rows + sep (renders nothing while empty)
 		}
 	}
 	return n
@@ -71,7 +76,7 @@ func (m Model) sideCostRows() []string {
 	}
 	rows := make([]string, 0, n)
 	for _, b := range m.sessBreak[:n] {
-		rows = append(rows, Short(Short(b.Key, sideInnerW-8)+" "+fmt.Sprintf("$%.3f", b.Cost), sideInnerW))
+		rows = append(rows, Short(Short(b.Key, m.sideInnerW()-8)+" "+fmt.Sprintf("$%.3f", b.Cost), m.sideInnerW()))
 	}
 	return rows
 }

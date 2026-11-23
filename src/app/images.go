@@ -99,7 +99,7 @@ func (st *imageRenderState) allocImageID() uint64 {
 	for _, id := range st.up {
 		used[id] = true
 	}
-	for id := uint64(1); id <= 255; id++ {
+	for id := uint64(16); id <= 255; id++ { // <16 would go out as ESC[3x/9x under tcell, not 38;5
 		if !used[id] {
 			return id
 		}

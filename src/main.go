@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"pitago/src/app"
 	"pitago/src/builtin"
 	"pitago/src/components/theme"
@@ -128,21 +126,10 @@ func main() {
 	}
 	m.Mouse = *mouse
 	m.UseBuiltins(builtin.All(), builtin.Confirmers())
-	// Mouse capture on by default so the sidebar is clickable + scrollable.
-	// Opt out with --mouse=false for plain highlight-to-copy.
-	// WithOutput is the default anyway, but stating it makes the raw escape
-	// handoff below explicit: image payloads go straight to the terminal
-	// instead of through the frame, so both must be the same writer.
-	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithOutput(os.Stdout), tea.WithFilter(app.ScrollEventFilter)}
-	if *mouse {
-		progOpts = append(progOpts, tea.WithMouseAllMotion())
-	}
-	prog := tea.NewProgram(m, progOpts...)
-	app.ProgRef = prog
-	app.ImageOut = os.Stdout
-	app.WireClient(pi)
-	if _, err := prog.Run(); err != nil {
-		fmt.Println("Error:", err)
+	if err := runTview(m, pi); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		pi.Close()
+		pimark.Close()
 		os.Exit(1)
 	}
 }

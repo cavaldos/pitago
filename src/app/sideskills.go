@@ -471,6 +471,6 @@ func (m Model) renderSkillsSection(inner int) string {
 	if hidden := len(used) - len(shown); hidden > 0 {
 		b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more", hidden)) + "\n")
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }

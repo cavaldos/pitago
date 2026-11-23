@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/format"
 	"pitago/src/components/markdown"
@@ -22,7 +22,7 @@ func (m Model) showSide() bool { return !m.hideSide && m.winW >= 80 }
 func (m Model) mainW() int {
 	w := m.winW - 2 // single column margin
 	if m.showSide() {
-		w = m.winW - sideW // chat + sidebar, flush against the right edge
+		w = m.winW - m.sideW() // chat + sidebar, flush against the right edge
 	}
 	if w < 30 {
 		w = 30
@@ -160,6 +160,13 @@ func (m *Model) renderBlocks() string {
 		// one-time upload, and a cached replay would resend the payload on
 		// every frame. Re-rendering them is a few string concats.
 		key := blockKey(bl, cw, hide, expand, theme, tidy)
+		// The reply still streaming renders in cached segments (only its
+		// growing tail re-renders per frame); once the turn ends the key
+		// changes and the canonical whole-document render takes over.
+		if m.thinking && i == m.curAsst && bl.Kind == "assistant" {
+			bl.Streaming = true
+			key ^= 0x9e3779b97f4a7c15
+		}
 		head := m.toolGroup[i]
 		if head >= 0 {
 			key ^= m.toolGroupKey(i)
@@ -356,7 +363,11 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		return s, false
 	case "assistant":
 		icon = statusBarStyle.Render("●")
-		body = strings.TrimSuffix(renderMarkdown(m, bl.Text, cw), "\n")
+		if bl.Streaming {
+			body = strings.TrimSuffix(renderMarkdownStreaming(m, bl.Text, cw), "\n")
+		} else {
+			body = strings.TrimSuffix(renderMarkdown(m, bl.Text, cw), "\n")
+		}
 		// Footer opencode-style: model · thinking · wall time of the prompt
 		// that produced this reply (issue #15). Baked at settle, so it never
 		// ticks in the transcript; it rides on the turn's last reply, where
@@ -403,7 +414,7 @@ func (m *Model) renderOneBlock(bl Block, cw int) (string, bool) {
 		if bl.Err {
 			class = format.StatusError
 		}
-		rows := strings.Split(markdown.Highlight("bash", Short(bl.Text, 400)), "\n")
+		rows := bashBlockRows(bl.Text, blockInner(cw), m.expandTools || bl.Expanded)
 		return framedBlock(rows, cw, blockThemeFor(class)) + "\n\n", false
 	case "compaction", "branch":
 		// pi's compaction/branch summary component: a bold label, a blank
@@ -506,6 +517,14 @@ const maxSummaryChars = 8000
 // renderMarkdown renders assistant output with the Go renderer (Glamour
 // tables/lists/bold, Chroma fenced code) wrapped to the chat width. Plain text comes back unchanged from markdown.Render and keeps the
 // old unstyled render. File paths linkify against the session cwd.
+// renderMarkdownStreaming is renderMarkdown for a reply still arriving.
+func renderMarkdownStreaming(m *Model, src string, width int) string {
+	if out := markdown.RenderCwdStreaming(src, width, m.cwd); out != src {
+		return out
+	}
+	return lipgloss.NewStyle().Foreground(cText).Width(width).Render(src)
+}
+
 func renderMarkdown(m *Model, src string, width int) string {
 	if out := markdown.RenderCwd(src, width, m.cwd); out != src {
 		return out
@@ -536,6 +555,47 @@ func codeLang(s string) (lang string, ok bool) {
 		return "diff", true
 	}
 	return "", false
+}
+
+// bashPreviewLines is how many output lines a collapsed bash block shows.
+const bashPreviewLines = 12
+
+// bashBlockRows lays out a local shell echo ("$ cmd" then its output) as
+// frame rows. The text keeps its real line breaks: squeezing it onto one
+// row with ⏎ markers (format.Short) turned `ls` into a single run-on line
+// and broke anything laid out in columns (fastfetch, tables, trees).
+//
+//   - only the command row is highlighted as bash; output is plain text
+//     (chroma would paint words like "test" or "for" as keywords);
+//   - each row is cut to the frame's inner width instead of wrapping, so
+//     column art keeps its shape;
+//   - collapsed, the output stops after bashPreviewLines with a hint;
+//     ctrl+g (or a click) shows everything the block stored.
+func bashBlockRows(text string, inner int, expanded bool) []string {
+	text = strings.ReplaceAll(strings.TrimRight(text, "\n"), "\t", "    ")
+	lines := strings.Split(text, "\n")
+	cmd := lines[0]
+	out := lines[1:]
+	row := cmd
+	if hl := markdown.Highlight("bash", Short(cmd, inner)); hl != "" {
+		row = strings.TrimRight(hl, "\n")
+	}
+	rows := []string{row}
+	hidden := 0
+	if !expanded && len(out) > bashPreviewLines {
+		hidden = len(out) - bashPreviewLines
+		out = out[:bashPreviewLines]
+	}
+	for _, ln := range out {
+		if lipgloss.Width(ln) > inner {
+			ln = Short(ln, inner)
+		}
+		rows = append(rows, ln)
+	}
+	if hidden > 0 {
+		rows = append(rows, toolStyle.Render(fmt.Sprintf("… +%d lines (%s)", hidden, expandHint)))
+	}
+	return rows
 }
 
 // isShell reports whether a tool's output is command output, which gets
@@ -1430,7 +1490,7 @@ func (m Model) thinkLevelAt(x, y int) (string, bool) {
 	if head < 0 {
 		return "", false
 	}
-	rows := m.thinkLevelRows(sideInnerW)
+	rows := m.thinkLevelRows(m.sideInnerW())
 	ri := y - 1 + m.sideVp.YOffset - head - 1
 	if ri < 0 || ri >= len(rows) {
 		return "", false
@@ -1455,7 +1515,7 @@ func (m Model) thinkLevelAt(x, y int) (string, bool) {
 // scrolled.
 
 func (m Model) buildSidebarContent() string {
-	inner := sideInnerW
+	inner := m.sideInnerW()
 	var b strings.Builder
 	if m.SideVisible(SidePet) {
 		b.WriteString(m.renderPet(inner))
@@ -1485,7 +1545,7 @@ func (m Model) buildSidebarContent() string {
 			file = pirpc.Shorten(file)
 		}
 		b.WriteString(statusBarStyle.Render(Short(file, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideModel) {
@@ -1523,7 +1583,7 @@ func (m Model) buildSidebarContent() string {
 			tokLine = "tok " + FmtNum(used)
 		}
 		b.WriteString(statusBarStyle.Render(Short(tokLine, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideStats) {
@@ -1565,7 +1625,7 @@ func (m Model) buildSidebarContent() string {
 			uncached = fmtComma(m.Stats.In + m.Stats.CacheWrite)
 		}
 		b.WriteString(statusBarStyle.Render(Short("cached "+cached+" · uncached "+uncached, inner)) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideCost) {
@@ -1574,7 +1634,24 @@ func (m Model) buildSidebarContent() string {
 			for _, r := range rows {
 				b.WriteString(statusBarStyle.Render(r) + "\n")
 			}
-			b.WriteString(sep() + "\n")
+			b.WriteString(m.sep() + "\n")
+		}
+	}
+
+	if m.SideVisible(SideQuota) {
+		// A real quota panel in the opencode-quota shape: one group line per
+		// provider and one row per window, `name [bar] percent% reset`, the
+		// bar filled by the percent LEFT so the block reads as a fuel gauge.
+		// The header carries the provider count because that is what the
+		// panel is about, and nothing renders at all until the first async
+		// fetch lands (same rule as COST), so a session without a
+		// quota-tracked key pays no rows and no separator.
+		if rows := m.sideQuotaRows(); len(rows) > 0 {
+			b.WriteString(sideTitleStyle.Render(m.sideQuotaTitle(rows)) + "\n")
+			for _, r := range rows {
+				b.WriteString(r.Style.Render(r.Text) + "\n")
+			}
+			b.WriteString(m.sep() + "\n")
 		}
 	}
 
@@ -1595,7 +1672,7 @@ func (m Model) buildSidebarContent() string {
 			}
 		}
 		b.WriteString(toolStyle.Render(m.recentHint()) + "\n")
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 	}
 
 	if m.SideVisible(SideCommands) {
@@ -1641,7 +1718,7 @@ func (m Model) buildSidebarContent() string {
 				row := mark + " " + statusBarStyle.Render(bl.ToolName) + toolStyle.Render(" · "+state)
 				b.WriteString(truncANSI(row, inner) + "\n")
 			}
-			b.WriteString(sep() + "\n")
+			b.WriteString(m.sep() + "\n")
 		}
 	}
 	if m.SideVisible(SideSkills) {
@@ -1696,29 +1773,29 @@ func (m Model) invokedTools() []Block {
 // renderSidebar draws the sidebar box around the visible sideVp slice.
 // lipgloss Height covers the content only (border adds 2), so size it by
 // sideContentH to keep the outer box exactly sideH tall. Width likewise
-// covers padding, not the border: sideInnerW+2 lands the box on sideW.
+// covers padding, not the border: m.sideInnerW()+2 lands the box on m.sideW().
 func (m Model) renderSidebar() string {
 	h := m.sideContentH()
 	body := m.applyHover(m.sideVp.View())
 	if !m.quitArmed() {
-		return sideStyle.Width(sideInnerW + 2).Height(h).Render(body)
+		return sideStyle.Width(m.sideInnerW() + 2).Height(h).Render(body)
 	}
 	// armed: viewport already shrunk by one line (syncSideH), so the
 	// warning pins to the bottom-right corner of the box.
-	return sideStyle.Width(sideInnerW + 2).Height(h).Render(body + "\n" + quitArmFooter())
+	return sideStyle.Width(m.sideInnerW() + 2).Height(h).Render(body + "\n" + m.quitArmFooter())
 }
 
 // quitArmFooter is the 1-line bottom-right sidebar warning (yellow).
-func quitArmFooter() string {
+func (m Model) quitArmFooter() string {
 	s := "press Ctrl+C again to quit"
-	if w := lipgloss.Width(s); w < sideInnerW {
-		s = strings.Repeat(" ", sideInnerW-w) + s
+	if w := lipgloss.Width(s); w < m.sideInnerW() {
+		s = strings.Repeat(" ", m.sideInnerW()-w) + s
 	}
 	return warnStyle.Render(s)
 }
 
-func sep() string {
-	return sepStyle.Render(strings.Repeat("─", sideInnerW))
+func (m Model) sep() string {
+	return sepStyle.Render(strings.Repeat("─", m.sideInnerW()))
 }
 
 func (m Model) sideH() int {
@@ -1764,7 +1841,9 @@ func (m Model) statsLine() string {
 	return Short(m.ModelLbl, 40) + agent
 }
 
-func (m Model) renderHeader() string {
+func (m Model) renderHeader() string { return headerStyle.Render(m.headerText()) }
+
+func (m Model) headerText() string {
 	left := Short(pirpc.Shorten(m.cwd), 48)
 	if m.session != "" {
 		left = m.session + " · " + pirpc.Shorten(m.cwd)
@@ -1772,19 +1851,12 @@ func (m Model) renderHeader() string {
 	if m.followRemote {
 		left = "external · " + left
 	}
-	left = Short(left, 48)
-	// Status lives on the pet row (sidebar) — header keeps cwd/session only.
-	return headerStyle.Render(left)
+	return Short(left, 48)
 }
 
-func (m Model) renderInput() string {
-	mainW := m.mainW()
-	innerW := mainW - 4
-	if innerW < 10 {
-		innerW = 10
-	}
-	border, title := cInput, ""
-	left := "↵ send · / commands · @ files · ^P model · ^C quit"
+func (m Model) inputChrome() (border lipgloss.Color, title, left, right string) {
+	border = cInput
+	left = "↵ send · / commands · @ files · ^P model · ^C quit"
 	plan := m.isPlanMode()
 	agentTag := ""
 	if m.CurAgent != "" {
@@ -1812,6 +1884,9 @@ func (m Model) renderInput() string {
 			title = "SHELL · " + m.inputStatus()
 		}
 		left = "↵ run · ↑↓ history · ^V paste · ^C clear/quit · Esc exit"
+		if m.shellRunning && shellCanInterrupt {
+			left = "^C interrupt · Esc exit (kills the shell)"
+		}
 	} else if m.followRemote {
 		border = cInputDim
 		title = "EXTERNAL · READ-ONLY"
@@ -1871,10 +1946,18 @@ func (m Model) renderInput() string {
 	} else if m.CurAgent != "" {
 		title = "@" + Short(m.CurAgent, 30)
 	}
-	right := m.statsLine()
+	right = m.statsLine()
 	if m.extStat != "" {
 		right = Short(m.extStat, 30) + " · " + right
 	}
+	return border, title, left, right
+}
+
+func (m Model) inputHeight() int { return m.ta.Height() + m.chipH() + 3 }
+
+func (m Model) renderInput() string {
+	innerW := max(10, m.mainW()-4)
+	border, title, left, right := m.inputChrome()
 	// The footer must stay exactly one visual row: the input box is a
 	// fixed 6 rows (textarea 3 + footer 1 + border 2) and the viewport
 	// math in Update assumes it. A long model/stats line used to wrap
@@ -2050,6 +2133,9 @@ func (m Model) renderDialog() string {
 	if d.Kind == "login" && len(d.Provs) > 0 {
 		return m.renderLoginDialog(d)
 	}
+	if d.Kind == "quota" {
+		return m.renderQuotaDialog(d)
+	}
 	if d.Kind == "trajectory" {
 		return m.renderTrajectoryDialog(d)
 	}
@@ -2057,6 +2143,8 @@ func (m Model) renderDialog() string {
 		return m.renderNotificationDialog(d)
 	}
 	switch d.Kind {
+	case focusKind:
+		return m.renderFocusDialog(d)
 	case treeKind:
 		return m.renderTreeDialog(d)
 	case treeSummaryKind:
@@ -3167,8 +3255,12 @@ func (m Model) chatFrameGeometry(inlineUI bool, teamPanel, taskPanel, extAbove, 
 	// surfaces that are derived at paint time. lipgloss reports an empty
 	// string as one row, so measure them with panelHeight.
 	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
+	return m.chatGeometryByHeight(inlineUI, panelHeight(teamPanel), extra)
+}
+
+func (m Model) chatGeometryByHeight(inlineUI bool, teamH, extra int) viewport.Model {
 	chatVp := m.vp
-	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
+	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), teamH+extra, inlineUI)
 	// Shrinking Height without re-pinning drops rows from the BOTTOM of the
 	// transcript (viewport.View() renders lines[offset:offset+Height]), so the
 	// newest — most important — chat line would never be painted. Re-pin the
@@ -3202,7 +3294,7 @@ func (m Model) chatFrameRows(alloc, panels int, inlineUI bool) int {
 	if m.winH <= 0 {
 		return alloc
 	}
-	overhead := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + panels
+	overhead := 1 + m.inputHeight() + panels
 	if inlineUI || m.cmdOpen || m.atOpen || m.inputOpen() {
 		overhead += m.popupH() + m.atPopupH() + m.uiPopupH() + m.inputPopupH()
 	}
@@ -3590,7 +3682,7 @@ func (m Model) view() string {
 	// The /mcp screens are a floating window over the transcript, like
 	// every other dialog here (see renderMcpOverlay), so they take the
 	// normal frame composition and never stand in for the editor.
-	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" {
+	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" && !m.nativePickerOpen() {
 		if m.Dialogs[0].Kind == "team" {
 			return m.renderFloatingTeamDashboard()
 		}
@@ -3704,6 +3796,11 @@ func (m Model) inputOpen() bool {
 // renderInputBox draws the free-text dialog as a bare compact box for the
 // floating path in View (renderDialog keeps its own copy for direct use).
 func (m Model) renderInputBox() string {
+	body, w := m.inputBoxBody()
+	return dlgStyle.Width(w).Render(body)
+}
+
+func (m Model) inputBoxBody() (string, int) {
 	d := m.Dialogs[0]
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
@@ -3723,7 +3820,7 @@ func (m Model) renderInputBox() string {
 	if mw := m.mainW() - 4; mw < boxW && mw > 20 {
 		boxW = mw
 	}
-	return dlgStyle.Width(boxW).Render(b.String())
+	return b.String(), boxW
 }
 
 // utils ------------------------------------------------------------------------

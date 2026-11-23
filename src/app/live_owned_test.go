@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/live"
 	"pitago/src/pirpc"
@@ -199,7 +199,7 @@ func TestForwardedEventPaintsOnce(t *testing.T) {
 			m.ready = true
 			m.winW, m.winH = 120, 40
 			m.vp = viewport.New(100, 20)
-			m.sideVp = viewport.New(sideInnerW, 10)
+			m.sideVp = viewport.New((defaultSideW - 4), 10)
 			paints := 0
 			paintHook = func() { paints++ }
 			t.Cleanup(func() { paintHook = nil })

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/image"
 	"pitago/src/components/mention"
@@ -229,6 +229,10 @@ func (m *Model) atPopupH() int {
 }
 
 func (m Model) renderAtPopup() string {
+	return cmdPopStyle.Width(m.mainW()).Render(m.atPopupBody())
+}
+
+func (m Model) atPopupBody() string {
 	mainW := m.mainW()
 	var b strings.Builder
 	end := m.atOffset + mention.Win
@@ -255,5 +259,5 @@ func (m Model) renderAtPopup() string {
 		b.WriteString("  " + toolStyle.Render(fmt.Sprintf("…(+%d below)", len(m.atItems)-end)) + "\n")
 	}
 	b.WriteString(toolStyle.Render(fmt.Sprintf("(%d/%d) Tab complete · Enter complete · Esc close", m.atCursor+1, len(m.atItems))))
-	return cmdPopStyle.Width(mainW).Render(strings.TrimRight(b.String(), "\n"))
+	return strings.TrimRight(b.String(), "\n")
 }

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/sessiontree"
 	"pitago/src/pirpc"
@@ -287,10 +287,7 @@ func (m Model) chatTail(n int) []string {
 	if n <= 0 {
 		return nil
 	}
-	var lines []string
-	if m.vp.Height > 0 {
-		lines = strings.Split(m.vp.View(), "\n")
-	}
+	lines := m.vp.VisibleLines()
 	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "" {
 		lines = lines[:len(lines)-1]
 	}

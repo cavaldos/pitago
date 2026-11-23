@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/app"
 	"pitago/src/pirpc"
@@ -19,6 +19,7 @@ func Confirmers() map[string]app.ConfirmFunc {
 		"sessions":     confirmSessions,
 		"thinking":     confirmThinking,
 		"pet":          confirmPet,
+		"quota":        confirmQuota,
 		"settings":     confirmSettings,
 		"pconfig":      confirmPconfig,
 		"login":        confirmLogin,
@@ -270,6 +271,22 @@ func confirmPet(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// confirmQuota refetches the picked provider's row. The dialog STAYS open:
+// the new numbers landing in that row are the whole point of the keypress,
+// and only this provider costs an HTTP call (the other row is merged).
+//
+// The provider id comes from d.Providers (parallel to Options), never from an
+// index into the snapshot: a QuotaMsg can replace that snapshot between the
+// render and this keypress, and resolving by position then silently refetched
+// whichever provider happened to land at ri.
+func confirmQuota(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
+	if ri < 0 || ri >= len(d.Options) || ri >= len(d.Providers) {
+		return m, nil
+	}
+	return m, m.RefreshQuotaProvider(d.Providers[ri])
+}
+
+// confirmLogin sends Enter on a /login provider row into the method picker.
 func confirmLogin(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd) {
 	if len(d.Provs) > 0 {
 		// two-pane fallback (normally handled in updateLoginDialog):
@@ -332,6 +349,7 @@ func confirmLoginOAuth(m *app.Model, d *app.Dialog, ri int) (tea.Model, tea.Cmd)
 		}
 		return m, func() tea.Msg {
 			pirpc.SyncFromPi(keyPath)
+			pirpc.SyncOAuthFromPi(keyPath, true)
 			pirpc.SyncAuthStateFromPi(authPath)
 			return app.LoginReloadMsg{D: login}
 		}

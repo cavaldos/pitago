@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/ext"
 	"pitago/src/pirpc"
@@ -30,6 +30,7 @@ const (
 	SideModel     = "model"
 	SideStats     = "stats"
 	SideCost      = "cost"
+	SideQuota     = "quota"
 	SideRecent    = "recent"
 	SideCommands  = "commands"
 	SidePlugins   = "plugins"
@@ -44,7 +45,7 @@ const (
 
 // sideOrder is the Sidebar tab row order (top-to-bottom like the sidebar).
 var sideOrder = []string{
-	SidePet, SideSession, SideModel, SideStats, SideCost, SideRecent,
+	SidePet, SideSession, SideModel, SideStats, SideCost, SideQuota, SideRecent,
 	SideCommands, SidePlugins, SideMCP, SideLSP, SideTodos, SideTools,
 	SideSkills, SideSubagents, SideWorkspace,
 }
@@ -62,6 +63,11 @@ func sideLabel(key string) string {
 		return "Stats"
 	case SideCost:
 		return "Cost"
+	case SideQuota:
+		// Visible by default (DefaultSideVisible only hides MCP/Plugins/
+		// Commands): an unconfigured provider renders zero rows, so the
+		// section costs nothing until a key the endpoint knows about exists.
+		return "Quota"
 	case SideRecent:
 		return "Recent models"
 	case SideCommands:
@@ -1098,7 +1104,7 @@ func (m Model) renderPluginsSection(inner int) string {
 			}
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1182,7 +1188,7 @@ func (m Model) renderMcpSection(inner int) string {
 	var b strings.Builder
 	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("MCP Servers (%d) %s", len(m.MCP), foldMark(SideMCP))) + "\n")
 	if SideFolded(SideMCP) {
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 		return b.String()
 	}
 	for _, s := range m.MCP {
@@ -1222,7 +1228,7 @@ func (m Model) renderMcpSection(inner int) string {
 		b.WriteString(statusBarStyle.Render(" ") + dot + " " +
 			lipgloss.NewStyle().Foreground(cText).Render(name) + suffix + "\n")
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1238,7 +1244,7 @@ func (m Model) renderTodosSection(inner int) string {
 	}
 	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("Todos (%d/%d) %s", done, len(m.Todos), foldMark(SideTodos))) + "\n")
 	if SideFolded(SideTodos) {
-		b.WriteString(sep() + "\n")
+		b.WriteString(m.sep() + "\n")
 		return b.String()
 	}
 	if len(m.Todos) == 0 {
@@ -1275,7 +1281,7 @@ func (m Model) renderTodosSection(inner int) string {
 			b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more", hidden)) + "\n")
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1399,7 +1405,7 @@ func (m Model) renderLspSection(inner int) string {
 			}
 		}
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }
 
@@ -1665,6 +1671,6 @@ func (m Model) renderSubagentsSection(inner int) string {
 	if hidden := len(m.Subagents) - len(shown); hidden > 0 {
 		b.WriteString(toolStyle.Render(fmt.Sprintf(" … +%d more · %s", hidden, m.subagentsMoreHint())) + "\n")
 	}
-	b.WriteString(sep() + "\n")
+	b.WriteString(m.sep() + "\n")
 	return b.String()
 }

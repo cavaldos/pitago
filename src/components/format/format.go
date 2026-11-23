@@ -1,5 +1,5 @@
 // Package format groups the shared string/number helpers used across the
-// TUI (sidebar rows, token counts, durations). Pure stdlib + lipgloss only.
+// TUI (sidebar rows, token counts, durations). Pure stdlib + cellwidth only.
 package format
 
 import (
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/cellwidth"
 )
 
 // FmtDur formats durations like pi: 2m37s, 3m0s, 5s.
@@ -31,7 +31,7 @@ func FmtDur(d time.Duration) string {
 func TwoCol(l, r string, inner int) string {
 	const lw = 17
 	l, r = Short(l, lw-1), Short(r, inner-lw-1)
-	p := lw - lipgloss.Width(l)
+	p := lw - cellwidth.Width(l)
 	if p < 1 {
 		p = 1
 	}
@@ -62,7 +62,7 @@ func ShortID(id string) string {
 
 func Short(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ⏎ ")
-	if lipgloss.Width(s) <= n {
+	if cellwidth.Width(s) <= n {
 		return s
 	}
 	return truncWidth(s, n)
@@ -74,17 +74,10 @@ func truncWidth(s string, n int) string {
 	if n <= 1 {
 		return "…"
 	}
-	var b strings.Builder
-	cells := 0
-	for _, r := range s {
-		if c := lipgloss.Width(string(r)); cells+c > n-1 {
-			break
-		} else {
-			cells += c
-		}
-		b.WriteRune(r)
-	}
-	return b.String() + "…"
+	// Callers only cut text wider than n, so Truncate always appends the
+	// tail here. Grapheme-aware: a ZWJ emoji or a base+combining mark is
+	// kept whole or dropped whole.
+	return cellwidth.Truncate(s, n, "…")
 }
 
 // Truncate cuts s to at most n display cells with a trailing "…", rune-safe.
@@ -95,7 +88,7 @@ func truncWidth(s string, n int) string {
 // unconditional "…", so calling it on text that already fits would mark every
 // such string as cut.
 func Truncate(s string, n int) string {
-	if lipgloss.Width(s) <= n {
+	if cellwidth.Width(s) <= n {
 		return s
 	}
 	return truncWidth(s, n)
@@ -109,7 +102,7 @@ func Fit(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if sw := lipgloss.Width(s); sw == w {
+	if sw := cellwidth.Width(s); sw == w {
 		return s
 	} else if sw < w {
 		return s + strings.Repeat(" ", w-sw)

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"pitago/src/components/textarea"
+	tea "pitago/src/tui/ev"
 )
 
 func newHistModel(hist []string) Model {

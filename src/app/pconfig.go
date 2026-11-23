@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 
 	"pitago/src/components/theme"
 	"pitago/src/pirpc"
@@ -372,14 +372,27 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 		// Enter applies) and the background set behind them. Accent hex
 		// rides the desc so a row stays filterable.
 		msg = "↑↓ previews live · → background column · Enter applies · Esc closes"
-		for _, n := range theme.Names() {
-			opts = append(opts, n)
+		for i, n := range theme.Names() {
+			opts = append(opts, fmt.Sprintf("%02d %s", i+1, n))
 			desc := theme.Get(n).Accent
 			if n == m.currentTheme() {
 				desc = "✓ current · " + desc
 			}
 			descs = append(descs, desc)
 			payload = append(payload, "theme:"+n)
+		}
+		// A palette with its own surface (the converted TTT themes)
+		// offers it first in the background column: picking the palette
+		// applies it automatically, and this row is the way back after
+		// trying one of the slugs below.
+		if t := theme.Get(m.currentTheme()); t.Bg != "" {
+			opts = append(opts, bgOwn)
+			desc := t.Bg
+			if m.currentBackground() == bgOwn {
+				desc = "✓ current · " + desc
+			}
+			descs = append(descs, desc)
+			payload = append(payload, psecActBg+bgOwn)
 		}
 		for _, b := range theme.Backgrounds() {
 			opts = append(opts, b)
@@ -1210,7 +1223,15 @@ func (m Model) hubRows(d *Dialog, idxs []int, curRi, listW, win int, bg, focused
 // and ✓ on the picked one.
 func (m Model) bgRow(name string, cur bool, w int) string {
 	sw := lipgloss.NewStyle().Render("  ")
-	if hex := theme.BackgroundHex(name, theme.Get(m.currentTheme()).Light); hex != "" {
+	// "own" paints the active palette's shipped surface; every other
+	// row is a hub slug.
+	hex := ""
+	if name == bgOwn {
+		hex = theme.Get(m.currentTheme()).Bg
+	} else {
+		hex = theme.BackgroundHex(name, theme.Get(m.currentTheme()).Light)
+	}
+	if hex != "" {
 		sw = lipgloss.NewStyle().Background(lipgloss.Color(hex)).Render("  ")
 	}
 	mark := ""
@@ -1392,49 +1413,19 @@ func isFilterKind(kind string) bool {
 func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyUp, tea.KeyDown:
-		down := km.Type == tea.KeyDown
 		if d.ProvFocus {
+			step := 1
+			if km.Type == tea.KeyUp {
+				step = -1
+			}
 			if n := len(d.Provs); n > 0 {
-				if down {
-					d.ProvCursor = (d.ProvCursor + 1) % n
-				} else {
-					d.ProvCursor = (d.ProvCursor - 1 + n) % n
-				}
-				m.LoadPsecRows(d)
-				m.focusCurrentTheme(d)
-				// First visit to an unloaded marketplace fetches it in
-				// the background (rows reload when MarketMsg lands).
-				if d.CurPsec() == PsecMarket {
-					// first visit: fetch a stale page, then let the
-					// browse head order itself by stars. The sort is
-					// built first so it claims the head before the
-					// window hydration latches those repos busy.
-					sortCmd := m.marketSortCmd("")
-					hyd := m.hydrateMarketStarsCmd(d)
-					if !marketFresh() && !marketInflight {
-						return m, tea.Batch(m.fetchMarketCmd(), sortCmd, hyd)
-					}
-					return m, tea.Batch(sortCmd, hyd)
-				}
+				cmd := m.selectPconfigSection(d, (d.ProvCursor+step+n)%n)
+				return m, cmd
 			}
-		} else if n := len(d.FIdx); n > 0 {
-			if down {
-				d.Cursor = hubStepRow(d, true)
-			} else {
-				d.Cursor = hubStepRow(d, false)
-			}
-			rememberColRow(d)
-			// Theme rows are the one hub section that previews while
-			// browsing, so ↑↓ repaints in the new palette or surface.
-			m.previewRow(d)
-			if d.CurPsec() == PsecTheme {
-				m.refreshHubSection(PsecTheme)
-			}
-			// The marketplace hydrates GitHub stars for whatever the
-			// moved cursor brought into view (never from render).
-			if d.CurPsec() == PsecMarket {
-				return m, m.hydrateMarketStarsCmd(d)
-			}
+		} else if len(d.FIdx) > 0 {
+			d.Cursor = hubStepRow(d, km.Type == tea.KeyDown)
+			cmd := m.previewPconfigSelection(d)
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyLeft:
@@ -1485,7 +1476,8 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		return m, nil
 	case tea.KeyBackspace, tea.KeyDelete:
 		if km.Type == tea.KeyBackspace && d.Filter != "" {
-			d.Filter = d.Filter[:len(d.Filter)-1]
+			r := []rune(d.Filter)
+			d.Filter = string(r[:len(r)-1])
 			d.Reindex()
 			// marketplace typing is a remote search: re-arm the debounce
 			return m, m.marketSearchTick()
@@ -1528,10 +1520,7 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 			m.Refresh()
 			return m, tea.Batch(m.fetchMarketCmd(), m.marketSortCmd(""), m.hydrateMarketStarsCmd(d))
 		}
-		m.Dialogs = m.Dialogs[1:]
-		m.refreshPiTasks()
-		m.Refresh()
-		return m, m.ReconcileTurnCmd()
+		return m.dismissDialog(d)
 	case tea.KeyEnter:
 		if d.ProvFocus {
 			d.ProvFocus = false
@@ -1546,6 +1535,34 @@ func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd
 		return m, m.marketSearchTick()
 	}
 	return m, nil
+}
+
+func (m *Model) selectPconfigSection(d *Dialog, index int) tea.Cmd {
+	d.ProvCursor, d.BgFocus = index, false
+	m.LoadPsecRows(d)
+	m.focusCurrentTheme(d)
+	if d.CurPsec() != PsecMarket {
+		return nil
+	}
+	// Sort claims the browse head before window hydration latches repos busy.
+	sortCmd := m.marketSortCmd("")
+	hyd := m.hydrateMarketStarsCmd(d)
+	if !marketFresh() && !marketInflight {
+		return tea.Batch(m.fetchMarketCmd(), sortCmd, hyd)
+	}
+	return tea.Batch(sortCmd, hyd)
+}
+
+func (m *Model) previewPconfigSelection(d *Dialog) tea.Cmd {
+	rememberColRow(d)
+	if d.CurPsec() == PsecTheme {
+		m.previewRow(d)
+		m.refreshHubSection(PsecTheme)
+	}
+	if d.CurPsec() == PsecMarket {
+		return m.hydrateMarketStarsCmd(d)
+	}
+	return nil
 }
 
 // updatePconfigWheel scrolls the focused pane (wheel down = next row):

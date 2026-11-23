@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/pet"
@@ -40,89 +41,30 @@ func sideScrollKey(t tea.KeyType) (tea.KeyType, bool) {
 	return t, false
 }
 
+// Update runs one message and then syncs native pickers (tviewrt) with the
+// dialog stack; see nativepicker.go.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if r, ok := msg.(tea.PickerResultMsg); ok {
+		return m.pickerResult(r)
+	}
+	nm, cmd := m.update(msg)
+	if NativeMenus {
+		// Settings confirmers can synchronously replace themselves with a
+		// native picker (for example Thinking) and return the model pointer.
+		if p, ok := nm.(*Model); ok && m.settingsDialog() != nil {
+			nm = *p
+		}
+		if mm, ok := nm.(Model); ok {
+			return mm.syncNativePicker(cmd)
+		}
+	}
+	return nm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Toasts expire by wall clock: prune on every message so a missed
 	// dismissal tick still clears (the tick itself just triggers repaint).
 	m.pruneToasts()
-	// SGR mouse-report leakage: a trackpad/mouse-wheel burst can split
-	// across input reads, losing the ESC prefix — the "[<65;50;31M…"
-	// remainder then arrives as plain KeyRunes. Scrub it before dialogs,
-	// popups, or the textarea can insert the noise as text; wheel reports
-	// still scroll the chat.
-	if km, ok := msg.(tea.KeyMsg); ok && !km.Paste && km.Type == tea.KeyRunes {
-		// Sequence: a split tail ("[<65"…) buffered from the prior read
-		// rejoins its continuation here (time-bound via mouseBurst, so a
-		// stale buffer never eats later typing). Non-continuations drop
-		// the buffer and process normally.
-		if m.mouseBuf != "" {
-			if m.mouseBurst() && len(km.Runes) > 0 {
-				c := km.Runes[0]
-				if c >= '0' && c <= '9' || c == ';' || c == 'M' || c == 'm' {
-					km.Runes = []rune(m.mouseBuf + string(km.Runes))
-					msg = km
-				}
-			}
-			m.mouseBuf = ""
-		}
-		// A bracketed tail split across reads ("[<64;…M[<65"): hold the
-		// incomplete tail for the next read instead of emitting a partial
-		// scroll with wrong coordinates. "[<" alone is typing, not noise.
-		if s := string(km.Runes); s != "" && !km.Alt {
-			if loc := sgrTail.FindStringIndex(s); loc != nil && loc[1] == len(s) {
-				if tail := s[loc[0]:]; tail != "[<" {
-					m.mouseBuf = tail
-					m.mouseLeakAt = time.Now()
-					if prefix := s[:loc[0]]; prefix == "" {
-						return m, nil // pure tail: swallow, wait for rest
-					} else {
-						km.Runes = []rune(prefix)
-						msg = km
-					}
-				}
-			}
-		}
-		// A split ESC[ arrives as a lone Alt+[ — mouse-report shrapnel,
-		// not text (no binding uses it; the textarea would insert the "["
-		// and picker filters would insert "alt+[").
-		if len(km.Runes) == 1 && km.Runes[0] == '[' && km.Alt {
-			m.mouseLeakAt = time.Now()
-			return m, nil
-		}
-		if events, cleaned, isLeak := cleanMouseLeak(km.Runes); isLeak {
-			m.mouseLeakAt = time.Now()
-			if len(cleaned) == 0 {
-				if len(m.Dialogs) > 0 {
-					return m.applyWheelLeak(events), nil
-				}
-				return m, m.scrollLeak(events)
-			}
-			// Mixed burst + real typing: still scroll (don't drop the
-			// wheel), then let the leftover text type normally. Wheel
-			// never touches input history — scrollLeak only moves viewports.
-			if len(m.Dialogs) > 0 {
-				m = m.applyWheelLeak(events).(Model)
-			} else {
-				_ = m.scrollLeak(events)
-			}
-			km.Runes = cleaned
-			km.Alt = false // the Alt bit is the eaten ESC, not the user
-			msg = km
-		} else if m.mouseBurst() {
-			// Burst-armed: a lone continuation ("65;99;18M", ";50;31M")
-			// whose head died in the prior read. Swallow it so it never
-			// lands in the input.
-			if events, frag := cleanMouseFrag(string(km.Runes)); frag {
-				m.mouseLeakAt = time.Now()
-				if len(m.Dialogs) > 0 {
-					return m.applyWheelLeak(events), nil
-				}
-				return m, m.scrollLeak(events)
-			}
-			// Sequence break: normal typing while armed disarms, so a
-			// later frag-like typing ("65;99") isn't swallowed.
-			m.mouseLeakAt = time.Time{}
-		}
-	}
 	// Live bridge transport bypasses dialog capture: an attach closes local
 	// dialogs, and a reconnect/disconnect must always reach the model.
 	if lm, ok := msg.(liveMsg); ok {
@@ -136,6 +78,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if _, ok := msg.(piEventMsg); ok && m.followRemote {
 		return m, nil
+	}
+	if d := m.settingsDialog(); d != nil {
+		switch p := msg.(type) {
+		case tea.SettingsFilterMsg:
+			return m.updateNativeSettingsFilter(d, string(p))
+		case tea.SettingsPointerMsg:
+			return m.updateNativeSettingsPointer(d, p)
+		}
 	}
 
 	// OAuth flow messages run while its dialog is open, so they must
@@ -169,6 +119,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m.updateListWheel(d, mm)
 				}
 				return m.updateTrajWheel(d, mm)
+			}
+			// /focus owns every mouse event: wheel per pane, tree clicks,
+			// click/drag line selection in the code pane.
+			if d := m.Dialogs[0]; d.Kind == focusKind {
+				return m.updateFocusMouse(d, mm)
 			}
 			if d := m.Dialogs[0]; d.Kind == "notification" &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
@@ -257,7 +212,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			MarketStarsMsg, MarketSortMsg, PluginChangeMsg, PluginTickMsg,
 			LoginSyncedMsg, LoginReloadMsg, OAuthGoneMsg, SettingWrittenMsg,
 			LoginSwitchMsg, LoginDeleteMsg, LoginRenameOpenMsg, LogoutDoneMsg,
-			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg:
+			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg, QuotaMsg:
 		default:
 			return m, nil
 		}
@@ -283,9 +238,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mm.Button == tea.MouseButtonWheelLeft || mm.Button == tea.MouseButtonWheelRight) {
 		var c tea.Cmd
 		if m.overSide(mm.X) {
-			m.sideVp, c = m.sideVp.Update(msg)
+			m.sideVp, c = vpUpdate(m.sideVp, msg)
 		} else {
-			m.vp, c = m.vp.Update(msg)
+			m.vp, c = vpUpdate(m.vp, msg)
 			// Reports the filter coalesced away still count.
 			if n := takeWheelCarry(); n > 0 {
 				m.vp.ScrollDown(n * 3)
@@ -300,6 +255,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.MenuResultMsg:
+		return m.menuResult(msg)
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = msg.Width, msg.Height
 		mainW := m.mainW()
@@ -318,13 +275,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.ready {
 			m.vp = viewport.New(mainW, vpH)
-			m.sideVp = viewport.New(sideInnerW, m.sideContentH())
+			m.sideVp = viewport.New(m.sideInnerW(), m.sideContentH())
 			m.chatContent = "" // fresh viewport holds no content yet
 			m.ready = true
 		} else {
 			m.vp.Width = mainW
 			m.vp.Height = vpH
-			m.sideVp.Width = sideInnerW
+			m.sideVp.Width = m.sideInnerW()
 			m.syncSideH() // reserves the quit-arm footer line while armed
 			if m.cmdOpen || m.atOpen || m.isInlineUI() || m.inputOpen() || m.teamPanelActive() {
 				// Resizing with a popup open must keep the winH budget:
@@ -373,6 +330,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ModelLbl = msg.state.Model.ID
+		m.ModelProv = msg.state.Model.Provider
 		if m.ModelLbl == "" {
 			m.ModelLbl = msg.state.Model.Name
 		}
@@ -424,7 +382,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.RefreshFollow()
 		// Fresh pi: the sidebar's thinking-level list is model-specific and
 		// was just thrown away with the old process.
-		return m, tea.Batch(m.ensureTaskTick(), m.FetchLevels())
+		// The quota snapshot is fetched once here too, stale-only and off
+		// the event loop: /quota and the QUOTA section are already populated
+		// by the time the first turn ends.
+		return m, tea.Batch(m.ensureTaskTick(), m.FetchLevels(), m.RefreshQuota(true))
 
 	case piEventMsg:
 		if m.followRemote {
@@ -472,6 +433,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevLbl, prevLvl := m.ModelLbl, m.thinkLvl
 			if lbl != "" {
 				m.ModelLbl = lbl
+				m.ModelProv = msg.state.Model.Provider
 			}
 			m.thinkLvl = msg.state.ThinkingLevel
 			// The level list belongs to the model: refetch when either the
@@ -765,6 +727,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		} else {
 			m.ModelLbl = msg.Label
+			if msg.Provider != "" {
+				m.ModelProv = msg.Provider
+			}
 			id := msg.ID
 			if id == "" {
 				id = msg.Label
@@ -1032,6 +997,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Refresh()
 		return m, nil
 
+	case QuotaMsg:
+		// A snapshot fetched BEFORE the one on screen is stale: a slow
+		// agent_settled fetch can land after the user's explicit Enter
+		// refresh, and letting it win would put the older numbers back on
+		// screen. The guard is skipped for an empty snapshot (At zero = no
+		// rows were fetched), which must still be able to clear the panel
+		// after the last key is deleted.
+		if !msg.At.IsZero() && msg.At.Before(m.quotaAt) {
+			return m, nil
+		}
+		// The fetch ran off the event loop; the snapshot feeds the sidebar
+		// panel AND an open /quota dialog, which is rebuilt in place so a
+		// refetch lands in the rows the user is looking at. quotaAt is the
+		// snapshot's own clock, not time.Now(): a cache-served snapshot must
+		// print its real age instead of "just now".
+		m.quota = msg.Quotas
+		m.quotaAt = msg.At
+		if msg.Err != nil {
+			m.NotifyErr("quota: " + msg.Err.Error())
+		}
+		m.RefreshQuotaDialog()
+		m.Refresh()
+		return m, nil
+
 	case SettingsRefreshMsg:
 		if msg.Err != nil {
 			m.AddBlock(Block{Kind: "notice", Text: msg.Err.Error(), Err: true})
@@ -1070,9 +1059,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			d.ProvFocus = false
 			m.Refresh()
-			return m, m.RespawnPi()
+			return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 		}
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case RenameKeyMsg:
 		if msg.Err != nil {
@@ -1090,9 +1079,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LoginSwitchMsg:
 		m.RefreshLoginKeys(msg.D)
-		m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to key " + msg.Masked + " → pi — reconnecting…"})
+		if msg.Acct != "" {
+			m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to OAuth account " + msg.Acct + " → pi — reconnecting…"})
+		} else {
+			m.AddBlock(Block{Kind: "notice", Text: "switched " + msg.Prov + " to key " + msg.Masked + " → pi — reconnecting…"})
+		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginDeleteMsg:
 		m.RefreshLoginKeys(msg.D)
@@ -1110,16 +1103,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Prov, msg.Masked, pirpc.MaskKey(msg.Left[0]), len(msg.Left))})
 		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginRenameOpenMsg:
 		// Push the rename prompt on top of /login (login stays at [1] so
 		// Enter/Esc returns to it, never to the main screen).
 		pre := ""
-		if msg.Idx < len(msg.Items) {
+		if msg.OAuth {
+			pre = msg.Name
+		} else if msg.Idx < len(msg.Items) {
 			pre = msg.Items[msg.Idx].Name
 		}
-		r := &Dialog{Kind: "rename", Title: "Rename key — " + msg.Provider,
+		r := &Dialog{Kind: "rename", Title: "Rename key — " + msg.Provider, RenameOAuth: msg.OAuth,
 			Message:       "Name is display-only (pitago keystore). Empty clears it. Enter saves, Esc back to /login.",
 			Filter:        pre,
 			LoginProvider: msg.Provider, LoginEnv: msg.Env,
@@ -1163,7 +1158,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Provider, msg.Masked, pirpc.MaskKey(msg.Left[0]), len(msg.Left))})
 		}
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case LoginSyncedMsg:
 		// The picker build needs the real Model and the union-import that
@@ -1200,7 +1195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.AddBlock(Block{Kind: "notice", Text: "disconnected OAuth " + msg.Prov + " (pi + pitago) — reconnecting…"})
 		m.Refresh()
-		return m, m.RespawnPi()
+		return m, tea.Batch(m.RespawnPi(), m.quotaKeyChanged())
 
 	case SettingWrittenMsg:
 		if msg.Err != nil {
@@ -1240,7 +1235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.liveBridge != nil {
 			m.liveBridge.SetOwnPID(msg.client.PID())
 		}
-		msg.client.SetOnEvent(func(e pirpc.Event) { ProgRef.Send(piEventMsg{e}) })
+		msg.client.SetOnEvent(func(e pirpc.Event) { Post(piEventMsg{e}) })
 		m.Status = "reloading…"
 		m.Refresh()
 		return m, m.fetchAll()
@@ -1456,6 +1451,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.RespawnPi(), pluginTickCmd())
 
 	case tea.MouseMsg:
+		// Sidebar divider drag (ttt-style resize): press on the sidebar's
+		// left border, drag, release. Checked first so the press never
+		// starts a chat selection or a sidebar click.
+		if m2, handled := m.updateSideDrag(msg); handled {
+			return m2, nil
+		}
+		// Header / status-line buttons (tview runtime): click the header for
+		// session info, the input's status line for the model picker.
+		if cmd, ok := m.barClick(msg); ok {
+			return m, cmd
+		}
 		// Hover highlight: the filter forwards motion only when the
 		// clickable row under the pointer changed.
 		if msg.Action == tea.MouseActionMotion && !m.sel.Active {
@@ -1470,6 +1476,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.JumpToLatest()
 			return m, nil
 		}
+		if m.Mouse && m.ready && !m.followRemote && !m.sel.Active &&
+			msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft &&
+			msg.X >= 2 && msg.X < min(m.winW, m.mainW())-2 {
+			top, _ := m.inputRows()
+			if row := msg.Y - top - 1; row >= 0 && row < m.ta.Height() {
+				cmd := m.ta.SetCursorAt(msg.X-2, row)
+				return m, cmd
+			}
+		}
 		// App-owned chat drag selection (left press/motion/release).
 		// Sidebar clicks/wheel/dialogs fall through untouched.
 		if m2, cmd, handled := m.updateSelection(msg); handled {
@@ -1479,6 +1494,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Chat-only: sidebars keep their own click handlers below. The
 		// bound is the painted chat frame, not m.vp — rows below it are the
 		// task widget or a plugin panel, not transcript blocks.
+		// ttt-style context menu at the pointer when the runtime can draw
+		// one; otherwise the full-screen block-actions dialog below.
+		if m.Mouse && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
+			if cmd, ok := m.rightClickMenu(msg); ok {
+				return m, cmd
+			}
+		}
 		if m.Mouse && msg.Action == tea.MouseActionPress &&
 			msg.Button == tea.MouseButtonRight && !m.overSide(msg.X) &&
 			msg.Y >= 1 && msg.Y <= m.chatViewport().Height {
@@ -1588,7 +1610,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					km := msg
 					km.Alt = false // viewport KeyMap matches "up", not "alt+up"
 					var c tea.Cmd
-					m.sideVp, c = m.sideVp.Update(km)
+					m.sideVp, c = vpUpdate(m.sideVp, km)
 					return m, c
 				}
 			}
@@ -1596,7 +1618,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				km := msg
 				km.Type = plain // viewport KeyMap matches plain keys
 				var c tea.Cmd
-				m.sideVp, c = m.sideVp.Update(km)
+				m.sideVp, c = vpUpdate(m.sideVp, km)
 				return m, c
 			}
 		}
@@ -1625,6 +1647,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
+			// A shell-mode line in flight: ^C interrupts that command,
+			// like in a terminal. The shell itself (cwd, variables) and
+			// any typed-ahead line in the editor are kept.
+			if m.shellOn && m.shellRunning && shellCanInterrupt {
+				m.interruptShell()
+				return m, nil
+			}
 			// pi parity (app.clear): the first ^C clears a non-empty
 			// editor, and only an *empty* one arms the double-press quit.
 			// One stray ^C on a half-typed prompt can therefore never cost
@@ -1886,7 +1915,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.JumpToLatest()
 			return m, nil
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome:
-			m.vp, cmd = m.vp.Update(msg)
+			m.vp, cmd = vpUpdate(m.vp, msg)
 			return m, cmd
 		}
 	}
@@ -1898,7 +1927,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wasBrowsing {
 			oldVal = m.ta.Value()
 		}
-		m.ta, cmd = m.ta.Update(msg)
+		m.ta, cmd = taUpdate(m.ta, msg)
 		cmds = append(cmds, cmd)
 		if wasBrowsing && m.ta.Value() != oldVal {
 			m.histIdx = -1 // edited a recalled message → back to live input
@@ -1912,9 +1941,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mm, ok := msg.(tea.MouseMsg); ok && mm.Action == tea.MouseActionPress &&
 			(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) &&
 			m.overSide(mm.X) {
-			m.sideVp, cmd = m.sideVp.Update(msg)
+			m.sideVp, cmd = vpUpdate(m.sideVp, msg)
 		} else {
-			m.vp, cmd = m.vp.Update(msg)
+			m.vp, cmd = vpUpdate(m.vp, msg)
 		}
 		cmds = append(cmds, cmd)
 	}
@@ -2086,7 +2115,10 @@ func (m Model) applyEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 		m.refreshPiTasks()
 		m.refreshSubagents(false)
 		m.Refresh()
-		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled())
+		// The turn just spent tokens, so the quota snapshot is the stale one;
+		// RefreshQuota(true) is a no-op inside the 90s TTL (no extra traffic
+		// on a burst of replies) and a single fetch outside it.
+		return m, tea.Batch(m.queryStats(), m.fetchCmdsOnce(), m.fetchStateOnce(), m.wsRefresh(), m.petSettled(), m.RefreshQuota(true))
 	case "agent_end":
 		// Per-round boundary, NOT turn end: pi runs agent_start…agent_end
 		// per round and agent_settled once when fully idle (see pi's
@@ -2919,6 +2951,8 @@ func filterableDialog(d *Dialog) bool {
 func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.Dialogs[0]
 	switch d.Kind {
+	case focusKind:
+		return m.updateFocusDialog(km, d)
 	case treeKind:
 		return m.updateTreeDialog(km, d)
 	case treeSummaryKind:
@@ -3166,17 +3200,15 @@ func (m Model) updateModelDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 		return m, nil
 	case tea.KeyBackspace:
 		if d.Filter != "" {
-			d.Filter = d.Filter[:len(d.Filter)-1]
+			r := []rune(d.Filter)
+			d.Filter = string(r[:len(r)-1])
 			d.Reindex()
 		}
 		return m, nil
 	case tea.KeyCtrlV:
 		return m, nil
 	case tea.KeyEsc:
-		m.Dialogs = m.Dialogs[1:]
-		m.refreshPiTasks()
-		m.Refresh()
-		return m, m.ReconcileTurnCmd()
+		return m.dismissDialog(d)
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
 		d.Reindex()
@@ -3277,10 +3309,7 @@ func (m Model) updateSettingsDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cm
 		}
 		return m, nil
 	case tea.KeyEsc:
-		m.Dialogs = m.Dialogs[1:]
-		m.refreshPiTasks()
-		m.Refresh()
-		return m, m.ReconcileTurnCmd()
+		return m.dismissDialog(d)
 	case tea.KeyEnter:
 		if d.ProvFocus {
 			d.ProvFocus = false
@@ -3354,13 +3383,17 @@ func (m Model) confirmDialog(d *Dialog) (tea.Model, tea.Cmd) {
 		// write is blocking file I/O, so it runs in the Cmd and reports
 		// back with the same message.
 		name := strings.TrimSpace(d.Filter)
-		prov, env, idx := d.LoginProvider, d.LoginEnv, d.RenameIdx
+		prov, env, idx, oauth := d.LoginProvider, d.LoginEnv, d.RenameIdx, d.RenameOAuth
 		keyPath := m.KeyPath
 		m.Dialogs = m.Dialogs[1:]
 		m.drainQueuedDialogs()
 		m.Refresh()
 		return m, func() tea.Msg {
 			msg := RenameKeyMsg{Provider: prov, Env: env, Idx: idx, Name: name}
+			if oauth {
+				msg.Err = pirpc.RenameOAuth(keyPath, prov, idx, name)
+				return msg
+			}
 			msg.Err = pirpc.RenameKey(keyPath, env, idx, name)
 			return msg
 		}
@@ -3833,11 +3866,42 @@ func (m *Model) RefreshLoginKeys(d *Dialog) {
 		d.Payload = append(d.Payload, it.Key)
 		d.Descs = append(d.Descs, desc)
 	}
+	accts, acctActive := pirpc.ListOAuthAccounts(m.KeyPath, prov)
+	for i, a := range accts {
+		mark, desc := "○ ", "Enter to use"
+		if i == acctActive {
+			mark, desc = "● ", "active"
+		}
+		label := a.Label()
+		if label == "" {
+			label = fmt.Sprintf("account %d", i+1)
+		}
+		if n := strings.TrimSpace(a.Name); n != "" && a.Account != "" {
+			label = n + " · " + a.Account
+		}
+		d.Options = append(d.Options, mark+"OAuth · "+label)
+		d.Payload = append(d.Payload, "")
+		if a.Expires > 0 {
+			desc += " · exp " + pirpc.FormatAdded(a.Expires/1000)
+		}
+		d.Descs = append(d.Descs, desc)
+		d.LoginActions = append(d.LoginActions, fmt.Sprintf("acct:%d", i))
+	}
 	if env != "" {
 		d.Options = append(d.Options, "＋ Add new key")
 		d.Payload = append(d.Payload, "")
 		d.Descs = append(d.Descs, "Enter to add")
 		d.LoginActions = append(d.LoginActions, "add")
+	}
+	if info, ok := pirpc.OAuthLoginFor(prov); ok && d.LoginOAuth {
+		desc := info.Label
+		if desc == "" {
+			desc = info.Name
+		}
+		d.Options = append(d.Options, "＋ Add another OAuth account")
+		d.Payload = append(d.Payload, "")
+		d.Descs = append(d.Descs, desc)
+		d.LoginActions = append(d.LoginActions, "oauth")
 	}
 	if d.LoginOAuth {
 		d.Options = append(d.Options, "⊗ Disconnect ("+oauthDesc(d.LoginOAuthExp, d.LoginOAuthAcct)+")")
@@ -3983,6 +4047,11 @@ func (m Model) updateLoginDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 				if onKey {
 					return m.openRenameDialog(d)
 				}
+				if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) {
+					if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+						return m.openOAuthRename(d, idx)
+					}
+				}
 			}
 			// other runes fall through to provider filtering below
 		}
@@ -4069,7 +4138,10 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 		return m, m.OpenOAuthFlow(d.LoginProvider)
 	case "disconnect":
 		return m.disconnectOAuth(d)
-	default: // reload models — stay open, re-import pi first
+	default:
+		if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+			return m.switchOAuthAcct(d, idx)
+		} // reload models — stay open, re-import pi first
 		// SyncFromPi + the authState mirror are blocking file I/O; they run
 		// off the event loop and land as LoginReloadMsg, which then refreshes
 		// the picker and re-counts models in the original order.
@@ -4082,6 +4154,54 @@ func (m Model) loginAction(d *Dialog, ai int) (tea.Model, tea.Cmd) {
 	}
 }
 
+// openOAuthRename prefills the rename prompt with the account's label.
+func (m Model) openOAuthRename(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		name := ""
+		if accts, _ := pirpc.ListOAuthAccounts(keyPath, prov); idx >= 0 && idx < len(accts) {
+			name = strings.TrimSpace(accts[idx].Name)
+		}
+		return LoginRenameOpenMsg{Provider: prov, Idx: idx, OAuth: true, Name: name}
+	}
+}
+
+// acctIdx parses an "acct:N" login action row.
+func acctIdx(action string) (int, bool) {
+	if !strings.HasPrefix(action, "acct:") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(action, "acct:"))
+	return n, err == nil
+}
+
+// switchOAuthAcct activates saved OAuth account idx (pi follows; respawn
+// applies it). Blocking file I/O, so it runs off the event loop.
+func (m Model) switchOAuthAcct(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		_ = pirpc.SwitchOAuth(keyPath, prov, idx)
+		label := ""
+		if accts, _ := pirpc.ListOAuthAccounts(keyPath, prov); idx >= 0 && idx < len(accts) {
+			label = accts[idx].Label()
+		}
+		if label == "" {
+			label = fmt.Sprintf("#%d", idx+1)
+		}
+		return LoginSwitchMsg{Prov: prov, Acct: label, D: d}
+	}
+}
+
+// deleteOAuthAcct removes saved OAuth account idx (the active one falls back
+// to the next account, or logs pi out when it was the last).
+func (m Model) deleteOAuthAcct(d *Dialog, idx int) (tea.Model, tea.Cmd) {
+	prov, keyPath := d.LoginProvider, m.KeyPath
+	return m, func() tea.Msg {
+		_ = pirpc.DeleteOAuthAt(keyPath, prov, idx)
+		return OAuthGoneMsg{Prov: prov, D: d}
+	}
+}
+
 // disconnectOAuth logs a provider out of its pi subscription: drops pi's
 // OAuth entry + pitago's mirror, stays on /login, reconnects behind it.
 // The teardown is blocking file I/O, so it runs off the event loop and lands
@@ -4091,9 +4211,9 @@ func (m Model) disconnectOAuth(d *Dialog) (tea.Model, tea.Cmd) {
 	if prov == "" || !d.LoginOAuth {
 		return m, nil
 	}
-	authPath := m.authPath()
+	authPath, keyPath := m.authPath(), m.KeyPath
 	return m, func() tea.Msg {
-		_ = pirpc.DeletePiAuth(prov)
+		_ = pirpc.DropActiveOAuth(keyPath, prov)
 		pirpc.ForgetAuthState(authPath, prov)
 		pirpc.SyncAuthStateFromPi(authPath)
 		return OAuthGoneMsg{Prov: prov, D: d}
@@ -4118,8 +4238,13 @@ func (m Model) deleteLoginKey(d *Dialog) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if d.KeyCursor >= nk {
-		if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) && d.LoginActions[ai] == "disconnect" {
-			return m.disconnectOAuth(d)
+		if ai := d.KeyCursor - nk; ai >= 0 && ai < len(d.LoginActions) {
+			if d.LoginActions[ai] == "disconnect" {
+				return m.disconnectOAuth(d)
+			}
+			if idx, ok := acctIdx(d.LoginActions[ai]); ok {
+				return m.deleteOAuthAcct(d, idx)
+			}
 		}
 		return m, nil
 	}

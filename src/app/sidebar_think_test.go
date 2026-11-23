@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	tea "pitago/src/tui/ev"
 )
 
 // stripSideBox splits a rendered sidebar into plain lines with the box
@@ -58,7 +58,7 @@ func TestSidebarRendersThinkingLevels(t *testing.T) {
 	if !strings.Contains(plain[modelRow+2], "ctx ") {
 		t.Fatalf("row after the level strip: got %q, want the ctx bar", plain[modelRow+2])
 	}
-	if got := m.thinkLevelLines(sideInnerW); len(got) != 1 {
+	if got := m.thinkLevelLines((defaultSideW - 4)); len(got) != 1 {
 		t.Fatalf("want 1 level row, got %d", len(got))
 	}
 	// Only the level in use is lit: bold ink, same emphasis toolNameStyle uses.
@@ -77,7 +77,7 @@ func TestSidebarThinkingLevelsWrapHorizontally(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.thinkLvl = "high"
 	m.thinkLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-	rows := m.thinkLevelLines(sideInnerW)
+	rows := m.thinkLevelLines((defaultSideW - 4))
 	if len(rows) != 2 {
 		t.Fatalf("want the strip wrapped onto 2 rows, got %d: %q", len(rows), stripANSI(strings.Join(rows, "|")))
 	}
@@ -86,8 +86,8 @@ func TestSidebarThinkingLevelsWrapHorizontally(t *testing.T) {
 		if got := stripANSI(rows[i]); got != w {
 			t.Fatalf("row %d: got %q, want %q", i, got, w)
 		}
-		if w := lipgloss.Width(rows[i]); w > sideInnerW {
-			t.Fatalf("row %d is %d cells, wider than the %d-cell sidebar", i, w, sideInnerW)
+		if w := lipgloss.Width(rows[i]); w > (defaultSideW - 4) {
+			t.Fatalf("row %d is %d cells, wider than the %d-cell sidebar", i, w, (defaultSideW - 4))
 		}
 	}
 }
@@ -98,7 +98,7 @@ func TestSidebarThinkingLevelsNeverTruncated(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.thinkLvl = "xhigh"
 	m.thinkLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-	for _, row := range m.thinkLevelLines(sideInnerW) {
+	for _, row := range m.thinkLevelLines((defaultSideW - 4)) {
 		if strings.Contains(row, "…") {
 			t.Fatalf("a level name was truncated: %q", stripANSI(row))
 		}
@@ -111,7 +111,7 @@ func TestSidebarThinkingLevelsEmptyRendersNothing(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.Status = "ready"
 	m.ModelLbl = "gpt-5"
-	if got := m.thinkLevelLines(sideInnerW); len(got) != 0 {
+	if got := m.thinkLevelLines((defaultSideW - 4)); len(got) != 0 {
 		t.Fatalf("empty list must render no rows, got %d", len(got))
 	}
 	if n := m.sideModelRows(); n != sideModelRows {
@@ -145,7 +145,7 @@ func TestSideModelRowsDerivedFromLevels(t *testing.T) {
 		t.Fatalf("empty: got %d, want 4", n)
 	}
 	m.thinkLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-	strip := len(m.thinkLevelLines(sideInnerW))
+	strip := len(m.thinkLevelLines((defaultSideW - 4)))
 	if want := sideModelRows + strip; m.sideModelRows() != want {
 		t.Fatalf("7 levels (%d strip rows): got %d, want %d", strip, m.sideModelRows(), want)
 	}

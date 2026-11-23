@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"pitago/src/components/textarea"
+	tea "pitago/src/tui/ev"
+	"pitago/src/tui/viewport"
 
 	"pitago/src/components/chat"
 	"pitago/src/components/favorite"
@@ -50,6 +50,7 @@ type Dialog struct {
 	Payload           []string              // yank picker: full text per option; login: raw keys ("" for action rows)
 	BlockIdx          int                   // blockactions: target chat block index (for Payload kinds)
 	tree              *treeState            // tree / treeSummary / treeCustom: the /tree flow's state (see tree.go)
+	focus             *focusState           // focus: the /focus window's state (see focus.go)
 	McpServers        []pirpc.McpServerInfo // mcp: full server record per list row (transport, source, state, tools)
 	McpServer         pirpc.McpServerInfo   // mcp: the server an action/exposure dialog belongs to
 	Current           string                // the value in use, marked in the grid/list (pet: "●" cell)
@@ -65,6 +66,7 @@ type Dialog struct {
 	ShowKeys          bool            // login: reveal full keys (s toggles, never persisted)
 	RenameIdx         int             // rename flow: key index being renamed (-1 = none)
 	LoginActions      []string        // login: action kinds parallel to trailing rows ("add","guide","disconnect","reload")
+	RenameOAuth       bool            // rename: target is a saved OAuth account
 	LoginOAuth        bool            // login: selected provider has OAuth in pi
 	LoginOAuthExp     int64           // login: oauth expiry ms epoch (0 = unknown)
 	LoginOAuthAcct    string          // login: oauth account id ("" = unknown)
@@ -90,6 +92,7 @@ type Dialog struct {
 	SubOffset         int         // subagents overlay: detail scroll offset from tail
 	SubHeader         string      // subagents overlay: detail activity header
 	oauth             *oauthState // oauthFlow: in-TUI OAuth login state
+	pickerTag         string      // native picker shown for this dialog under tviewrt ("" = drawn as text)
 }
 
 // SettingsState snapshots tunable agent settings.
@@ -116,6 +119,11 @@ type Model struct {
 	vp                  viewport.Model
 	sideVp              viewport.Model // sidebar scroll: clips content to sideH, Ctrl/Alt+↑↓/PgUp/PgDn or wheel over it scrolls
 	ta                  textarea.Model
+	SideWidth           int       // sidebar width from dragging its divider (0 = default); see sideW
+	sideDrag            bool      // left button held on the sidebar divider
+	sideDividerPress    time.Time // last press on the sidebar divider (double-click resets)
+	nativePicker        string    // tag of the native picker the runtime has open ("" = none)
+	pickerSeq           int       // last native picker tag number
 	Pi                  *pirpc.Client
 	liveBridge          *live.Bridge     // foreign Pi SSE bridge (read-only)
 	liveTail            *live.Tail       // foreign Pi session-file tail (read-only, any running pi)
@@ -162,7 +170,9 @@ type Model struct {
 	Mouse               bool // --mouse: terminal reports clicks (sidebar recent switch)
 	baseVpH             int
 	cwd                 string
+	focusLast           *focusLast // where /focus was left (a bare /focus reopens it)
 	ModelLbl            string
+	ModelProv           string   // provider id of the active model ("" = unknown); picks the QUOTA panel
 	CurAgent            string   // last-picked /subagents entry (shown on the input bar)
 	AppVersion          string   // pitago build version for the welcome header ("" = omit)
 	UpdateAvail         string   // latest tag when auto-check found newer ("" = up to date) — welcome banner + /update hint
@@ -180,7 +190,9 @@ type Model struct {
 	lastSpeed           float64 // tok/s of last turn
 	ws                  wsData  // workspace git status (polled)
 	Stats               pirpc.Stats
-	sessBreak           []pirpc.CostBreak // sidebar COST section (connect + /session refresh)
+	sessBreak           []pirpc.CostBreak     // sidebar COST section (connect + /session refresh)
+	quota               []pirpc.ProviderQuota // /quota dialog + sidebar QUOTA panel (async fetch, 90s TTL)
+	quotaAt             time.Time             // newest ProviderQuota.FetchedAt in quota (age line, stale-message guard)
 	queue               pirpc.Queue
 	Todos               []TodoItem      // tracked from todo-tool calls (sidebar)
 	MCP                 []McpServer     // pi agent-dir MCP snapshot (sidebar)
@@ -260,8 +272,6 @@ type Model struct {
 	quitGen             int       // arm generation (stale disarm ticks ignored)
 	escArm              time.Time // first Esc timestamp while running (second press within window cancels)
 	escGen              int       // arm generation (stale disarm ticks ignored)
-	mouseLeakAt         time.Time // last SGR mouse-report burst (split fragments within window are residue)
-	mouseBuf            string    // pending split tail ("[<65"…) waiting for its continuation (sequence, time-bound)
 	plugAction          string    // pending plugin op awaiting second confirm (auth gate)
 	plugSpec            string    // pending plugin spec (cleared on confirm/cancel/timeout)
 	plugAt              time.Time // first press timestamp for the pending plugin op
@@ -324,12 +334,6 @@ const quitArmWindow = 3 * time.Second
 // one press arms, second press within the window aborts the running turn).
 const escArmWindow = 3 * time.Second
 
-// mouseFragWindow is how long after an SGR mouse-report burst a lone
-// coordinate fragment ("65;99;18M") still counts as split-read residue,
-// plus how long a buffered split tail ("[<65"…) waits for its continuation.
-// Sequence (consecutive reads) decides, the window only bounds staleness.
-const mouseFragWindow = 1500 * time.Millisecond
-
 // streamFrame caps streaming repaints (~30fps): text/thinking deltas mutate
 // blocks on every event but SetContent runs at most once per frame, with a
 // trailing flush tick so the UI never stays stale.
@@ -347,12 +351,6 @@ func streamFlushCmd(d time.Duration) tea.Cmd {
 		d = streamFrame
 	}
 	return tea.Tick(d, func(time.Time) tea.Msg { return streamFlushMsg{} })
-}
-
-// mouseBurst reports a wheel/click burst within the fragment window: split
-// reads still arriving get scrubbed as residue, not typed as text.
-func (m Model) mouseBurst() bool {
-	return !m.mouseLeakAt.IsZero() && time.Since(m.mouseLeakAt) < mouseFragWindow
 }
 
 type connectedMsg struct {
@@ -532,6 +530,8 @@ type LoginRenameOpenMsg struct {
 	Provider, Env string
 	Items         []pirpc.KeyItem
 	Idx           int
+	OAuth         bool   // rename a saved OAuth account (Idx indexes accounts)
+	Name          string // OAuth: current label
 }
 
 // LoginSwitchMsg reports that "use this key" finished off the event loop:
@@ -539,6 +539,7 @@ type LoginRenameOpenMsg struct {
 // as the notice spells it, read before the write.
 type LoginSwitchMsg struct {
 	Prov, Masked string
+	Acct         string // OAuth account label when an OAuth account was activated
 	D            *Dialog
 }
 
@@ -1197,9 +1198,9 @@ func (m *Model) setChatContent(s string) {
 func (m *Model) wheelTo(x int, msg tea.MouseMsg) tea.Cmd {
 	var c tea.Cmd
 	if m.overSide(x) {
-		m.sideVp, c = m.sideVp.Update(msg)
+		m.sideVp, c = vpUpdate(m.sideVp, msg)
 	} else {
-		m.vp, c = m.vp.Update(msg)
+		m.vp, c = vpUpdate(m.vp, msg)
 	}
 	return c
 }
@@ -1560,6 +1561,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	prefs := LoadPrefs(m.prefsPath)
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
+	m.SideWidth = prefs.SideWidth
 	// Resolved once here: $SHELL is read from the environment, and a Cmd
 	// must never read the model it was built from.
 	m.shellBinPref = prefs.ShellBinary
@@ -1711,15 +1713,16 @@ func mergeCommands(builtins []Builtin, cmds []pirpc.RepoCommand) []pirpc.RepoCom
 	return out
 }
 
-// ProgRef lets respawns rewire the pi event stream (tea.Program.Send is
-// thread-safe). Set once from main before Run.
-var ProgRef *tea.Program
+// Post delivers a message into the running UI program from any goroutine
+// (respawns use it to rewire the pi event stream). Set once from main before
+// Run; nil in tests, which drive Update directly.
+var Post tea.Sender
 
 // WireClient routes a pi client's events into the UI program.
 func WireClient(c *pirpc.Client) {
 	c.SetOnEvent(func(e pirpc.Event) {
-		if ProgRef != nil {
-			ProgRef.Send(piEventMsg{e})
+		if Post != nil {
+			Post(piEventMsg{e})
 		}
 	})
 }

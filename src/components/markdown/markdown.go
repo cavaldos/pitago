@@ -8,8 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
+	"pitago/src/components/cellwidth"
 	"pitago/src/gomark"
 	"pitago/src/pimark"
 )
@@ -144,8 +143,8 @@ func compactRows(rows []string, width int) ([]string, bool) {
 		data = true
 		for j, cell := range c {
 			co := strings.Trim(cell, " \t")
-			lw := lipgloss.Width(cell) - lipgloss.Width(strings.TrimLeft(cell, " \t"))
-			tw := lipgloss.Width(cell) - lipgloss.Width(strings.TrimRight(cell, " \t"))
+			lw := cellwidth.Width(cell) - cellwidth.Width(strings.TrimLeft(cell, " \t"))
+			tw := cellwidth.Width(cell) - cellwidth.Width(strings.TrimRight(cell, " \t"))
 			core[i] = append(core[i], co)
 			switch {
 			case lw == 0 && tw == 0:
@@ -168,7 +167,7 @@ func compactRows(rows []string, width int) ([]string, bool) {
 			continue
 		}
 		for j, co := range c {
-			if w := lipgloss.Width(co); w > widths[j] {
+			if w := cellwidth.Width(co); w > widths[j] {
 				widths[j] = w
 			}
 		}
@@ -196,7 +195,7 @@ func compactRows(rows []string, width int) ([]string, bool) {
 				continue
 			}
 			co := core[i][j]
-			pad := widths[j] - lipgloss.Width(co)
+			pad := widths[j] - cellwidth.Width(co)
 			lp, tp := 1, 1
 			switch {
 			case right[j] > left[j] && right[j] >= center[j]:
@@ -261,7 +260,7 @@ func frameGroup(group []string, width int) []string {
 	}
 	w := 0
 	for _, r := range rows {
-		if ww := lipgloss.Width(r); ww > w {
+		if ww := cellwidth.Width(r); ww > w {
 			w = ww
 		}
 	}
@@ -270,7 +269,7 @@ func frameGroup(group []string, width int) []string {
 	}
 	padded := make([]string, 0, len(rows))
 	for _, r := range rows {
-		padded = append(padded, r+strings.Repeat(" ", w-lipgloss.Width(r)))
+		padded = append(padded, r+strings.Repeat(" ", w-cellwidth.Width(r)))
 	}
 	// Tick positions from the first separator row so ┬/┴ sit above/below ┼.
 	var ticks []int
