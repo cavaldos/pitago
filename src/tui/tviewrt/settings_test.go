@@ -2,6 +2,7 @@ package tviewrt
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -176,12 +177,31 @@ func TestSettingsRowLabelHintColumn(t *testing.T) {
 // providers column, the scoped model list and the specs.
 type bareSettingsModel struct {
 	barModel
+	ptrBox
+}
+
+// ptrBox records the last pointer message. The runtime writes it from its
+// own goroutine while the test polls it, so access is locked.
+type ptrBox struct {
+	mu      sync.Mutex
 	pointer ev.SettingsPointerMsg
+}
+
+func (b *ptrBox) set(p ev.SettingsPointerMsg) {
+	b.mu.Lock()
+	b.pointer = p
+	b.mu.Unlock()
+}
+
+func (b *ptrBox) lastPointer() ev.SettingsPointerMsg {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pointer
 }
 
 func (m *bareSettingsModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
 	if p, ok := msg.(ev.SettingsPointerMsg); ok {
-		m.pointer = p
+		m.set(p)
 	}
 	return m, nil
 }
@@ -267,7 +287,7 @@ func TestBareModelPickerKeepsPaintedShape(t *testing.T) {
 	scr.InjectMouse(x, y, tcell.ButtonPrimary, tcell.ModNone)
 	scr.InjectMouse(x, y, tcell.ButtonNone, tcell.ModNone)
 	want := ev.SettingsPointerMsg{Column: ev.SettingsValues, Index: 5}
-	waitFor(t, func() bool { return m.pointer == want })
+	waitFor(t, func() bool { return m.lastPointer() == want })
 }
 
 // List rows are muted until they are selected: the row you are not on must
@@ -306,12 +326,12 @@ func TestSettingsRowsAreMutedUntilSelected(t *testing.T) {
 // bareLoginModel is the /login picker's bare snapshot.
 type bareLoginModel struct {
 	barModel
-	pointer ev.SettingsPointerMsg
+	ptrBox
 }
 
 func (m *bareLoginModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
 	if p, ok := msg.(ev.SettingsPointerMsg); ok {
-		m.pointer = p
+		m.set(p)
 	}
 	return m, nil
 }
@@ -387,22 +407,22 @@ func TestBareLoginPickerKeepsPaintedShape(t *testing.T) {
 		t.Fatalf("no row with %q:\n%s", needle, text)
 	}
 	click("Azure")
-	waitFor(t, func() bool { return m.pointer == (ev.SettingsPointerMsg{Column: ev.SettingsSections, Index: 1}) })
+	waitFor(t, func() bool { return m.lastPointer() == (ev.SettingsPointerMsg{Column: ev.SettingsSections, Index: 1}) })
 	click("sk-…9f2c")
-	waitFor(t, func() bool { return m.pointer == (ev.SettingsPointerMsg{Column: ev.SettingsValues, Index: 0}) })
+	waitFor(t, func() bool { return m.lastPointer() == (ev.SettingsPointerMsg{Column: ev.SettingsValues, Index: 0}) })
 }
 
 // bareHubModel feeds the settings hubs' bare snapshots: the agent settings
 // two-column view and the Pitago hub's three-column Theme view.
 type bareHubModel struct {
 	barModel
-	kind    string
-	pointer ev.SettingsPointerMsg
+	kind string
+	ptrBox
 }
 
 func (m *bareHubModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
 	if p, ok := msg.(ev.SettingsPointerMsg); ok {
-		m.pointer = p
+		m.set(p)
 	}
 	return m, nil
 }
@@ -491,7 +511,7 @@ func TestBareSettingsHubKeepsPaintedShape(t *testing.T) {
 							x, y := len([]rune(line[:i])), row
 							scr.InjectMouse(x, y, tcell.ButtonPrimary, tcell.ModNone)
 							scr.InjectMouse(x, y, tcell.ButtonNone, tcell.ModNone)
-							waitFor(t, func() bool { return m.pointer == want })
+							waitFor(t, func() bool { return m.lastPointer() == want })
 							return
 						}
 					}

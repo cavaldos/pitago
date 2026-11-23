@@ -70,7 +70,7 @@ func TestNativeSettingsApplyPersists(t *testing.T) {
 	if v := view(); v.Kind != "pconfig" || len(v.Panes) != 3 || v.Panes[ev.SettingsBackgrounds].Title != "BACKGROUND" {
 		t.Fatalf("agent theme row did not open Pitago Theme: %+v", v)
 	}
-	pick(ev.SettingsValues, "one-dark", false)
+	pick(ev.SettingsValues, "02 one-dark", false)
 	if p := state.(ev.NativePaletteProvider).NativePalette(); p.Accent != theme.Get("one-dark").Accent {
 		t.Fatalf("theme preview is not exposed to the menu: %+v", p)
 	}

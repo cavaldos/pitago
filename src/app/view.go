@@ -1974,7 +1974,13 @@ func (m Model) renderInput() string {
 		gap = 0
 	}
 	foot := statusBarStyle.Render(left + strings.Repeat(" ", gap) + right)
-	lines := []string{m.ta.View()}
+	// The textarea is laid out for the full chat column; on a terminal narrower
+	// than that it would soft-wrap inside the box and push the frame past
+	// winH. Clip each editor row to the box instead.
+	lines := strings.Split(m.ta.View(), "\n")
+	for i, l := range lines {
+		lines[i] = truncANSI(l, innerW)
+	}
 	if m.chipH() > 0 {
 		lines = append(lines, m.chipRow(innerW))
 	}
