@@ -48,6 +48,7 @@ import (
 // line.
 type QuotaWindow struct {
 	Name         string
+	Label        string // optional display label; when set it overrides ShortLabel's derivation
 	UsedPct      int
 	PercentKnown bool
 	Status       string
@@ -70,12 +71,17 @@ func (w QuotaWindow) PercentLeft() int {
 	return p
 }
 
-// ShortLabel is the compact row label: the endpoint's own bucket name where we
-// know it (rolling→5h, weekly→week, monthly→month), else a label derived from
-// the window duration when that is known (codex-style 300min→5h,
-// 10080min→week, 43200min→month, otherwise Nh), else the raw name. Inventing a
-// nicer name for an unknown bucket would hide that the endpoint changed.
+// ShortLabel is the compact row label: an explicit Label when the adapter set
+// one (e.g. a code-review or model-specific codex limit), else the endpoint's
+// own bucket name where we know it (rolling→5h, weekly→week, monthly→month),
+// else a label derived from the window duration when that is known (codex-style
+// 300min→5h, 10080min→week, 43200min→month, otherwise Nh), else the raw name.
+// Inventing a nicer name for an unknown bucket would hide that the endpoint
+// changed.
 func (w QuotaWindow) ShortLabel() string {
+	if w.Label != "" {
+		return w.Label
+	}
 	if lbl, ok := quotaWindowLabel[w.Name]; ok {
 		return lbl
 	}
@@ -657,9 +663,10 @@ func oauthCred(provider string) (token, account string) {
 	return strings.TrimSpace(c.Access), strings.TrimSpace(c.AccountID)
 }
 
-// fetchCodexQuota reads the ChatGPT subscription's two rate-limit windows
-// (5h primary, weekly secondary). Window names are derived from the verified
-// duration the endpoint reports, never guessed.
+// fetchCodexQuota reads every rate-limit window the ChatGPT subscription
+// reports: the account's primary/secondary windows plus the code-review and
+// any model-specific (additional) limits. Window names/labels are derived from
+// the verified duration the endpoint reports, never guessed.
 func fetchCodexQuota(q ProviderQuota, key string) ProviderQuota {
 	_, acct := codexCred()
 	req, err := http.NewRequest(http.MethodGet, quotaCodexURL, nil)
@@ -698,40 +705,72 @@ func fetchCodexQuota(q ProviderQuota, key string) ProviderQuota {
 		ResetAt json.RawMessage `json:"reset_at"`
 		After   json.RawMessage `json:"reset_after_seconds"`
 	}
+	type rateLimit struct {
+		Reached   bool `json:"limit_reached"`
+		Primary   *win `json:"primary_window"`
+		Secondary *win `json:"secondary_window"`
+	}
 	var payload struct {
-		Plan      string `json:"plan_type"`
-		RateLimit struct {
-			Reached   bool `json:"limit_reached"`
-			Primary   *win `json:"primary_window"`
-			Secondary *win `json:"secondary_window"`
-		} `json:"rate_limit"`
+		Plan                 string     `json:"plan_type"`
+		RateLimit            rateLimit  `json:"rate_limit"`
+		CodeReviewRateLimit  *rateLimit `json:"code_review_rate_limit"`
+		AdditionalRateLimits []struct {
+			LimitName string    `json:"limit_name"`
+			Metered   string    `json:"metered_feature"`
+			RateLimit rateLimit `json:"rate_limit"`
+		} `json:"additional_rate_limits"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		q.Err = "usage endpoint returned an unexpected payload"
 		return q
 	}
 	q.Plan = strings.TrimSpace(payload.Plan)
-	for i, w := range []*win{payload.RateLimit.Primary, payload.RateLimit.Secondary} {
-		if w == nil {
-			continue
-		}
-		pct, ok := quotaNumber(w.Used)
-		if !ok {
-			continue
-		}
-		secs, _ := quotaNumber(w.Secs)
-		qw := QuotaWindow{Name: []string{"primary", "secondary"}[i], PercentKnown: true,
-			UsedPct: min(max(int(math.Round(pct)), 0), 100), Status: "ok",
-			WindowSecs: int(secs), ResetsAt: quotaTime(w.ResetAt)}
-		if qw.ResetsAt.IsZero() {
-			if a, ok := quotaNumber(w.After); ok {
-				qw.ResetsAt = time.Now().Add(time.Duration(a) * time.Second)
+	// appendCodexWindows turns one rate-limit object (primary + secondary)
+	// into quota rows. prefix is empty for the account's main limit, or a
+	// human label for code-review / model-specific limits, so every bucket
+	// the endpoint reports is visible instead of only the first two.
+	appendCodexWindows := func(rl rateLimit, prefix string, reached bool) {
+		for i, w := range []*win{rl.Primary, rl.Secondary} {
+			if w == nil {
+				continue
 			}
+			pct, ok := quotaNumber(w.Used)
+			if !ok {
+				continue
+			}
+			secs, _ := quotaNumber(w.Secs)
+			name := []string{"primary", "secondary"}[i]
+			label := ""
+			if prefix != "" {
+				label = prefix
+			}
+			qw := QuotaWindow{Name: name, Label: label, PercentKnown: true,
+				UsedPct: min(max(int(math.Round(pct)), 0), 100), Status: "ok",
+				WindowSecs: int(secs), ResetsAt: quotaTime(w.ResetAt)}
+			if qw.ResetsAt.IsZero() {
+				if a, ok := quotaNumber(w.After); ok {
+					qw.ResetsAt = time.Now().Add(time.Duration(a) * time.Second)
+				}
+			}
+			if reached && qw.UsedPct >= 100 {
+				qw.Status = "limited"
+			}
+			q.Windows = append(q.Windows, qw)
 		}
-		if payload.RateLimit.Reached && qw.UsedPct >= 100 {
-			qw.Status = "limited"
+	}
+	appendCodexWindows(payload.RateLimit, "", payload.RateLimit.Reached)
+	if payload.CodeReviewRateLimit != nil {
+		appendCodexWindows(*payload.CodeReviewRateLimit, "code review", payload.CodeReviewRateLimit.Reached)
+	}
+	for _, ar := range payload.AdditionalRateLimits {
+		prefix := strings.TrimSpace(ar.LimitName)
+		if prefix == "" {
+			prefix = strings.TrimSpace(ar.Metered)
 		}
-		q.Windows = append(q.Windows, qw)
+		if prefix == "" {
+			prefix = "extra"
+		}
+		appendCodexWindows(ar.RateLimit, prefix, ar.RateLimit.Reached)
 	}
 	if len(q.Windows) == 0 {
 		q.Err = "usage payload had no usable percent"
