@@ -2,9 +2,8 @@
 // reducer-style Model contract that src/app is written against.
 //
 // It mirrors the subset of Bubble Tea v1 the app used (same names, same key
-// strings) so the app no longer imports any TUI runtime directly. A runtime
-// adapter (src/tui/teabridge today, the tview runtime next) translates its
-// native input into these types and executes the returned Cmds.
+// strings) so the reducer remains independent of tview. The tview runtime
+// translates native input into these types and executes the returned Cmds.
 package ev
 
 import "time"

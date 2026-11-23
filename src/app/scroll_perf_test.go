@@ -57,26 +57,6 @@ func TestWheelScrollDoesNotRepaintTranscript(t *testing.T) {
 	}
 }
 
-// The same holds for wheel reports that arrive as scrubbed KeyRunes after a
-// split read (the trackpad path): the burst scrolls, but paints nothing.
-func TestScrollLeakDoesNotRepaintTranscript(t *testing.T) {
-	m := scrollModel(t, 400)
-	// "[<64;10;5M" — SGR wheel-up press at column 10.
-	burst := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[<64;10;5M")}
-	paints := countPaints(t, func() {
-		for i := 0; i < 20; i++ {
-			tm, _ := m.Update(burst)
-			m = tm.(Model)
-		}
-	})
-	if paints != 0 {
-		t.Fatalf("20 leaked wheel events repainted the transcript %d time(s), want 0", paints)
-	}
-	if m.vp.YOffset == 0 {
-		t.Fatal("leaked wheel up did not scroll the chat")
-	}
-}
-
 // Scrolling the sidebar moves the sidebar and nothing else — neither the
 // chat offset nor the rendered content of either viewport.
 func TestWheelOverSidebarDoesNotRepaintEither(t *testing.T) {

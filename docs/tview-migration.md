@@ -1,74 +1,27 @@
 # Bubble Tea → tview migration
 
-Branch: `feat/tview-migration` (from `main`). Peer branches merge into it:
-`tview/render` (render layer), `tview/spike` (keys, kitty, OSC52, mouse).
+`tview`/`tcell` is the only interactive runtime. There is no `PITAGO_UI` switch, and the Go module no longer depends on Bubble Tea or Bubbles (including in tests). The runtime translates terminal input into `src/tui/ev` messages and executes the app reducer's commands. The local textarea and viewport retain their upstream notices.
 
-## Strategy
+## What runs natively
 
-1. **Own the event vocabulary.** `src/tui/ev` mirrors the Bubble Tea v1 subset
-   the app used (same key numbers and strings), so `src/app` is a runtime-free
-   reducer: `Update(ev.Msg) (ev.Model, ev.Cmd)` + `View() string`.
-2. **Two runtimes, one model.** `src/tui/teabridge` (Bubble Tea, current
-   default) and `src/tui/tviewrt` (tview). Both execute the same Cmds.
-3. **Whole-frame bridge first.** `tviewrt` paints the existing `View()` string
-   through an ANSI→cell painter, so the full app runs on tview early.
-4. **Then go native, region by region.** Replace chat, input, sidebar and
-   dialogs with tview primitives / custom `Box.Draw`, keeping tests green.
-5. **Delete Bubble Tea** (teabridge, bubbles, lipgloss) at the end.
+- `src/tui/tviewrt` manages the terminal, input, overlays, menu bar, and native list pickers (including model selection). The menu bar and dropdowns follow the active Pitago theme and background.
+- `/settings` and `/pitago-setting` use native tview lists, a filter field, and Apply/Close buttons. The app still owns settings actions, previews, and persistence.
+- `/model`, `/login`, `/settings` and `/pitago-setting` keep the painted pickers' shape on native widgets: one frame titled inside the border, borderless columns with an inline header row, a `filter:` line and a single help line instead of Apply/Close buttons. Row clicks, wheel scrolling and the keyboard all drive the same reducer; `/model` moves its details column under the panes on narrow terminals, and the marketplace keeps its remote `search:` filter and DETAILS column.
+- The main app still renders an ANSI view with Lip Gloss; `src/tui/cells` paints it onto the tcell screen. The native `src/tui/chatview` exists but is not wired into the main frame. The transcript, sidebar, input and complex dialogs such as MCP and the session tree still use the app's painted views. A fully native widget/layout migration is separate from the runtime cutover.
+- Bracketed paste preserves LF/CRLF and tabs. tcell still normalizes some embedded control/escape sequences (see the paste tests). OSC 52 and Kitty graphics use the runtime's raw terminal channel. iTerm2 inline image protocol is not supported by the tview drawing path.
 
-## Status
+## Mouse interaction
 
-| Phase | What | State |
-|---|---|---|
-| P0 | drop `src/stack`, charm v2 pins | done |
-| P2a | `src/tui/ev` + `teabridge`; app/builtin/tests off bubbletea | done |
-| P2b | `tviewrt` runtime (SimulationScreen tests) | done |
-| P1a | keys + mouse parity (`src/tui/keys`) | done |
-| P1b | kitty images on real terminal, OSC52, paste with LF | in progress (`tview/spike`) |
-| P3a | `cellwidth`, `tstyle`, `cells` ANSI→cells, raw tty side channel | done |
-| P3b | `PITAGO_UI=tview` switch (`src/main_tview.go`) | done — whole app runs on tview |
-| P3c | lipgloss → own style layer in `src/app` | todo |
-| P4 | native ChatView (`src/tui/chatview`, `tview/render`), TextArea input, sidebar, header, toasts | in progress |
-| P5 | dialogs (pickers → config → dashboards → tree/focus/pet) | todo |
-| P6 | mouse selection/hover/drag on cells; drop mouseleak/scroll_filter | todo |
-| M1 | sidebar divider drag (prefs.sideWidth) | done |
-| M2 | widget kit `src/tui/widgets`; Overlay is the tviewrt root | done |
-| M3 | right-click context menus at the pointer: chat block, input (`ev.OpenMenuMsg` → `MenuResultMsg`) | done (tview); Bubble Tea keeps the dialog |
-| M4 | clickable header/status segments, tooltips, `⋯` buttons, sidebar row menus | todo |
-| P7 | tests on SimulationScreen goldens | ongoing |
-| P8a | tview is the default UI (PITAGO_UI=tea = legacy fallback) | done |
-| P8b | remove teabridge, bubbles, lipgloss | todo |
+Inspired by [TTT](https://github.com/eugenioenko/ttt):
 
-## Mouse-first UX (target: ttt-like, github.com/eugenioenko/ttt)
+- Open top-bar menus, right-click for actions at the pointer, and choose a row in a native picker. Clicking outside closes a native popup.
+- In Settings, click a section or a row to select it, scroll over a list to move its selection, and use Apply or double-click a value to activate it. Tab and the arrow keys still navigate the lists.
+- Click the prompt to place the cursor. Click the session header for session info and the prompt footer to pick a model.
+- Drag the divider to resize the sidebar; double-click to reset. Wheel-scroll chat or sidebar, drag to select chat text, and click the jump-to-latest chip when reading history.
+- Mouse capture is on by default. `--mouse=false` leaves terminal text selection to the terminal; `Alt+M` toggles capture. `F10` opens the menu without a mouse.
 
-Already in pitago: wheel scroll, drag-select in chat, hover highlight,
-clickable sidebar rows, right-click → block actions dialog.
+Input drag-selection, an input-height divider and conversion of the remaining painted regions to native primitives are not implemented.
 
-| Interaction | Where in pitago | Built from |
-|---|---|---|
-| Drag divider to resize | chat ↔ sidebar width, chat ↔ input height (persist in prefs) | `widgets.Splitter` |
-| Right-click context menu at pointer | chat block (copy/code/table/retry…), sidebar rows (session, recent model), input (paste/clear) | `widgets.ContextMenu` (replaces the full-screen block-actions dialog) |
-| Click status/header segments | model → model picker, thinking level, ctx %, LSP, MCP, plugins | `widgets.ClickBar` |
-| `⋯` menu buttons | sidebar sections, panels, dialogs | `widgets.MenuButton` |
-| Hover popups | truncated text, tool call details, diagnostics, toasts | `widgets.Tooltip` |
-| Click to place cursor / drag-select in input | input editor | app textarea + `PointAt` |
-| Click list items, click outside to close | every dialog/picker | native tview lists (P5) |
+## Validation
 
-Popups live in an overlay layer above the frame (`widgets.Overlay`, root of
-`tviewrt`), so they work during the whole-frame bridge stage, before every
-region is native. Geometry that the app owns (sidebar width, input height)
-stays app state, changed by `ev` messages from the widgets.
-
-## Known issues / watch list
-
-- The `ev` import is still aliased `tea` in `src/app` (renaming collides with
-  ~80 locals named `ev`); rename during P4.
-- Paste under tview: tview keeps only runes/Enter/Tab during a bracketed paste,
-  so LF-only newlines (KeyCtrlJ) and other C0 bytes are lost.
-- Mouse: a wheel during a held drag yields a spurious release+press pair.
-- Keys: physical-key parity, not byte parity (tcell enables CSI-u /
-  modifyOtherKeys). Gaps are asserted in `src/tui/keys` tests.
-- Kitty ids < 16 are emitted by tcell as ESC[3x/9x; truecolor ids need
-  COLORTERM=truecolor. iTerm2 inline images are not supported under tview.
-- `tview.Application.SetScreen` re-`Init`s the screen: size a
-  SimulationScreen *after* `tviewrt.New`.
+`go test ./...` runs widget and runtime tests with a tcell simulation screen, SGR mouse/paste parser regressions and integration tests. To smoke-test in your terminal, run `go run ./src`, then click a menu or within a multiline draft, right-click a chat block, and drag the sidebar divider, including while scrolling. Repeat with mouse capture toggled off and back on.

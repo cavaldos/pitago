@@ -15,14 +15,11 @@ import (
 
 // nativePickerKind lists the single-pane list dialogs whose keys are fully
 // covered by the picker (↑↓/PgUp/PgDn/Home/End, filter typing, Enter, Esc).
-// Two-pane and special-key dialogs stay text-drawn until they get their own
-// native views.
+// Multi-pane and special-key dialogs use dedicated views instead.
 func nativePickerKind(d *Dialog) bool {
 	switch d.Kind {
 	case "recent", "yank", "fork", "logout", "thinking", "blockactions", "notification", "palette":
 		return len(d.Options) > 0
-	case "model":
-		return len(d.Provs) > 0 && len(d.Options) > 0 && len(d.Providers) == len(d.Options)
 	case "ui":
 		return d.Method == "select" && len(d.Options) > 0
 	}
@@ -58,9 +55,6 @@ func (m Model) syncNativePicker(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 }
 
 func pickerFor(d *Dialog) tea.OpenPickerMsg {
-	if d.Kind == "model" {
-		return modelPickerFor(d)
-	}
 	items := make([]tea.PickerItem, len(d.Options))
 	for i, o := range d.Options {
 		items[i] = tea.PickerItem{ID: strconv.Itoa(i), Label: o}
@@ -97,10 +91,6 @@ func (m Model) pickerResult(r tea.PickerResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	d.Filter = ""
-	if d.Kind == "model" {
-		// The native list spans every provider (sections), i.e. "All".
-		d.ProvCursor, d.ProvFocus = 0, false
-	}
 	d.Reindex()
 	for i, idx := range d.FIdx {
 		if idx == ri {
@@ -112,35 +102,4 @@ func (m Model) pickerResult(r tea.PickerResultMsg) (tea.Model, tea.Cmd) {
 	// is reopened natively by the sync after this Update.
 	d.pickerTag = ""
 	return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-}
-
-// modelPickerFor shows the two-pane model dialog as one sectioned list:
-// the provider is the section header, rows are grouped by provider (in the
-// dialog's provider order) and the connected ones are marked.
-func modelPickerFor(d *Dialog) tea.OpenPickerMsg {
-	var items []tea.PickerItem
-	for _, prov := range d.Provs {
-		for i, o := range d.Options {
-			if d.Providers[i] != prov {
-				continue
-			}
-			it := tea.PickerItem{ID: strconv.Itoa(i), Label: o, Section: prov}
-			if d.ProvConn[prov] {
-				it.Section = prov + " ●"
-			}
-			if i < len(d.Descs) {
-				it.Hint = d.Descs[i]
-			}
-			items = append(items, it)
-		}
-	}
-	sel := ""
-	if d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
-		sel = strconv.Itoa(d.FIdx[d.Cursor])
-	}
-	return tea.OpenPickerMsg{
-		Tag: d.pickerTag, Title: d.Title, Message: d.Message,
-		Items: items, Selected: sel, Filterable: true, Filter: d.Filter,
-		Footer: "↑↓ move · type to filter · Enter select · Esc close · ● = signed in",
-	}
 }

@@ -1,8 +1,7 @@
 // Adapted from github.com/charmbracelet/bubbles v1.0.0 (MIT License,
 // Copyright (c) 2020-2025 Charmbracelet, Inc; see NOTICE).
 
-// Package textarea provides a multi-line text input component for Bubble Tea
-// applications.
+// Package textarea provides pitago's multi-line text input component.
 package textarea
 
 import (
@@ -11,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/lipgloss"
@@ -561,6 +561,45 @@ func (m *Model) SetCursor(col int) {
 	// Any time that we move the cursor horizontally we need to reset the last
 	// offset so that the horizontal position when navigating is adjusted.
 	m.lastCharOffset = 0
+}
+
+// SetCursorAt moves the cursor to a visible cell in View, accounting for
+// soft wraps, the scroll offset, and wide characters.
+func (m *Model) SetCursorAt(x, y int) tea.Cmd {
+	base := m.style.Base
+	frameTop := base.GetMarginTop() + base.GetPaddingTop() + base.GetBorderTopSize()
+	frameLeft := base.GetMarginLeft() + base.GetPaddingLeft() + base.GetBorderLeftSize()
+	displayRow := max(0, y-frameTop) + m.viewport.YOffset
+	y = displayRow
+	x -= frameLeft
+	for row, line := range m.value {
+		wrapped := m.memoizedWrap(line, m.width)
+		if y >= len(wrapped) {
+			y -= len(wrapped)
+			continue
+		}
+		col := 0
+		for _, segment := range wrapped[:y] {
+			col += len(segment)
+		}
+		segment := wrapped[y]
+		x -= uniseg.StringWidth(m.getPromptString(displayRow))
+		if m.ShowLineNumbers {
+			x -= uniseg.StringWidth(m.formatLineNumber(row + 1))
+		}
+		g := uniseg.NewGraphemes(string(segment))
+		offset := 0
+		for g.Next() && x >= g.Width() && x > 0 {
+			x -= g.Width()
+			offset += utf8.RuneCountInString(g.Str())
+		}
+		m.row = row
+		m.SetCursor(col + min(offset, max(0, len(segment)-1)))
+		return m.Cursor.Focus()
+	}
+	m.moveToEnd()
+	m.repositionView()
+	return m.Cursor.Focus()
 }
 
 // CursorStart moves the cursor to the start of the input field.

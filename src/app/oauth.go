@@ -311,7 +311,6 @@ func (m Model) updateOAuthDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 }
 
 func (m Model) renderOAuthDialog(d *Dialog) string {
-	st := d.oauth
 	boxW := m.winW - 10
 	if boxW > 96 {
 		boxW = 96
@@ -319,7 +318,19 @@ func (m Model) renderOAuthDialog(d *Dialog) string {
 	if boxW < 50 {
 		boxW = 50
 	}
-	inner := boxW - 8 // dlgStyle border + padding
+	body := m.oauthDialogBody(d, boxW-8)
+	box := dlgStyle.Width(boxW).Render(body)
+	if d.oauth == nil {
+		return box
+	}
+	return lipgloss.JoinVertical(lipgloss.Center,
+		lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box),
+		"",
+	)
+}
+
+func (m Model) oauthDialogBody(d *Dialog, inner int) string {
+	st := d.oauth
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
 	wrap := func(s string, style lipgloss.Style) {
@@ -327,7 +338,7 @@ func (m Model) renderOAuthDialog(d *Dialog) string {
 	}
 	accent := lipgloss.NewStyle().Foreground(cAccent)
 	if st == nil {
-		return dlgStyle.Width(boxW).Render(b.String())
+		return b.String()
 	}
 	if st.url != "" {
 		b.WriteString("\n")
@@ -387,9 +398,5 @@ func (m Model) renderOAuthDialog(d *Dialog) string {
 	if hint != "" {
 		b.WriteString("\n" + toolStyle.Render(hint))
 	}
-	box := dlgStyle.Width(boxW).Render(b.String())
-	return lipgloss.JoinVertical(lipgloss.Center,
-		lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box),
-		"",
-	)
+	return b.String()
 }

@@ -1824,7 +1824,9 @@ func (m Model) statsLine() string {
 	return Short(m.ModelLbl, 40) + agent
 }
 
-func (m Model) renderHeader() string {
+func (m Model) renderHeader() string { return headerStyle.Render(m.headerText()) }
+
+func (m Model) headerText() string {
 	left := Short(pirpc.Shorten(m.cwd), 48)
 	if m.session != "" {
 		left = m.session + " · " + pirpc.Shorten(m.cwd)
@@ -1832,19 +1834,12 @@ func (m Model) renderHeader() string {
 	if m.followRemote {
 		left = "external · " + left
 	}
-	left = Short(left, 48)
-	// Status lives on the pet row (sidebar) — header keeps cwd/session only.
-	return headerStyle.Render(left)
+	return Short(left, 48)
 }
 
-func (m Model) renderInput() string {
-	mainW := m.mainW()
-	innerW := mainW - 4
-	if innerW < 10 {
-		innerW = 10
-	}
-	border, title := cInput, ""
-	left := "↵ send · / commands · @ files · ^P model · ^C quit"
+func (m Model) inputChrome() (border lipgloss.Color, title, left, right string) {
+	border = cInput
+	left = "↵ send · / commands · @ files · ^P model · ^C quit"
 	plan := m.isPlanMode()
 	agentTag := ""
 	if m.CurAgent != "" {
@@ -1934,10 +1929,18 @@ func (m Model) renderInput() string {
 	} else if m.CurAgent != "" {
 		title = "@" + Short(m.CurAgent, 30)
 	}
-	right := m.statsLine()
+	right = m.statsLine()
 	if m.extStat != "" {
 		right = Short(m.extStat, 30) + " · " + right
 	}
+	return border, title, left, right
+}
+
+func (m Model) inputHeight() int { return m.ta.Height() + m.chipH() + 3 }
+
+func (m Model) renderInput() string {
+	innerW := max(10, m.mainW()-4)
+	border, title, left, right := m.inputChrome()
 	// The footer must stay exactly one visual row: the input box is a
 	// fixed 6 rows (textarea 3 + footer 1 + border 2) and the viewport
 	// math in Update assumes it. A long model/stats line used to wrap
@@ -3232,8 +3235,12 @@ func (m Model) chatFrameGeometry(inlineUI bool, teamPanel, taskPanel, extAbove, 
 	// surfaces that are derived at paint time. lipgloss reports an empty
 	// string as one row, so measure them with panelHeight.
 	extra := panelHeight(taskPanel) + panelHeight(extAbove) + panelHeight(extBelow)
+	return m.chatGeometryByHeight(inlineUI, panelHeight(teamPanel), extra)
+}
+
+func (m Model) chatGeometryByHeight(inlineUI bool, teamH, extra int) viewport.Model {
 	chatVp := m.vp
-	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), panelHeight(teamPanel)+extra, inlineUI)
+	chatVp.Height = m.chatFrameRows(max(0, chatVp.Height-extra), teamH+extra, inlineUI)
 	// Shrinking Height without re-pinning drops rows from the BOTTOM of the
 	// transcript (viewport.View() renders lines[offset:offset+Height]), so the
 	// newest — most important — chat line would never be painted. Re-pin the
@@ -3267,7 +3274,7 @@ func (m Model) chatFrameRows(alloc, panels int, inlineUI bool) int {
 	if m.winH <= 0 {
 		return alloc
 	}
-	overhead := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderInput()) + panels
+	overhead := 1 + m.inputHeight() + panels
 	if inlineUI || m.cmdOpen || m.atOpen || m.inputOpen() {
 		overhead += m.popupH() + m.atPopupH() + m.uiPopupH() + m.inputPopupH()
 	}
@@ -3769,6 +3776,11 @@ func (m Model) inputOpen() bool {
 // renderInputBox draws the free-text dialog as a bare compact box for the
 // floating path in View (renderDialog keeps its own copy for direct use).
 func (m Model) renderInputBox() string {
+	body, w := m.inputBoxBody()
+	return dlgStyle.Width(w).Render(body)
+}
+
+func (m Model) inputBoxBody() (string, int) {
 	d := m.Dialogs[0]
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(d.Title) + "\n")
@@ -3788,7 +3800,7 @@ func (m Model) renderInputBox() string {
 	if mw := m.mainW() - 4; mw < boxW && mw > 20 {
 		boxW = mw
 	}
-	return dlgStyle.Width(boxW).Render(b.String())
+	return b.String(), boxW
 }
 
 // utils ------------------------------------------------------------------------

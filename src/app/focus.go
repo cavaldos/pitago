@@ -327,10 +327,37 @@ func (m Model) focusScrollTree(fs *focusState) {
 // --- render -----------------------------------------------------------------
 
 func (m Model) renderFocusDialog(d *Dialog) string {
+	boxW, _ := focusGeom(m.winW)
+	l := m.focusLayoutOf(d.focus)
+	p := m.focusContent(d, l)
+	var b strings.Builder
+	b.WriteString(p.head)
+	for i := 0; i < l.rows; i++ {
+		if l.treeW > 0 {
+			b.WriteString(trajPad(focusRow(p.left, i), l.treeW) + " " + p.divider + " ")
+		}
+		b.WriteString(focusRow(p.right, i) + "\n")
+	}
+	b.WriteString(p.tail)
+	box := dlgStyle.Width(boxW).Render(b.String())
+	return lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box)
+}
+
+func focusRow(rows []string, i int) string {
+	if i < len(rows) {
+		return rows[i]
+	}
+	return ""
+}
+
+type focusContents struct {
+	head, tail, divider string
+	left, right         []string
+}
+
+func (m Model) focusContent(d *Dialog, l focusLayout) focusContents {
 	fs := d.focus
-	boxW, cw := focusGeom(m.winW)
-	rows := m.focusBodyRows(fs)
-	treeW, codeW := fs.focusCols(cw)
+	_, cw := focusGeom(m.winW)
 	title := lipgloss.NewStyle().Bold(true).Foreground(cText)
 	var b strings.Builder
 
@@ -353,39 +380,22 @@ func (m Model) renderFocusDialog(d *Dialog) string {
 	}
 	b.WriteString(sepStyle.Render(strings.Repeat("─", cw)) + "\n")
 
-	// Body: tree | right column.
-	var right []string
+	p := focusContents{head: b.String(), divider: sepStyle.Render("│")}
+	b.Reset()
 	switch {
 	case fs.stage == focusPick:
-		right = m.focusPickLines(fs, codeW, rows)
+		p.right = m.focusPickLines(fs, l.codeW, l.rows)
 	case fs.file == nil:
-		right = []string{"", toolStyle.Render(Fit("  No file open.", codeW)),
-			toolStyle.Render(Fit("  ← choose one in the tree, or press / to search.", codeW))}
+		p.right = []string{"", toolStyle.Render(Fit("  No file open.", l.codeW)),
+			toolStyle.Render(Fit("  ← choose one in the tree, or press / to search.", l.codeW))}
 	default:
-		right = m.focusCodeLines(fs, codeW, rows)
+		p.right = m.focusCodeLines(fs, l.codeW, l.rows)
 	}
-	var left []string
-	if treeW > 0 {
-		left = m.focusTreeLines(fs, treeW, rows)
+	if l.treeW > 0 {
+		p.left = m.focusTreeLines(fs, l.treeW, l.rows)
 	}
-	divider := sepStyle
 	if fs.pane == paneTree && fs.stage == focusCode {
-		divider = lipgloss.NewStyle().Foreground(cAccent)
-	}
-	for i := 0; i < rows; i++ {
-		r := ""
-		if i < len(right) {
-			r = right[i]
-		}
-		if treeW > 0 {
-			l := ""
-			if i < len(left) {
-				l = left[i]
-			}
-			b.WriteString(trajPad(l, treeW) + " " + divider.Render("│") + " " + r + "\n")
-		} else {
-			b.WriteString(r + "\n")
-		}
+		p.divider = lipgloss.NewStyle().Foreground(cAccent).Render("│")
 	}
 
 	// Ask box.
@@ -416,8 +426,8 @@ func (m Model) renderFocusDialog(d *Dialog) string {
 		foot = "↑↓ move · v/drag select · Enter ask · i insert · y copy · Tab/h tree · / search · ^E tree · Esc close"
 	}
 	b.WriteString("\n" + toolStyle.Render(Fit(m.dialogFoot(foot), cw)))
-	box := dlgStyle.Width(boxW).Render(b.String())
-	return lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box)
+	p.tail = b.String()
+	return p
 }
 
 // focusMarkStyle colours a git mark the way neo-tree does.

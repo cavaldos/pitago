@@ -48,8 +48,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.pickerResult(r)
 	}
 	nm, cmd := m.update(msg)
-	if mm, ok := nm.(Model); ok && NativeMenus {
-		return mm.syncNativePicker(cmd)
+	if NativeMenus {
+		// Settings confirmers can synchronously replace themselves with a
+		// native picker (for example Thinking) and return the model pointer.
+		if p, ok := nm.(*Model); ok && m.settingsDialog() != nil {
+			nm = *p
+		}
+		if mm, ok := nm.(Model); ok {
+			return mm.syncNativePicker(cmd)
+		}
 	}
 	return nm, cmd
 }
@@ -58,85 +65,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Toasts expire by wall clock: prune on every message so a missed
 	// dismissal tick still clears (the tick itself just triggers repaint).
 	m.pruneToasts()
-	// SGR mouse-report leakage: a trackpad/mouse-wheel burst can split
-	// across input reads, losing the ESC prefix — the "[<65;50;31M…"
-	// remainder then arrives as plain KeyRunes. Scrub it before dialogs,
-	// popups, or the textarea can insert the noise as text; wheel reports
-	// still scroll the chat.
-	if km, ok := msg.(tea.KeyMsg); ok && !km.Paste && km.Type == tea.KeyRunes {
-		// Sequence: a split tail ("[<65"…) buffered from the prior read
-		// rejoins its continuation here (time-bound via mouseBurst, so a
-		// stale buffer never eats later typing). Non-continuations drop
-		// the buffer and process normally.
-		if m.mouseBuf != "" {
-			if m.mouseBurst() && len(km.Runes) > 0 {
-				c := km.Runes[0]
-				if c >= '0' && c <= '9' || c == ';' || c == 'M' || c == 'm' {
-					km.Runes = []rune(m.mouseBuf + string(km.Runes))
-					msg = km
-				}
-			}
-			m.mouseBuf = ""
-		}
-		// A bracketed tail split across reads ("[<64;…M[<65"): hold the
-		// incomplete tail for the next read instead of emitting a partial
-		// scroll with wrong coordinates. "[<" alone is typing, not noise.
-		if s := string(km.Runes); s != "" && !km.Alt {
-			if loc := sgrTail.FindStringIndex(s); loc != nil && loc[1] == len(s) {
-				if tail := s[loc[0]:]; tail != "[<" {
-					m.mouseBuf = tail
-					m.mouseLeakAt = time.Now()
-					if prefix := s[:loc[0]]; prefix == "" {
-						return m, nil // pure tail: swallow, wait for rest
-					} else {
-						km.Runes = []rune(prefix)
-						msg = km
-					}
-				}
-			}
-		}
-		// A split ESC[ arrives as a lone Alt+[ — mouse-report shrapnel,
-		// not text (no binding uses it; the textarea would insert the "["
-		// and picker filters would insert "alt+[").
-		if len(km.Runes) == 1 && km.Runes[0] == '[' && km.Alt {
-			m.mouseLeakAt = time.Now()
-			return m, nil
-		}
-		if events, cleaned, isLeak := cleanMouseLeak(km.Runes); isLeak {
-			m.mouseLeakAt = time.Now()
-			if len(cleaned) == 0 {
-				if len(m.Dialogs) > 0 {
-					return m.applyWheelLeak(events), nil
-				}
-				return m, m.scrollLeak(events)
-			}
-			// Mixed burst + real typing: still scroll (don't drop the
-			// wheel), then let the leftover text type normally. Wheel
-			// never touches input history — scrollLeak only moves viewports.
-			if len(m.Dialogs) > 0 {
-				m = m.applyWheelLeak(events).(Model)
-			} else {
-				_ = m.scrollLeak(events)
-			}
-			km.Runes = cleaned
-			km.Alt = false // the Alt bit is the eaten ESC, not the user
-			msg = km
-		} else if m.mouseBurst() {
-			// Burst-armed: a lone continuation ("65;99;18M", ";50;31M")
-			// whose head died in the prior read. Swallow it so it never
-			// lands in the input.
-			if events, frag := cleanMouseFrag(string(km.Runes)); frag {
-				m.mouseLeakAt = time.Now()
-				if len(m.Dialogs) > 0 {
-					return m.applyWheelLeak(events), nil
-				}
-				return m, m.scrollLeak(events)
-			}
-			// Sequence break: normal typing while armed disarms, so a
-			// later frag-like typing ("65;99") isn't swallowed.
-			m.mouseLeakAt = time.Time{}
-		}
-	}
 	// Live bridge transport bypasses dialog capture: an attach closes local
 	// dialogs, and a reconnect/disconnect must always reach the model.
 	if lm, ok := msg.(liveMsg); ok {
@@ -150,6 +78,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if _, ok := msg.(piEventMsg); ok && m.followRemote {
 		return m, nil
+	}
+	if d := m.settingsDialog(); d != nil {
+		switch p := msg.(type) {
+		case tea.SettingsFilterMsg:
+			return m.updateNativeSettingsFilter(d, string(p))
+		case tea.SettingsPointerMsg:
+			return m.updateNativeSettingsPointer(d, p)
+		}
 	}
 
 	// OAuth flow messages run while its dialog is open, so they must
@@ -1507,6 +1443,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.jumpLatestAt(msg) {
 			m.JumpToLatest()
 			return m, nil
+		}
+		if m.Mouse && m.ready && !m.followRemote && !m.sel.Active &&
+			msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft &&
+			msg.X >= 2 && msg.X < min(m.winW, m.mainW())-2 {
+			top, _ := m.inputRows()
+			if row := msg.Y - top - 1; row >= 0 && row < m.ta.Height() {
+				cmd := m.ta.SetCursorAt(msg.X-2, row)
+				return m, cmd
+			}
 		}
 		// App-owned chat drag selection (left press/motion/release).
 		// Sidebar clicks/wheel/dialogs fall through untouched.
@@ -3220,17 +3165,15 @@ func (m Model) updateModelDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) 
 		return m, nil
 	case tea.KeyBackspace:
 		if d.Filter != "" {
-			d.Filter = d.Filter[:len(d.Filter)-1]
+			r := []rune(d.Filter)
+			d.Filter = string(r[:len(r)-1])
 			d.Reindex()
 		}
 		return m, nil
 	case tea.KeyCtrlV:
 		return m, nil
 	case tea.KeyEsc:
-		m.Dialogs = m.Dialogs[1:]
-		m.refreshPiTasks()
-		m.Refresh()
-		return m, m.ReconcileTurnCmd()
+		return m.dismissDialog(d)
 	case tea.KeyTab:
 		d.ProvFocus = !d.ProvFocus
 		d.Reindex()
@@ -3331,10 +3274,7 @@ func (m Model) updateSettingsDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cm
 		}
 		return m, nil
 	case tea.KeyEsc:
-		m.Dialogs = m.Dialogs[1:]
-		m.refreshPiTasks()
-		m.Refresh()
-		return m, m.ReconcileTurnCmd()
+		return m.dismissDialog(d)
 	case tea.KeyEnter:
 		if d.ProvFocus {
 			d.ProvFocus = false

@@ -96,6 +96,30 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 }
 
+type inputModeScreen struct {
+	tcell.SimulationScreen
+	mouse, paste bool
+}
+
+func (s *inputModeScreen) EnableMouse(...tcell.MouseFlags) { s.mouse = true }
+func (s *inputModeScreen) EnablePaste()                    { s.paste = true }
+
+func TestInputModesOnSuppliedScreen(t *testing.T) {
+	for _, mouse := range []bool{false, true} {
+		s := &inputModeScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8")}
+		r := New(mouseModel{}, Options{Screen: s, Mouse: mouse})
+		done := make(chan error, 1)
+		go func() { _, err := r.Run(); done <- err }()
+		r.Send(ev.QuitMsg{})
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if s.mouse != mouse || !s.paste {
+			t.Errorf("mouse=%v: screen modes mouse=%v paste=%v", mouse, s.mouse, s.paste)
+		}
+	}
+}
+
 func TestRuntimeLifecycle(t *testing.T) {
 	scr := tcell.NewSimulationScreen("UTF-8")
 	r := New(counter{}, Options{Screen: scr, Key: key}) // SetScreen calls Init
@@ -244,9 +268,10 @@ func TestNativeMenuRoundTrip(t *testing.T) {
 }
 
 type barModel struct {
-	h      int
-	picked string
-	clicks []string
+	h        int
+	picked   string
+	clicks   []string
+	releases []string
 }
 
 func (barModel) Init() ev.Cmd { return nil }
@@ -259,6 +284,8 @@ func (m barModel) Update(msg ev.Msg) (ev.Model, ev.Cmd) {
 	case ev.MouseMsg:
 		if x.Action == ev.MouseActionPress {
 			m.clicks = append(m.clicks, fmt.Sprintf("%d,%d", x.X, x.Y))
+		} else if x.Action == ev.MouseActionRelease {
+			m.releases = append(m.releases, fmt.Sprintf("%d,%d", x.X, x.Y))
 		}
 	}
 	return m, nil
@@ -287,8 +314,12 @@ func TestMenuBar(t *testing.T) {
 	})
 	time.Sleep(30 * time.Millisecond)
 	scr.InjectMouse(5, 4, tcell.Button1, tcell.ModNone)
-	scr.InjectMouse(5, 4, tcell.ButtonNone, tcell.ModNone)
-	waitFor(t, func() bool { c := r.Model().(barModel).clicks; return len(c) == 1 && c[0] == "5,3" })
+	scr.InjectMouse(5, 0, tcell.Button1, tcell.ModNone)
+	scr.InjectMouse(5, 0, tcell.ButtonNone, tcell.ModNone)
+	waitFor(t, func() bool {
+		m := r.Model().(barModel)
+		return len(m.clicks) == 1 && m.clicks[0] == "5,3" && len(m.releases) == 1 && m.releases[0] == "5,-1"
+	})
 	// Click "Edit" → its menu drops below; click "Paste".
 	scr.InjectMouse(8, 0, tcell.Button1, tcell.ModNone)
 	scr.InjectMouse(8, 0, tcell.ButtonNone, tcell.ModNone)

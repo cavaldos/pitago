@@ -920,57 +920,7 @@ func (m Model) renderSubagentsDialog(d *Dialog) string {
 	}
 	var b strings.Builder
 	if d.SubDetail {
-		row, _ := subagentRowByID(m, d.SubID)
-		title := row.Name
-		if title == "" {
-			title = "Subagent"
-		}
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(title) + "\n")
-		if d.SubHeader != "" {
-			b.WriteString(statusBarStyle.Render(d.SubHeader) + "\n")
-		}
-		b.WriteString("\n")
-		win := m.winH - 12 - size.maxH
-		if win < 6 {
-			win = 6
-		}
-		if win > 40 {
-			win = 40
-		}
-		lines := d.SubLines
-		total := len(lines)
-		// SubOffset counts lines hidden below the window (0 = tail
-		// visible); ↑/PgUp raise it toward older lines, ↓/PgDn lower it.
-		maxOff := total - win
-		if maxOff < 0 {
-			maxOff = 0
-		}
-		off := d.SubOffset
-		if off > maxOff {
-			off = maxOff
-		}
-		if off < 0 {
-			off = 0
-		}
-		start := total - win - off
-		if start < 0 {
-			start = 0
-		}
-		end := start + win
-		if end > total {
-			end = total
-		}
-		if start > 0 {
-			b.WriteString(toolStyle.Render(fmt.Sprintf("…(+%d above)", start)) + "\n")
-		}
-		rowW := boxW - 6
-		for _, ln := range lines[start:end] {
-			b.WriteString(statusBarStyle.Render(Short(ln, rowW)) + "\n")
-		}
-		if end < total {
-			b.WriteString(toolStyle.Render(fmt.Sprintf("…(+%d below)", total-end)) + "\n")
-		}
-		b.WriteString("\n" + toolStyle.Render("↑↓/PgUp/PgDn scroll · ^O size · "+subagentActionHints(row)))
+		b.WriteString(m.subagentDetailBody(d, boxW-6, size.maxH))
 	} else {
 		active := subagentsInScope(m.Subagents, subagentsScopeActive)
 		finished := subagentsInScope(m.Subagents, subagentsScopeFinished)
@@ -1051,6 +1001,33 @@ func (m Model) renderSubagentsDialog(d *Dialog) string {
 		lipgloss.Place(m.winW, m.winH-2, lipgloss.Center, lipgloss.Center, box),
 		hint,
 	)
+}
+
+func (m Model) subagentDetailBody(d *Dialog, width, reserve int) string {
+	row, _ := subagentRowByID(m, d.SubID)
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(cText).Render(OrDefault(row.Name, "Subagent")) + "\n")
+	if d.SubHeader != "" {
+		b.WriteString(statusBarStyle.Render(d.SubHeader) + "\n")
+	}
+	b.WriteString("\n")
+	win := min(40, max(6, m.winH-12-reserve))
+	total := len(d.SubLines)
+	// SubOffset counts hidden lines below the window, not above it.
+	off := min(max(0, d.SubOffset), max(0, total-win))
+	start := max(0, total-win-off)
+	end := min(total, start+win)
+	if start > 0 {
+		b.WriteString(toolStyle.Render(fmt.Sprintf("…(+%d above)", start)) + "\n")
+	}
+	for _, line := range d.SubLines[start:end] {
+		b.WriteString(statusBarStyle.Render(Short(line, width)) + "\n")
+	}
+	if end < total {
+		b.WriteString(toolStyle.Render(fmt.Sprintf("…(+%d below)", total-end)) + "\n")
+	}
+	b.WriteString("\n" + toolStyle.Render("↑↓/PgUp/PgDn scroll · ^O size · "+subagentActionHints(row)))
+	return b.String()
 }
 
 func otherScopeName(scope string) string {

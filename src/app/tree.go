@@ -287,10 +287,7 @@ func (m Model) chatTail(n int) []string {
 	if n <= 0 {
 		return nil
 	}
-	var lines []string
-	if m.vp.Height > 0 {
-		lines = strings.Split(m.vp.View(), "\n")
-	}
+	lines := m.vp.VisibleLines()
 	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "" {
 		lines = lines[:len(lines)-1]
 	}

@@ -29,9 +29,9 @@ import (
 // escaped, so it round-trips too. The one loss: escape *sequences* inside a
 // paste (arrow keys, CSI) have already been parsed by tcell into named keys
 // and are rebuilt in their xterm form, which may differ from the bytes the
-// terminal sent (see knownPasteGaps in the test).
+// terminal sent (see TestBracketedPaste).
 // tcell's unexported paste marker keys (key.go: keyPasteStart = 16384).
-// They only surface when an ESC precedes the marker; TestPasteParity's
+// They only surface when an ESC precedes the marker; TestBracketedPaste's
 // trailing-ESC case fails if a tcell upgrade renumbers them.
 const (
 	tcellPasteStart tcell.Key = 16384
@@ -51,6 +51,7 @@ type PasteScreen struct {
 	pasting bool
 	pending []tcell.Event
 	inited  bool
+	held    tcell.ButtonMask
 }
 
 // Init initializes the wrapped screen once; repeated calls are no-ops until
@@ -70,6 +71,7 @@ func (p *PasteScreen) Init() error {
 // Fini implements tcell.Screen.
 func (p *PasteScreen) Fini() {
 	p.inited = false
+	p.held = tcell.ButtonNone
 	p.Screen.Fini()
 }
 
@@ -85,6 +87,18 @@ func (p *PasteScreen) PollEvent() tcell.Event {
 	}
 	ev := p.Screen.PollEvent()
 	switch e := ev.(type) {
+	case *tcell.EventMouse:
+		// SGR wheel reports omit held buttons. Keep them in tview's
+		// input so a wheel tick can't end a selection or divider drag.
+		buttons := e.Buttons()
+		if buttons&(tcell.WheelUp|tcell.WheelDown|tcell.WheelLeft|tcell.WheelRight) != 0 {
+			if p.held&^buttons != 0 {
+				x, y := e.Position()
+				return tcell.NewEventMouse(x, y, buttons|p.held, e.Modifiers())
+			}
+		} else {
+			p.held = buttons
+		}
 	case *tcell.EventPaste:
 		p.pasting = e.Start()
 	case *tcell.EventKey:

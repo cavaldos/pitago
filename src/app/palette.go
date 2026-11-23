@@ -205,6 +205,11 @@ func (m *Model) completeCmd() {
 }
 
 func (m Model) renderCmdPopup() string {
+	body, w := m.cmdPopupBody()
+	return cmdPopStyle.Width(w).Render(body)
+}
+
+func (m Model) cmdPopupBody() (string, int) {
 	mainW := m.mainW()
 	win := m.cmdWin()
 	end := m.cmdOffset + win
@@ -280,7 +285,7 @@ func (m Model) renderCmdPopup() string {
 		b.WriteString("  " + toolStyle.Render(fmt.Sprintf("…(+%d below)", len(m.cmdItems)-end)) + "\n")
 	}
 	b.WriteString(toolStyle.Render(foot))
-	return cmdPopStyle.Width(boxW).Render(strings.TrimRight(b.String(), "\n"))
+	return strings.TrimRight(b.String(), "\n"), boxW
 }
 
 // isInlineUI reports an extension select/confirm dialog (e.g. plan-mode
@@ -344,6 +349,11 @@ func (m Model) uiWin(titleLines, msgLines int) int {
 }
 
 func (m Model) renderUIDialogPopup() string {
+	body, w := m.uiDialogBody()
+	return cmdPopStyle.Width(w).Render(body)
+}
+
+func (m Model) uiDialogBody() (string, int) {
 	d := m.Dialogs[0]
 	mainW := m.mainW()
 	title := d.Title
@@ -438,5 +448,5 @@ func (m Model) renderUIDialogPopup() string {
 		b.WriteString("  " + toolStyle.Render("— no match —") + "\n")
 	}
 	b.WriteString(toolStyle.Render(foot))
-	return cmdPopStyle.Width(boxW).Render(strings.TrimRight(b.String(), "\n"))
+	return strings.TrimRight(b.String(), "\n"), boxW
 }

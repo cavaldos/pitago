@@ -1,57 +1,16 @@
 package keys
 
 import (
-	"fmt"
-	"io"
-	"sort"
+	"encoding/json"
+	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gdamore/tcell/v2"
 
 	"pitago/src/tui/ev"
 )
-
-// ---------------------------------------------------------------------------
-// Ground truth: run the same bytes through Bubble Tea v1's real parser and
-// tcell's real parser, then compare tea's String() with ours.
-// ---------------------------------------------------------------------------
-
-type recorder struct{ out chan tea.KeyMsg }
-
-func (r recorder) Init() tea.Cmd { return nil }
-func (r recorder) View() string  { return "" }
-func (r recorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok {
-		r.out <- k
-	}
-	return r, nil
-}
-
-// teaParser feeds byte sequences to a headless tea.Program one at a time.
-type teaParser struct {
-	w   *io.PipeWriter
-	out chan tea.KeyMsg
-	p   *tea.Program
-}
-
-func newTeaParser(t *testing.T) *teaParser {
-	r, w := io.Pipe()
-	out := make(chan tea.KeyMsg, 64)
-	p := tea.NewProgram(recorder{out}, tea.WithInput(r), tea.WithOutput(io.Discard),
-		tea.WithoutRenderer(), tea.WithoutSignalHandler())
-	go func() { _, _ = p.Run() }()
-	t.Cleanup(func() { p.Kill(); _ = w.Close() })
-	return &teaParser{w: w, out: out, p: p}
-}
-
-func (tp *teaParser) parse(seq string) []string {
-	_, _ = tp.w.Write([]byte(seq))
-	return drain(tp.out, func(k tea.KeyMsg) string { return k.String() })
-}
 
 func tcellParse(seq string) []string {
 	ch := make(chan tcell.Event, 64)
@@ -95,118 +54,25 @@ func drain[T any](ch chan T, f func(T) string) []string {
 	}
 }
 
-// legacyCorpus is what terminals send with no key-reporting extensions:
-// every C0 byte, DEL, ESC-prefixed (alt) forms, xterm CSI/SS3 cursor and
-// function keys with every modifier parameter tea knows.
-func legacyCorpus() []string {
-	var c []string
-	for b := 0; b < 0x20; b++ {
-		if b == 0x1b {
-			continue // lone ESC handled below (needs the timeout path)
-		}
-		c = append(c, string(rune(b)), "\x1b"+string(rune(b)))
+// The fixture records the previous parser parity corpus, including the
+// intentional differences for legacy terminals. No old runtime is needed.
+func TestLegacyTerminalKeys(t *testing.T) {
+	data, err := os.ReadFile("testdata/legacy-keys.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	c = append(c, "\x7f", "\x1b\x7f", "\x1b", " ", "\x1b ")
-	for _, r := range "aAzZ019[]/?,.;'`~!@#$%^&*()-=_+é→😀" {
-		c = append(c, string(r), "\x1b"+string(r))
+	var cases map[string]string
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
 	}
-	for _, f := range "ABCDHF" {
-		c = append(c, "\x1b["+string(f), "\x1bO"+string(f))
-		for m := 2; m <= 8; m++ {
-			c = append(c, fmt.Sprintf("\x1b[1;%d%c", m, f))
-		}
+	for seq, want := range cases {
+		t.Run(seq, func(t *testing.T) {
+			t.Parallel()
+			if got := strings.Join(tcellParse(seq), " "); got != want {
+				t.Errorf("%q: got %q, want %q", seq, got, want)
+			}
+		})
 	}
-	for _, n := range []int{2, 3, 5, 6, 15, 17, 18, 19, 20, 21, 23, 24} {
-		c = append(c, fmt.Sprintf("\x1b[%d~", n))
-		for _, m := range []int{2, 3, 5} {
-			c = append(c, fmt.Sprintf("\x1b[%d;%d~", n, m))
-		}
-	}
-	for _, f := range "PQRS" {
-		c = append(c, "\x1bO"+string(f), fmt.Sprintf("\x1b[1;2%c", f), fmt.Sprintf("\x1b[1;5%c", f))
-	}
-	c = append(c, "\x1b[Z", "\x1b\x1b[A", "\x1b\x1b[5~")
-	return c
-}
-
-// knownGaps are legacy sequences where tcell's parse and tea's differ and
-// no mapping can close it, keyed by sequence: {tea's string, ours}. The test
-// fails on any difference not listed here, and on a listed one that stops
-// reproducing.
-var knownGaps = map[string][2]string{
-	// tcell folds BS (0x08) into Backspace. Under the CSI-u /
-	// modifyOtherKeys modes tcell enables, ctrl+h arrives distinct and maps
-	// to "ctrl+h" again (TestExtendedProtocols); only legacy terminals lose it.
-	"\b": {"ctrl+h", "backspace"},
-	// ESC + one of [ ] ^ _ opens CSI/OSC/PM/APC in tcell's parser, so a
-	// legacy alt+[ … alt+_ never becomes a key. CSI-u terminals send
-	// alt+[ as CSI 91;3u, which maps fine. src/app only names "alt+[" to
-	// scrub split mouse reports (mouseleak.go), which tcell doesn't produce.
-	"\x1b[": {"alt+[", ""},
-	"\x1b]": {"alt+]", ""},
-	"\x1b^": {"alt+^", ""},
-	"\x1b_": {"alt+_", ""},
-	// tcell reads ESC TAB as backtab.
-	"\x1b\t": {"alt+tab", "shift+tab"},
-	// ESC 0x1f: tcell reports alt+ctrl+backspace (0x1f+0x60 = DEL).
-	"\x1b\x1f": {"alt+ctrl+_", "alt+ctrl+h"},
-	// tcell drops the alt for ESC + non-ASCII rune (CSI-u reports it).
-	"\x1bé": {"alt+é", "é"},
-	"\x1b→": {"alt+→", "→"},
-	"\x1b😀": {"alt+😀", "😀"},
-	// tea misses SS3 home/end; tcell gets them right. Improvement.
-	"\x1bOH": {"alt+O H", "home"},
-	"\x1bOF": {"alt+O F", "end"},
-	// tea's own table maps shift+delete to alt+insert (bug); we drop it
-	// like every other modified delete tea could not name.
-	"\x1b[3;2~": {"alt+insert", ""},
-}
-
-func TestLegacyParityWithBubbleTea(t *testing.T) {
-	tp := newTeaParser(t)
-	// Warm-up: the first read after Run() can race the reader goroutine.
-	tp.parse("a")
-
-	type res struct{ seq, tea, ours string }
-	corpus := legacyCorpus()
-	results := make([]res, len(corpus))
-	var wg sync.WaitGroup
-	tcellOut := make([][]string, len(corpus))
-	for i, seq := range corpus {
-		wg.Add(1)
-		go func() { defer wg.Done(); tcellOut[i] = tcellParse(seq) }()
-	}
-	for i, seq := range corpus {
-		results[i] = res{seq: seq, tea: strings.Join(tp.parse(seq), " ")}
-	}
-	wg.Wait()
-	for i := range results {
-		results[i].ours = strings.Join(tcellOut[i], " ")
-	}
-
-	var unexpected []string
-	seen := map[string]bool{}
-	for _, r := range results {
-		if r.tea == r.ours {
-			continue
-		}
-		if g, ok := knownGaps[r.seq]; ok && g == [2]string{r.tea, r.ours} {
-			seen[r.seq] = true
-			continue
-		}
-		unexpected = append(unexpected, fmt.Sprintf("%-16q tea=%-22q ours=%q", r.seq, r.tea, r.ours))
-	}
-	for seq := range knownGaps {
-		if !seen[seq] {
-			t.Errorf("knownGaps[%q] no longer reproduces; remove it", seq)
-		}
-	}
-	if len(unexpected) > 0 {
-		sort.Strings(unexpected)
-		t.Errorf("%d/%d legacy sequences differ from Bubble Tea:\n%s",
-			len(unexpected), len(corpus), strings.Join(unexpected, "\n"))
-	}
-	t.Logf("%d legacy sequences checked against bubbletea v1.3.10", len(corpus))
 }
 
 // TestExtendedProtocols: tcell enables modifyOtherKeys(2) + kitty CSI-u(1)
@@ -293,9 +159,8 @@ func TestAppKeyVocabulary(t *testing.T) {
 	}
 	for _, c := range cases {
 		k, ok := FromKey(c.e)
-		tk := tea.Key{Type: tea.KeyType(c.want), Runes: k.Runes, Alt: k.Alt}
-		if !ok || k.Type != c.want || k.String() != tk.String() {
-			t.Errorf("%s: got %q (type %d ok=%v), want %q", c.e.Name(), k.String(), k.Type, ok, tk.String())
+		if !ok || k.Type != c.want {
+			t.Errorf("%s: got %q (type %d ok=%v), want type %d", c.e.Name(), k.String(), k.Type, ok, c.want)
 		}
 	}
 

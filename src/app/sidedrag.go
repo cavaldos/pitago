@@ -37,8 +37,7 @@ func (m Model) updateSideDrag(msg tea.MouseMsg) (Model, bool) {
 		m.sideDrag = false
 		m.setSideWidth(m.winW-msg.X, true)
 	default:
-		// A wheel or another button mid-drag: tview reports a wheel during
-		// a held drag as release+press, so only a release ends the gesture.
+		// A wheel or another button does not end the gesture.
 	}
 	return m, true
 }
@@ -108,15 +107,10 @@ func (m Model) Tooltip(x, y int) (string, tea.Rect, string) {
 	return "", tea.Rect{}, ""
 }
 
-// inputFooterY is the row of the input box's status line (just above its
-// bottom border).
+// inputFooterY is the row just above the input box's bottom border.
 func (m Model) inputFooterY() int {
-	for y := m.winH - 1; y >= 0; y-- {
-		if m.inputAt(0, y) {
-			return y - 1
-		}
-	}
-	return -1
+	_, bottom := m.inputRows()
+	return bottom - 2
 }
 
 func (m Model) statsTooltip() string {

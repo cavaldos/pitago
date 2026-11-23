@@ -4,9 +4,7 @@
 // It is a port of github.com/charmbracelet/bubbles v1.0.0 viewport (MIT
 // License, Copyright (c) 2020-2025 Charmbracelet, Inc), reduced to what
 // src/app uses and with identical behaviour: same scroll arithmetic, same
-// default key bindings, same wheel delta and the same View() output. It
-// exists so the app stops depending on Bubbles while both the Bubble Tea and
-// the tview runtimes are supported.
+// default key bindings, same wheel delta and the same View() output.
 package viewport
 
 import (
@@ -90,6 +88,10 @@ func (m *Model) SetContent(s string) {
 func (m Model) maxYOffset() int {
 	return max(0, len(m.lines)-m.Height+m.Style.GetVerticalFrameSize())
 }
+
+// VisibleLines returns the clipped viewport text, without frame or padding.
+// The returned slice is read-only; it may share the model's content buffer.
+func (m Model) VisibleLines() []string { return m.visibleLines() }
 
 func (m Model) visibleLines() (lines []string) {
 	h := m.Height - m.Style.GetVerticalFrameSize()

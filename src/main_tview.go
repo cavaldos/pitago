@@ -1,9 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/app"
 	"pitago/src/components/clipboard"
@@ -12,16 +13,17 @@ import (
 	"pitago/src/tui/tviewrt"
 )
 
-// runTview runs the app on the tview runtime (PITAGO_UI=tview). Stage 1 of
-// the migration: same model and Cmds as the Bubble Tea path, frame painted
-// through src/components/cells; see docs/tview-migration.md.
-func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
+// runTview runs the interactive UI on tview and tcell.
+func runTview(m app.Model, pi *pirpc.Client) error {
 	ensureUTF8Locale()
+	// Cache the terminal color probe before tcell starts reading the tty.
+	// Otherwise both renderers can race for the reply to the same probe.
+	lipgloss.HasDarkBackground()
 	var tracker keys.MouseTracker
 	// Before New: the runtime asks the model for its menu bar at build time.
 	app.NativeMenus = true
 	rt := tviewrt.New(m, tviewrt.Options{
-		Mouse:  mouse,
+		Mouse:  m.Mouse,
 		Key:    keys.FromKey,
 		MouseE: tracker.FromMouse,
 		Filter: app.ScrollEventFilter,
@@ -32,16 +34,13 @@ func runTview(m app.Model, pi *pirpc.Client, mouse bool) {
 	// goroutine, before Show — never interleaved with tcell's own output.
 	defer clipboard.SetOsc52Writer(rt.Raw())()
 	app.WireClient(pi)
-	if _, err := rt.Run(); err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
-	}
+	_, err := rt.Run()
+	return err
 }
 
 // ensureUTF8Locale makes tcell encode UTF-8. tcell picks its output charset
 // from LC_ALL/LC_CTYPE/LANG; without a UTF-8 locale it drops combining marks
 // and prints '?' for non-ASCII (kitty placeholders, box drawing, CJK).
-// Bubble Tea wrote raw bytes and never cared, so many shells never set one.
 func ensureUTF8Locale() {
 	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
 		if v := os.Getenv(k); v != "" {

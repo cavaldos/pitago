@@ -269,8 +269,6 @@ type Model struct {
 	quitGen             int       // arm generation (stale disarm ticks ignored)
 	escArm              time.Time // first Esc timestamp while running (second press within window cancels)
 	escGen              int       // arm generation (stale disarm ticks ignored)
-	mouseLeakAt         time.Time // last SGR mouse-report burst (split fragments within window are residue)
-	mouseBuf            string    // pending split tail ("[<65"…) waiting for its continuation (sequence, time-bound)
 	plugAction          string    // pending plugin op awaiting second confirm (auth gate)
 	plugSpec            string    // pending plugin spec (cleared on confirm/cancel/timeout)
 	plugAt              time.Time // first press timestamp for the pending plugin op
@@ -333,12 +331,6 @@ const quitArmWindow = 3 * time.Second
 // one press arms, second press within the window aborts the running turn).
 const escArmWindow = 3 * time.Second
 
-// mouseFragWindow is how long after an SGR mouse-report burst a lone
-// coordinate fragment ("65;99;18M") still counts as split-read residue,
-// plus how long a buffered split tail ("[<65"…) waits for its continuation.
-// Sequence (consecutive reads) decides, the window only bounds staleness.
-const mouseFragWindow = 1500 * time.Millisecond
-
 // streamFrame caps streaming repaints (~30fps): text/thinking deltas mutate
 // blocks on every event but SetContent runs at most once per frame, with a
 // trailing flush tick so the UI never stays stale.
@@ -356,12 +348,6 @@ func streamFlushCmd(d time.Duration) tea.Cmd {
 		d = streamFrame
 	}
 	return tea.Tick(d, func(time.Time) tea.Msg { return streamFlushMsg{} })
-}
-
-// mouseBurst reports a wheel/click burst within the fragment window: split
-// reads still arriving get scrubbed as residue, not typed as text.
-func (m Model) mouseBurst() bool {
-	return !m.mouseLeakAt.IsZero() && time.Since(m.mouseLeakAt) < mouseFragWindow
 }
 
 type connectedMsg struct {

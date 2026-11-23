@@ -110,7 +110,11 @@ func (c *Cache) Parse(s string) []Line {
 
 // ParseStyle is cells.ParseStyle through the cache.
 func (c *Cache) ParseStyle(s string, base tcell.Style) []Line {
-	raw := strings.Split(s, "\n")
+	return c.ParseRows(strings.Split(s, "\n"), base)
+}
+
+// ParseRows preserves the ANSI state across already split content rows.
+func (c *Cache) ParseRows(raw []string, base tcell.Style) []Line {
 	out := make([]Line, len(raw))
 	st := NewState(base)
 	c.mu.Lock()

@@ -1,10 +1,8 @@
 // Package tviewrt runs an ev.Model on rivo/tview.
 //
-// Stage 1 of the migration ("whole-frame bridge"): the model's View() string
-// is painted into a single full-screen primitive through the ANSI→cell
-// painter of src/components/cells, and tcell input is translated to ev messages. Regions of the UI
-// are then replaced one by one with native tview primitives (see
-// docs/tview-migration.md) without the event plumbing changing again.
+// Models can supply native workspace and dialog snapshots. Styled text from
+// Markdown/extensions is parsed into tcell cells only in the region that
+// displays it. The string painter is retained for unmigrated views.
 //
 // Threading: every Update runs on tview's event goroutine — input callbacks
 // directly, async results via QueueUpdateDraw. Cmds run on their own
@@ -39,7 +37,7 @@ type Options struct {
 	Paint  Painter      // nil = cells.Painter with a fresh cache
 	Key    func(*tcell.EventKey) (ev.KeyMsg, bool)
 	MouseE func(*tcell.EventMouse, tview.MouseAction) []ev.MouseMsg
-	Filter func(ev.Model, ev.Msg) ev.Msg // optional, like tea.WithFilter
+	Filter func(ev.Model, ev.Msg) ev.Msg // optional event filter
 	RawOut io.Writer                     // where raw sequences go; nil = the screen tty (or stdout)
 }
 
@@ -52,10 +50,15 @@ type Runtime struct {
 	bar  *widgets.MenuBar // menu bar row above the frame (nil without ev.MenuBarProvider)
 	top  int              // rows above the frame: 1 with a menu bar, else 0
 
-	pickers map[string]*picker.Picker // open native pickers by tag
+	pickers       map[string]*picker.Picker // open native pickers by tag
+	settings      *settingsPanel
+	workspace     *workspace
+	nativeStyles  widgets.MenuBarStyles
+	nativePalette ev.NativePalette
 
 	divHover, divDrag string // ev.Divider ID under the pointer / being dragged
 	hover             *widgets.Hover
+	frameLeftDown     bool
 
 	mu    sync.Mutex // guards model against Model() readers off-loop
 	model ev.Model
@@ -73,7 +76,7 @@ func New(m ev.Model, opts Options) *Runtime {
 	if opts.Paint == nil {
 		opts.Paint = cells.Painter(cells.NewCache(4096))
 	}
-	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m}
+	r := &Runtime{app: tview.NewApplication(), opts: opts, model: m, nativeStyles: widgets.DefaultMenuBarStyles()}
 	r.root = &frame{Box: tview.NewBox(), r: r}
 	r.ov = widgets.NewOverlay(r.root)
 	if p, ok := m.(ev.MenuBarProvider); ok && len(p.MenuBar()) > 0 {
@@ -91,7 +94,13 @@ func New(m ev.Model, opts Options) *Runtime {
 	if r.bar != nil {
 		r.bar.Hover = r.hover
 	}
-	r.app.SetRoot(r.ov, true).EnableMouse(opts.Mouse).EnablePaste(true)
+	if _, ok := m.(ev.SettingsProvider); ok {
+		r.settings = newSettingsPanel(r)
+	}
+	if _, ok := m.(ev.WorkspaceProvider); ok {
+		r.workspace = newWorkspace(r.Raw())
+	}
+	r.app.SetRoot(r.ov, true)
 	if opts.Screen != nil {
 		r.app.SetScreen(r.wrapPaste(opts.Screen))
 	}
@@ -155,6 +164,9 @@ func (r *Runtime) Run() (ev.Model, error) {
 			return r.Model(), err
 		}
 	}
+	// With a supplied screen, tview only applies these modes once the
+	// screen is installed; Run doesn't apply options set before SetScreen.
+	r.app.EnableMouse(r.opts.Mouse).EnablePaste(true)
 	if c := r.model.Init(); c != nil {
 		r.exec(c)
 	}
@@ -263,6 +275,7 @@ func (r *Runtime) beforeDraw(scr tcell.Screen) bool {
 		r.w, r.h = w, h
 		r.dispatch(ev.WindowSizeMsg{Width: w, Height: h - r.top})
 	}
+	r.syncNativeTheme()
 	return false
 }
 
@@ -283,6 +296,9 @@ func (r *Runtime) onKey(e *tcell.EventKey) *tcell.EventKey {
 		}
 		return e
 	}
+	if p := r.settings; p != nil && p.active && p.input(e) {
+		return nil
+	}
 	if r.opts.Key == nil {
 		return e
 	}
@@ -300,21 +316,40 @@ func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.Even
 	// tcell clamps coordinates to 0,0 until its first resize lands.
 	// An open menu owns the pointer; the overlay routes the event to it
 	// (and closes it on a press outside, swallowing that click).
-	if r.opts.MouseE == nil || r.w == 0 || r.ov.Modal() {
+	if r.w == 0 || r.ov.Modal() {
+		return e, a
+	}
+	if p := r.settings; p != nil && p.active {
+		r.frameLeftDown, r.divHover, r.divDrag = false, "", ""
+		return e, a
+	}
+	if r.opts.MouseE == nil {
 		return e, a
 	}
 	x, y := e.Position()
-	if a == tview.MouseLeftUp {
-		r.divDrag = ""
+	// A drag that started in the frame must reach its original owner even
+	// when the pointer crosses the menu bar, which owns ordinary clicks.
+	frameDrag := r.frameLeftDown
+	if a == tview.MouseLeftDown {
+		r.frameLeftDown = y >= r.top
 	}
-	// The menu bar row belongs to the bar (tview routes it there).
+	if a == tview.MouseLeftUp {
+		r.frameLeftDown = false
+		r.divDrag = ""
+		if !frameDrag {
+			return e, a
+		}
+	}
 	if y < r.top {
 		r.divHover = ""
-		return e, a
-	}
-	r.trackDivider(x, y-r.top, a)
-	if a == tview.MouseMove {
-		r.updateTooltip(x, y-r.top)
+		if !frameDrag || (a != tview.MouseMove && a != tview.MouseLeftUp) {
+			return e, a
+		}
+	} else {
+		r.trackDivider(x, y-r.top, a)
+		if a == tview.MouseMove {
+			r.updateTooltip(x, y-r.top)
+		}
 	}
 	for _, m := range r.opts.MouseE(e, a) {
 		m.Y -= r.top
@@ -326,20 +361,39 @@ func (r *Runtime) onMouse(e *tcell.EventMouse, a tview.MouseAction) (*tcell.Even
 // MouseHandler swallows every mouse action (the model already saw it via
 // onMouse) and marks it consumed so the frame is redrawn.
 func (f *frame) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
-	return func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+	return func(a tview.MouseAction, e *tcell.EventMouse, _ func(tview.Primitive)) (bool, tview.Primitive) {
+		if p := f.r.settings; p != nil && p.active {
+			p.mouse(a, e)
+		}
 		return true, nil
 	}
 }
 
-// frame is the single full-screen primitive of stage 1.
+// frame hosts the workspace or the active full-screen dialog.
 type frame struct {
 	*tview.Box
 	r *Runtime
 }
 
 func (f *frame) Draw(scr tcell.Screen) {
+	_, bg, _ := f.r.nativeStyles.Normal.Decompose()
+	f.SetBackgroundColor(bg)
 	f.DrawForSubclass(scr, f)
 	x, y, w, h := f.GetInnerRect()
+	if p := f.r.settings; p != nil {
+		if provider, ok := f.r.model.(ev.SettingsProvider); ok {
+			if v, active := provider.NativeSettings(); active {
+				p.draw(scr, x, y, w, h, v, f.r.nativeStyles)
+				return
+			}
+		}
+		p.active = false
+	}
+	if p, ok := f.r.model.(ev.WorkspaceProvider); f.r.workspace != nil && ok {
+		f.r.workspace.draw(scr, x, y, w, h, p.NativeWorkspace(), f.r.nativeStyles, f.r.nativePalette)
+		f.r.paintDividers(scr, x, y, h)
+		return
+	}
 	f.r.mu.Lock()
 	view := f.r.model.View()
 	f.r.mu.Unlock()
@@ -356,7 +410,12 @@ func (f *frame) Draw(scr tcell.Screen) {
 // matching Bubble Tea v1.
 func (f *frame) PasteHandler() func(string, func(tview.Primitive)) {
 	return func(text string, _ func(tview.Primitive)) {
-		f.r.dispatch(f.r.pasteMsg(text))
+		msg := f.r.pasteMsg(text)
+		if p := f.r.settings; p != nil && p.active {
+			p.paste(string(msg.Runes))
+			return
+		}
+		f.r.dispatch(msg)
 	}
 }
 

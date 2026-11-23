@@ -645,22 +645,15 @@ func (v *ChatView) Draw(scr tcell.Screen) {
 }
 
 func (v *ChatView) drawRow(scr tcell.Screen, x, y, w int, ln cells.Line, selStart, selEnd int, hover bool) {
-	col := 0
-	for _, c := range ln {
-		if col+c.Width > w {
-			break
-		}
-		st := c.Style
+	drawTranscriptLine(scr, x, y, w, ln, func(col int, st tcell.Style) tcell.Style {
 		if hover && v.hoverStyle != nil {
 			st = v.hoverStyle(st)
 		}
 		if col >= selStart && col < selEnd && v.selStyle != nil {
 			st = v.selStyle(st)
 		}
-		p, comb := split(c.Grapheme)
-		scr.SetContent(x+col, y, p, comb, st)
-		col += c.Width
-	}
+		return st
+	})
 }
 
 // split returns a grapheme as SetContent wants it. The common case (one

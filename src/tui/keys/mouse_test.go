@@ -2,47 +2,16 @@ package keys
 
 import (
 	"fmt"
-	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
 	"pitago/src/tui/ev"
 )
-
-type mouseRecorder struct{ out chan tea.MouseMsg }
-
-func (r mouseRecorder) Init() tea.Cmd { return nil }
-func (r mouseRecorder) View() string  { return "" }
-func (r mouseRecorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m, ok := msg.(tea.MouseMsg); ok {
-		r.out <- m
-	}
-	return r, nil
-}
-
-func teaMouse(t *testing.T, reports []string) []string {
-	r, w := io.Pipe()
-	out := make(chan tea.MouseMsg, 256)
-	p := tea.NewProgram(mouseRecorder{out}, tea.WithInput(r), tea.WithOutput(io.Discard),
-		tea.WithoutRenderer(), tea.WithoutSignalHandler())
-	go func() { _, _ = p.Run() }()
-	defer func() { p.Kill(); _ = w.Close() }()
-	var got []string
-	for _, rep := range reports {
-		_, _ = w.Write([]byte(rep))
-		got = append(got, drain(out, fmtTea)...)
-	}
-	return got
-}
-
-func fmtTea(m tea.MouseMsg) string {
-	return fmt.Sprintf("%d,%d %s type=%d", m.X, m.Y, tea.MouseEvent(m).String(), m.Type)
-}
 
 func fmtOurs(m ev.MouseMsg) string {
 	return fmt.Sprintf("%d,%d %s type=%d", m.X, m.Y, ev.MouseEvent(m).String(), m.Type)
@@ -56,7 +25,7 @@ func tviewMouse(t *testing.T, reports []string) []string {
 		t.Fatal(err)
 	}
 	sim.SetSize(200, 60)
-	app := tview.NewApplication().SetScreen(sim).EnableMouse(true).
+	app := tview.NewApplication().SetScreen(NewPasteScreen(sim)).EnableMouse(true).
 		SetRoot(tview.NewBox(), true)
 	out := make(chan ev.MouseMsg, 256)
 	var tr MouseTracker
@@ -103,7 +72,7 @@ func sizedProcessor(t *testing.T, evs chan tcell.Event) tcell.InputProcessor {
 	return ip
 }
 
-func TestMouseParityWithBubbleTea(t *testing.T) {
+func TestTerminalMouseReports(t *testing.T) {
 	reports := []string{
 		"\x1b[<0;10;5M", "\x1b[<32;11;5M", "\x1b[<32;12;6M", "\x1b[<0;12;6m", // drag-select
 		"\x1b[<35;13;6M", "\x1b[<35;14;6M", // hover (all-motion, no button)
@@ -118,36 +87,33 @@ func TestMouseParityWithBubbleTea(t *testing.T) {
 		"\x1b[<0;1;1M", "\x1b[<0;1;1m", // origin → 0,0
 		"\x1b[<0;200;60M", "\x1b[<32;199;60M", "\x1b[<0;199;60m", // far corner
 	}
-	want := teaMouse(t, reports)
-	got := tviewMouse(t, reports)
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("mouse stream differs\n--- tea (%d)\n%s\n--- ours (%d)\n%s",
-			len(want), strings.Join(want, "\n"), len(got), strings.Join(got, "\n"))
+	want := []string{
+		"9,4 left press type=1", "10,4 left motion type=1", "11,5 left motion type=1", "11,5 left release type=4",
+		"12,5 motion type=11", "13,5 motion type=11",
+		"13,5 wheel up type=5", "13,5 wheel down type=6", "13,5 shift+wheel up type=5", "13,5 ctrl+wheel down type=6",
+		"13,5 wheel left type=7", "13,5 wheel right type=8",
+		"19,6 right press type=2", "19,6 right release type=4", "20,6 middle press type=3", "20,6 middle release type=4",
+		"4,4 ctrl+left press type=1", "4,4 ctrl+left release type=4",
+		"5,4 alt+left press type=1", "6,4 alt+left motion type=1", "6,4 alt+left release type=4",
+		"29,8 left press type=1", "29,8 left release type=4", "29,8 left press type=1", "29,8 left release type=4",
+		"0,0 left press type=1", "0,0 left release type=4",
+		"199,59 left press type=1", "198,59 left motion type=1", "198,59 left release type=4",
+	}
+	if got := tviewMouse(t, reports); !slices.Equal(got, want) {
+		t.Errorf("mouse stream:\ngot  %q\nwant %q", got, want)
 	}
 }
 
-// TestMouseKnownGaps documents where tview's derived actions cannot match
-// tea. Each case asserts the current (wrong) output so a tview fix shows up.
-func TestMouseKnownGaps(t *testing.T) {
-	// Wheel during a held drag: tcell's wheel report carries only the wheel
-	// bit, so tview sees the held button vanish and fires LeftUp, then a
-	// LeftDown on the next drag report. tea: press, wheel, motion, release.
-	reports := []string{"\x1b[<0;10;5M", "\x1b[<64;10;5M", "\x1b[<32;11;5M", "\x1b[<0;11;5m"}
-	want := teaMouse(t, reports)
-	got := tviewMouse(t, reports)
-	if len(want) != 4 {
-		t.Fatalf("tea baseline changed: %v", want)
+func TestWheelDoesNotEndDrag(t *testing.T) {
+	reports := []string{"\x1b[<0;10;5M", "\x1b[<64;10;5M", "\x1b[<32;11;5M", "\x1b[<65;11;5M", "\x1b[<0;11;5m"}
+	want := []string{"9,4 left press type=1", "9,4 wheel up type=5", "10,4 left motion type=1", "10,4 wheel down type=6", "10,4 left release type=4"}
+	if got := tviewMouse(t, reports); !slices.Equal(got, want) {
+		t.Errorf("drag stream:\ngot  %q\nwant %q", got, want)
 	}
-	if strings.Join(got, "|") == strings.Join(want, "|") {
-		t.Errorf("wheel-during-drag now matches tea: drop this gap")
-	}
-	t.Logf("wheel during drag\n tea:  %v\n ours: %v", want, got)
 }
 
-// TestNoSplitReportLeak is the tcell side of src/app/mouseleak.go: tea v1
-// could split an SGR report across reads and deliver the tail as KeyRunes
-// ("[<65;99;18M" typed into the textarea). tcell's parser keeps partial
-// sequences buffered, so bursts and split reads yield only mouse events.
+// tcell keeps partial SGR reports buffered instead of leaking their bytes
+// into the input editor as key events.
 func TestNoSplitReportLeak(t *testing.T) {
 	evs := make(chan tcell.Event, 1024)
 	ip := sizedProcessor(t, evs)

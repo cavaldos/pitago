@@ -20,7 +20,7 @@ import (
 
 // MenuBar implements ev.MenuBarProvider (tviewrt only; see NativeMenus).
 func (m Model) MenuBar() []tea.Menu {
-	if !NativeMenus || !m.Mouse {
+	if !NativeMenus {
 		return nil
 	}
 	return []tea.Menu{

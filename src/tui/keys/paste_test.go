@@ -10,14 +10,6 @@ import (
 	"github.com/rivo/tview"
 )
 
-// teaPaste returns the runes Bubble Tea v1 delivered for a bracketed paste
-// of payload, plus the strings of any other keys it reported.
-func teaPaste(t *testing.T, tp *teaParser, payload string) string {
-	t.Helper()
-	got := tp.parse("\x1b[200~" + payload + "\x1b[201~")
-	return strings.Join(got, "⏎") // String() of a paste is "[" + runes + "]"
-}
-
 // pasteSink is a tview root that records what reaches PasteHandler and
 // the keys typed outside pastes, in order.
 type pasteSink struct {
@@ -143,32 +135,21 @@ func pasteCorpus() []string {
 	}
 }
 
-// knownPasteGaps: payloads tcell cannot hand back byte-exact (its parser
-// has already folded them), keyed by payload: {tea's String(), ours}.
-var knownPasteGaps = map[string][2]string{
-	// tcell folds BS (0x08) and DEL into one Backspace key; DEL is what a
-	// Backspace key sends, so that is what comes back.
-	"bs\bx": {"[bs\bx]", "[bs\x7fx]"},
-	// Escape sequences inside a paste are parsed by tcell into named keys
-	// and rebuilt in CSI form; an SS3 arrow comes back as CSI.
-	"ss3\x1bOAup": {"[ss3\x1bOAup]", "[ss3\x1b[Aup]"},
-}
-
-func TestPasteParityWithBubbleTea(t *testing.T) {
-	tp := newTeaParser(t)
-	tp.parse("a")
+func TestBracketedPaste(t *testing.T) {
 	tv := newTviewPaster(t)
-
 	for _, payload := range pasteCorpus() {
-		want := teaPaste(t, tp, payload)
-		got := strings.Join(tv.feed(t, "\x1b[200~"+payload+"\x1b[201~"), "⏎")
-		if got == want {
-			continue
+		want := payload
+		switch payload {
+		case "bs\bx":
+			want = "bs\x7fx" // tcell folds BS and DEL into Backspace
+		case "ss3\x1bOAup":
+			want = "ss3\x1b[Aup" // tcell maps SS3 arrows back through CSI
 		}
-		if g, ok := knownPasteGaps[payload]; ok && g == [2]string{want, got} {
-			continue
+		want = "[" + want + "]"
+		got := tv.feed(t, "\x1b[200~"+payload+"\x1b[201~")
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("paste %q: got %q, want one event with %q", trunc(payload), trunc(strings.Join(got, "|")), trunc(want))
 		}
-		t.Errorf("paste %q\n tea:  %q\n ours: %q", trunc(payload), trunc(want), trunc(got))
 	}
 }
 

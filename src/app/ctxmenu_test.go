@@ -110,6 +110,34 @@ func TestInputContextMenu(t *testing.T) {
 	}
 }
 
+func TestClickPlacesInputCursor(t *testing.T) {
+	for _, below := range []bool{false, true} {
+		m := New(nil, t.TempDir())
+		m.Mouse = true
+		tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		m = tm.(Model)
+		if below {
+			m = m.handleUIRequest([]byte(`{"method":"setWidget","widgetKey":"example","widgetPlacement":"belowEditor","widgetLines":["widget"]}`))
+		}
+		m.ta.SetValue("日本語\nsecond line")
+		y := -1
+		for row, line := range strings.Split(m.View(), "\n") {
+			if strings.Contains(stripSelectionANSI(line), "日本語") {
+				y = row
+				break
+			}
+		}
+		if y < 0 {
+			t.Fatal("draft not painted")
+		}
+		tm, _ = m.Update(tea.MouseMsg{X: 6, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+		if got := tm.(Model).ta.Value(); got != "日x本語\nsecond line" {
+			t.Errorf("below-editor widget = %v: click and type produced %q", below, got)
+		}
+	}
+}
+
 // Menu bar: hidden without native menus; key: items replay the bound key;
 // toggles show their state.
 func TestMenuBar(t *testing.T) {
@@ -121,6 +149,7 @@ func TestMenuBar(t *testing.T) {
 	withNativeMenus(t)
 	tm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = tm.(Model)
+	m.Mouse = false // The menu must still be reachable by keyboard.
 	bar := m.MenuBar()
 	var titles []string
 	for _, mm := range bar {

@@ -7,9 +7,7 @@ import (
 	tea "pitago/src/tui/ev"
 )
 
-// NativeMenus is set by a runtime that can draw context menus at the
-// pointer (tviewrt). Without it, right-click falls back to the full-screen
-// dialogs (Bubble Tea).
+// NativeMenus enables tview's overlay widgets for the interactive model.
 var NativeMenus bool
 
 // menuTagCtx tags a right-click menu; the suffix is the chat block under
@@ -38,9 +36,14 @@ func (m Model) blockMenu(idx int) []tea.MenuItem {
 // frame, in the main column, and inside the editor's own rows (not a task
 // widget or plugin panel stacked between chat and input).
 func (m Model) inputAt(x, y int) bool {
-	if m.overSide(x) || y <= m.chatViewport().Height {
+	if x < 0 || x >= min(m.winW, m.mainW()) {
 		return false
 	}
+	top, bottom := m.inputRows()
+	return y >= top && y < bottom
+}
+
+func (m Model) inputRows() (top, bottom int) {
 	teamPanel := m.renderTeamWidget()
 	extBudget := m.extPanelBudget(panelHeight(teamPanel))
 	extAbove := m.renderExtWidgets("aboveEditor", extBudget)
@@ -48,9 +51,8 @@ func (m Model) inputAt(x, y int) bool {
 	if teamPanel != "" && m.TeamWidgetPlacement == "belowEditor" {
 		below += panelHeight(teamPanel)
 	}
-	bottom := m.winH - below // first row after the input box
-	top := bottom - panelHeight(m.renderInput())
-	return y >= top && y < bottom
+	bottom = m.winH - below // first row after the input box
+	return bottom - m.inputHeight(), bottom
 }
 
 // rightClickMenu opens the context menu for a right press anywhere on the

@@ -11,14 +11,11 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"pitago/src/app"
 	"pitago/src/builtin"
 	"pitago/src/components/theme"
 	"pitago/src/pimark"
 	"pitago/src/pirpc"
-	"pitago/src/tui/teabridge"
 	"pitago/src/update"
 )
 
@@ -129,27 +126,10 @@ func main() {
 	}
 	m.Mouse = *mouse
 	m.UseBuiltins(builtin.All(), builtin.Confirmers())
-	// Mouse capture on by default so the sidebar is clickable + scrollable.
-	// Opt out with --mouse=false for plain highlight-to-copy.
-	// WithOutput is the default anyway, but stating it makes the raw escape
-	// handoff below explicit: image payloads go straight to the terminal
-	// instead of through the frame, so both must be the same writer.
-	// tview is the default UI. PITAGO_UI=tea keeps the legacy Bubble Tea
-	// runtime available as a fallback until it is removed.
-	if os.Getenv("PITAGO_UI") != "tea" {
-		runTview(m, pi, *mouse)
-		return
-	}
-	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithOutput(os.Stdout), tea.WithFilter(teabridge.Filter(app.ScrollEventFilter))}
-	if *mouse {
-		progOpts = append(progOpts, tea.WithMouseAllMotion())
-	}
-	prog := teabridge.Program(m, progOpts...)
-	app.Post = teabridge.Sender(prog)
-	app.ImageOut = os.Stdout
-	app.WireClient(pi)
-	if _, err := prog.Run(); err != nil {
-		fmt.Println("Error:", err)
+	if err := runTview(m, pi); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		pi.Close()
+		pimark.Close()
 		os.Exit(1)
 	}
 }

@@ -3,6 +3,7 @@ package builtin
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -762,6 +763,14 @@ func settingsFileAction(m *app.Model, d *app.Dialog, st app.SettingsState, fi in
 	if fr.local {
 		save := applyLocalSetting(m, fr, next)
 		st.HideThinking = m.HideThinking
+		st.Tidy = m.Tidy
+		if fr.path != "" {
+			st.Vals = maps.Clone(st.Vals)
+			if st.Vals == nil {
+				st.Vals = make(map[string]string)
+			}
+			st.Vals[fr.path] = next
+		}
 		st.AutocompleteMax = palette.Win
 		st.ShellBinary = m.ShellBinaryPref()
 		opts, descs, cats := settingsOptions(st)
