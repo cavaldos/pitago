@@ -233,12 +233,11 @@ func (p *editorPane) Draw(scr tcell.Screen) {
 		line := p.cache.ParseStyle(row.Text, style)[0]
 		cells.DrawLine(scr, x+used, y+i, w-used, line)
 		if row.Caret >= 0 && used+row.Caret < w {
-			cx := x + used + row.Caret
-			g, st, _ := scr.Get(cx, y+i)
-			if g == "" {
-				g, st = " ", style
-			}
-			scr.Put(cx, y+i, g, st.Reverse(true))
+			// Use the terminal's real cursor as the caret. IMEs (Vietnamese
+			// Telex/VNI, CJK, …) draw their composition text at the real
+			// cursor; a painted caret with a hidden cursor leaves it wherever
+			// the last cell was written, usually the bottom-right corner.
+			scr.ShowCursor(x+used+row.Caret, y+i)
 		}
 	}
 	if p.view.ChipsVisible && h > len(p.view.Rows)+1 {

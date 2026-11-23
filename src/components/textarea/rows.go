@@ -26,7 +26,7 @@ func (m Model) VisibleRows() []ev.EditorRow {
 		for i := range rows {
 			rows[i].Prompt, rows[i].Caret = m.getPromptString(i), -1
 		}
-		if len(rows) > 0 && m.focus && !m.Cursor.Blink {
+		if len(rows) > 0 && m.focus {
 			rows[0].Caret = 0
 		}
 		return rows
@@ -58,7 +58,7 @@ func (m Model) VisibleRows() []ev.EditorRow {
 				if uniseg.StringWidth(row.Text) > m.width {
 					row.Text = strings.TrimSuffix(row.Text, " ")
 				}
-				if r+offset == caret && m.focus && !m.Cursor.Blink {
+				if r+offset == caret && m.focus {
 					row.Caret = min(info.CharOffset, m.width)
 				}
 			}

@@ -379,6 +379,9 @@ func (f *frame) Draw(scr tcell.Screen) {
 	_, bg, _ := f.r.nativeStyles.Normal.Decompose()
 	f.SetBackgroundColor(bg)
 	f.DrawForSubclass(scr, f)
+	// Every frame starts with the cursor hidden; whatever owns the caret this
+	// frame (the composer, a picker filter) shows it at its own position.
+	scr.HideCursor()
 	x, y, w, h := f.GetInnerRect()
 	if p := f.r.settings; p != nil {
 		if provider, ok := f.r.model.(ev.SettingsProvider); ok {
