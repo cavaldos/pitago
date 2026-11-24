@@ -146,6 +146,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					nm, cmd, _ := m.clickTreeSummary(d, mm)
 					return nm, cmd
 				}
+				// Painted two-column trace dialogs: click a list row to
+				// select it, click the selected row to confirm.
+				if d := m.Dialogs[0]; d.Kind == "trajectory" || d.Kind == "sessions" {
+					nm, cmd, _ := m.clickTraceDialog(d, mm)
+					return nm, cmd
+				}
 			}
 			return m, nil
 		}

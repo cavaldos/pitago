@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	tea "pitago/src/tui/ev"
 )
 
@@ -216,6 +217,59 @@ func (m Model) updateTrajWheel(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd) 
 	}
 	m.Refresh()
 	return m, nil
+}
+
+// clickTraceDialog handles a left-column click on a painted two-column
+// dialog (/trajectory, /resume): the click selects the row, a click on the
+// already-selected row is Enter — same rule as clickTreeDialog. The row
+// grid sits directly under the drawn STEPS/SESSIONS title line.
+func (m Model) clickTraceDialog(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd, bool) {
+	if mm.Action != tea.MouseActionPress || mm.Button != tea.MouseButtonLeft {
+		return m, nil, false
+	}
+	boxW, _, _ := trajGeom(m.winW)
+	contentX := (m.winW - (boxW + 2)) / 2
+	if mm.X < contentX || trajDetailAt(m.winW, mm.X) {
+		return m, nil, true // outside the list column: nothing to pick
+	}
+	title := "STEPS"
+	if d.Kind == "sessions" {
+		title = "SESSIONS"
+	}
+	top := -1
+	for i, ln := range strings.Split(ansi.Strip(m.view()), "\n") {
+		if strings.Contains(ln, title) {
+			top = i
+			break
+		}
+	}
+	if top < 0 {
+		return m, nil, true
+	}
+	win := trajWin(m.winH)
+	row := mm.Y - top - 1
+	if row < 0 || row >= win {
+		return m, nil, true
+	}
+	start, end, above, below := fixedWin(d.Cursor, len(d.FIdx), win)
+	if (above && row == 0) || (below && row == win-1) {
+		return m, nil, true // the …(+N) markers select nothing
+	}
+	if above {
+		row--
+	}
+	fi := start + row
+	if fi >= end {
+		return m, nil, true
+	}
+	if fi == d.Cursor {
+		nm, cmd := m.confirmDialog(d)
+		return nm, cmd, true
+	}
+	d.Cursor = fi
+	d.TrajOff = 0
+	m.Refresh()
+	return m, nil, true
 }
 
 // trajPage pages the detail column (PgUp/PgDn while the window is open).

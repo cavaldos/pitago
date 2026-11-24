@@ -40,7 +40,14 @@ func (m Model) settingsDialog() *Dialog {
 // renderer (model.View → renderDialog) instead of a native tview view.
 // tviewrt's frame skips the native panel and workspace for that frame.
 func (m Model) PaintedDialog() bool {
-	return m.settingsDialog() != nil && m.Dialogs[0].Kind == "trajectory"
+	if m.settingsDialog() == nil {
+		return false
+	}
+	switch m.Dialogs[0].Kind {
+	case "trajectory", "sessions": // trace window + /resume keep the painted two-column look
+		return true
+	}
+	return false
 }
 
 func (m Model) NativeSettings() (tea.SettingsView, bool) {
@@ -69,10 +76,10 @@ func (m Model) NativeSettings() (tea.SettingsView, bool) {
 		}
 		v.DetailsTitle = "DETAILS"
 		return m.nativeSettingsHub(d, v), true
-	case "trajectory":
-		// Painted on purpose: /trajectory keeps the old bubble-tea look —
-		// title/subtitle/filter/legend header, borderless STEPS | DETAIL
-		// columns and the hint footer — drawn by renderTraceDialog over
+	case "trajectory", "sessions":
+		// Painted on purpose: these keep the old bubble-tea look —
+		// title/filter header, borderless list | DETAIL columns and the
+		// hint footer — drawn by renderTraceDialog/renderResumeDialog over
 		// the normal frame (keys and wheel reach the model's dialog path).
 		return tea.SettingsView{}, false
 	default:
