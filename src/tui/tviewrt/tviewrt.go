@@ -392,21 +392,33 @@ func (f *frame) Draw(scr tcell.Screen) {
 		}
 		p.active = false
 	}
+	// A painted dialog (the old bubble-tea renderer) owns the whole frame:
+	// model.View composes the workspace behind it and the dialog on top.
+	if pd, ok := f.r.model.(ev.PaintedDialogProvider); ok && pd.PaintedDialog() {
+		f.r.paintView(scr, x, y, w, h)
+		return
+	}
 	if p, ok := f.r.model.(ev.WorkspaceProvider); f.r.workspace != nil && ok {
 		f.r.workspace.draw(scr, x, y, w, h, p.NativeWorkspace(), f.r.nativeStyles, f.r.nativePalette)
 		f.r.paintDividers(scr, x, y, h)
 		return
 	}
-	f.r.mu.Lock()
-	view := f.r.model.View()
-	f.r.mu.Unlock()
+	f.r.paintView(scr, x, y, w, h)
+}
+
+// paintView draws the model's full painted view (workspace + dialog overlay
+// composed as text), the rendering the Bubble Tea runtime used.
+func (r *Runtime) paintView(scr tcell.Screen, x, y, w, h int) {
+	r.mu.Lock()
+	view := r.model.View()
+	r.mu.Unlock()
 	if strings.Contains(view, "\x1b_G") || strings.Contains(view, "\x1b]1337;") {
 		for _, s := range cells.Passthrough(view) {
-			_, _ = io.WriteString(f.r.Raw(), s)
+			_, _ = io.WriteString(r.Raw(), s)
 		}
 	}
-	f.r.opts.Paint(scr, x, y, w, h, view)
-	f.r.paintDividers(scr, x, y, h)
+	r.opts.Paint(scr, x, y, w, h, view)
+	r.paintDividers(scr, x, y, h)
 }
 
 // PasteHandler turns a bracketed paste into one KeyRunes/Paste message,

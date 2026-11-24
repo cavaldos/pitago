@@ -49,6 +49,11 @@ type SettingsView struct {
 
 type SettingsProvider interface{ NativeSettings() (SettingsView, bool) }
 
+// PaintedDialogProvider reports that the top dialog is drawn by the old
+// painted renderer (model.View) instead of a native tview view, so the
+// frame must skip the native panel and workspace for that frame.
+type PaintedDialogProvider interface{ PaintedDialog() bool }
+
 type SettingsFilterMsg string
 
 type SettingsPointerMsg struct {

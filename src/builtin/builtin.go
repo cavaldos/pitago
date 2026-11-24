@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1091,6 +1092,12 @@ func treeMessage(e pirpc.TreeEntry, tcm map[string]pirpc.ContentBlock) string {
 		if cmd == "" {
 			cmd = pirpc.TextOf(msg.Content)
 		}
+		if target, isEdit := bashFileOp(cmd); target != "" {
+			if isEdit {
+				return "[edit]: " + target
+			}
+			return "[write]: " + target
+		}
 		return "[bash]: " + treeNorm(cmd)
 	default:
 		if msg.Role == "" {
@@ -1126,6 +1133,12 @@ func treeTool(name string, args json.RawMessage) string {
 		return "[edit: " + shortPath("path", "file_path") + "]"
 	case "bash":
 		cmd := treeNorm(treeArg(args, "command"))
+		if target, isEdit := bashFileOp(cmd); target != "" {
+			if isEdit {
+				return "[edit: " + target + "]"
+			}
+			return "[write: " + target + "]"
+		}
 		if r := []rune(cmd); len(r) > 50 {
 			cmd = string(r[:50]) + "..."
 		}
@@ -1154,6 +1167,68 @@ func treeTool(name string, args json.RawMessage) string {
 		}
 		return "[" + name + ": " + s + "]"
 	}
+}
+
+// bashFileOp detects file-modifying bash commands and names the target
+// file: sed -i and >> append/patch in place (edit=true), > and tee overwrite
+// (edit=false). "" for read-only or unrecognized commands — the label stays
+// [bash: cmd]. Best-effort on compound commands (cd …; cmd): each ;/&&/||
+// segment is checked, so a cd prefix never hides the mutation.
+func bashFileOp(cmd string) (target string, edit bool) {
+	unquote := func(s string) string {
+		s = strings.TrimSpace(s)
+		if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+			s = s[1 : len(s)-1]
+		}
+		return s
+	}
+	for _, seg := range strings.FieldsFunc(cmd, func(r rune) bool {
+		return r == ';' || r == '|' || r == '&'
+	}) {
+		fields := strings.Fields(seg)
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "sed":
+			inPlace := false
+			for _, f := range fields[1:] {
+				if strings.HasPrefix(f, "-i") {
+					inPlace = true
+				}
+			}
+			last := fields[len(fields)-1]
+			if inPlace && len(fields) > 1 && !strings.HasPrefix(last, "-") && last != "-i" && !strings.HasPrefix(last, "-i.") {
+				return unquote(last), true
+			}
+		case "tee":
+			append_ := false
+			var file string
+			for _, f := range fields[1:] {
+				if strings.HasPrefix(f, "-") {
+					if strings.Contains(f, "a") { // -a / --append
+						append_ = true
+					}
+					continue
+				}
+				file = f
+			}
+			if file != "" {
+				return unquote(file), append_
+			}
+		}
+	}
+	// Shell redirection: > file overwrites (write), >> appends (edit).
+	// The char before > must not be a digit or & so 2>/dev/null, &> and
+	// numeric fd redirects never match.
+	redir := regexp.MustCompile(`(^|[^\d&])(>>?)\s*([^\s;|&]+)`)
+	for _, m := range redir.FindAllStringSubmatch(cmd, -1) {
+		if m[2] == ">>" {
+			return unquote(m[3]), true
+		}
+		return unquote(m[3]), false
+	}
+	return "", false
 }
 
 // treeArg reads one string field from tool-call JSON args ("": absent).

@@ -30,16 +30,18 @@ func trajGeom(winW int) (boxW, leftW, rightW int) {
 	if boxW > 150 {
 		boxW = 150
 	}
-	leftW = 42
-	if boxW < 120 {
-		leftW = 36
-	}
-	if boxW < 100 {
-		leftW = 28
-	}
-	rightW = boxW - 6 - leftW - 3
+	// Split the content area 50/50 between the two columns (the 3-cell
+	// divider goes to neither side).
+	cw := boxW - 6
+	leftW = (cw - 3) / 2
+	rightW = cw - 3 - leftW
 	if rightW < 30 {
 		rightW = 30
+		leftW = cw - 3 - rightW
+	}
+	if leftW < 20 {
+		leftW = 20
+		rightW = cw - 3 - leftW
 	}
 	return boxW, leftW, rightW
 }
@@ -400,12 +402,15 @@ const (
 // keeps continuation rows of a long diff line colored as part of the same
 // change instead of reverting to normal text after the first wrap.
 func trajDiffKindOf(line string) trajDiffKind {
+	// Match the marker after any leading indentation, like colorEditDiffLine,
+	// so indented diff rows keep their change color.
+	body := strings.TrimLeft(line, " ")
 	switch {
-	case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "---"):
+	case strings.HasPrefix(body, "- "), strings.HasPrefix(body, "---"):
 		return trajDiffRemove
-	case strings.HasPrefix(line, "+ "), strings.HasPrefix(line, "+++"):
+	case strings.HasPrefix(body, "+ "), strings.HasPrefix(body, "+++"):
 		return trajDiffAdd
-	case strings.HasPrefix(line, "diff:"), strings.HasPrefix(line, "@@"):
+	case strings.HasPrefix(body, "diff"), strings.HasPrefix(body, "@@"):
 		return trajDiffHeader
 	default:
 		return trajDiffNone
