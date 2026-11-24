@@ -22,7 +22,16 @@ import (
 // Set at build time: go build -ldflags "-X main.version=v0.0.1" ./src
 var version = "dev"
 
+// forwardPiArgs holds pi flags that pitago does not own (e.g. -ns, -np,
+// -nc, --no-mcp, --no-tools, --no-themes, --system-prompt) and forwards
+// them verbatim to the spawned pi child.
+var forwardPiArgs []string
+
 func main() {
+	// Split the command line: pitago keeps its own flags, everything else is
+	// forwarded to pi. This lets pitago accept pi's full flag set without
+	// re-declaring each one.
+	os.Args = splitPitagoArgs(os.Args)
 	cont := flag.Bool("c", false, "resume the most recent pi session")
 	dirFlag := flag.String("cwd", "", "working directory for the pi session (or pass it as the first argument)")
 	provider := flag.String("provider", "", "pi provider (default from ~/.pi)")
@@ -79,12 +88,24 @@ func main() {
 	opts := pirpc.Options{
 		Provider: *provider, Model: *modelFlag,
 		Continue: *cont, NoSession: *noSession, NoExtensions: *noExt, Dir: cwd,
+		ExtraArgs: forwardPiArgs,
 	}
 	// Restore the last model the user picked here, before Spawn: the child
 	// gets --provider/--model, so the first get_state already reports it
 	// and no in-session set_model is needed (respawns reuse these opts).
 	// Explicit -provider/-model flags still win.
 	applyRestoredModel(&opts, app.LoadPrefs(app.PrefsPath()))
+	// Restart-tab state: pi flags passed on the command line win and are
+	// remembered for later plain launches; a plain launch (no pi flags)
+	// reuses the last toggled set from prefs.
+	if len(forwardPiArgs) > 0 || *noExt {
+		p := app.LoadPrefs(app.PrefsPath())
+		p.PiSpawnFlags = app.SpawnFlagsFromOpts(opts)
+		_ = app.SavePrefs(app.PrefsPath(), p)
+	} else if p := app.LoadPrefs(app.PrefsPath()); p.PiSpawnFlags != nil {
+		opts.ExtraArgs = app.ExtraArgsFromSpawnFlags(p.PiSpawnFlags)
+		opts.NoExtensions = p.PiSpawnFlags["ne"]
+	}
 	// pitago's unsend extension: Esc before the model answers takes the
 	// prompt back. Without the file the cancel stays a plain abort.
 	if ext, err := pirpc.InstallUnsendExt(); err == nil {
@@ -227,4 +248,99 @@ func resolveDir(flagDir string, args []string) (string, error) {
 		return "", fmt.Errorf("%s: not a directory", dir)
 	}
 	return abs, nil
+}
+
+// pitagoOwned lists flags pitago handles itself (normalized, no dashes).
+var pitagoOwned = map[string]bool{
+	"c": true, "continue": true,
+	"cwd":        true,
+	"provider":   true,
+	"model":      true,
+	"no-session": true,
+	"ne":         true, "no-extensions": true,
+	"mouse":   true,
+	"theme":   true,
+	"version": true,
+	"update":  true,
+}
+
+// pitagoValueFlags marks which pitago-owned flags take a value.
+var pitagoValueFlags = map[string]bool{
+	"cwd": true, "provider": true, "model": true, "theme": true,
+}
+
+// piBooleanFlags are pi flags that take no value.
+var piBooleanFlags = map[string]bool{
+	"c": true, "continue": true, "r": true, "resume": true,
+	"no-session": true, "no-tools": true, "nt": true,
+	"no-builtin-tools": true, "nbt": true,
+	"no-extensions": true, "ne": true,
+	"no-mcp":    true,
+	"no-skills": true, "ns": true,
+	"no-prompt-templates": true, "np": true,
+	"no-themes":        true,
+	"no-context-files": true, "nc": true,
+	"verbose": true,
+	"approve": true, "a": true,
+	"no-approve": true, "na": true,
+	"offline":       true,
+	"no-lazy-tools": true,
+	"plan":          true,
+}
+
+// splitPitagoArgs separates pitago's own flags from forwarded pi flags.
+// Returns the argv slice for pitago (with os.Args[0] preserved) and stores
+// the forwarded flags in forwardPiArgs.
+func splitPitagoArgs(argv []string) []string {
+	kept := []string{argv[0]}
+	var piArgs []string
+	args := argv[1:]
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			piArgs = append(piArgs, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			kept = append(kept, a)
+			i++
+			continue
+		}
+		name := a
+		hasEq := strings.Contains(a, "=")
+		if hasEq {
+			parts := strings.SplitN(a, "=", 2)
+			name = parts[0]
+		}
+		clean := strings.TrimLeft(name, "-")
+		if pitagoOwned[clean] {
+			out := a
+			if clean == "continue" && !hasEq {
+				out = "-c"
+			}
+			kept = append(kept, out)
+			if !hasEq && pitagoValueFlags[clean] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				kept = append(kept, args[i+1])
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+		piArgs = append(piArgs, a)
+		if hasEq {
+			i++
+			continue
+		}
+		isBool := piBooleanFlags[clean] || strings.HasPrefix(clean, "no-")
+		if !isBool && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			piArgs = append(piArgs, args[i+1])
+			i += 2
+			continue
+		}
+		i++
+	}
+	forwardPiArgs = piArgs
+	return kept
 }

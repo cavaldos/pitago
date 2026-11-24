@@ -457,7 +457,8 @@ func toWidgetItems(in []ev.MenuItem) []widgets.MenuItem {
 	out := make([]widgets.MenuItem, len(in))
 	for i, it := range in {
 		out[i] = widgets.MenuItem{
-			ID: it.ID, Label: it.Label, Shortcut: it.Shortcut,
+			ID: it.ID, Label: it.Label, Shortcut: it.Shortcut, Hint: it.Hint,
+			Toggle:   it.Toggle,
 			Disabled: it.Disabled, Separator: it.Separator,
 			Submenu: toWidgetItems(it.Submenu),
 		}

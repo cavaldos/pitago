@@ -71,6 +71,10 @@ type Options struct {
 	// Extensions are extra extension files loaded with -e. pi still loads
 	// explicit -e paths under -ne, so pitago's own extensions survive it.
 	Extensions []string
+	// ExtraArgs are forwarded verbatim to the pi child (any pi flag pitago
+	// does not own, e.g. -ns, -np, -nc, --no-mcp, --no-tools, --no-themes,
+	// --system-prompt). They are appended to the spawn argv as-is.
+	ExtraArgs []string
 }
 
 // piStderrLog captures the pi child's stderr (fresh per spawn; read it
@@ -119,6 +123,9 @@ func Spawn(opt Options) (*Client, error) {
 	}
 	if opt.Model != "" {
 		args = append(args, "--model", opt.Model)
+	}
+	for _, a := range opt.ExtraArgs {
+		args = append(args, a)
 	}
 	for _, ext := range opt.Extensions {
 		args = append(args, "-e", ext)

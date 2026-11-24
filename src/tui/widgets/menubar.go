@@ -181,6 +181,14 @@ func (b *MenuBar) open1(i int, keyboard bool) {
 			b.OnSelect(title, id)
 		}
 	}
+	// Toggle picks stay open: re-read Source so ✓ marks and any Hint
+	// rows reflect the model's new state.
+	m.OnRefresh = func() {
+		b.refresh()
+		if b.open >= 0 && b.open < len(b.menus) {
+			m.Items = b.menus[b.open].Items
+		}
+	}
 	m.OnClose = func() {
 		if b.menu == m {
 			b.open = -1

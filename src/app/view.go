@@ -1841,7 +1841,7 @@ func (m Model) statsLine() string {
 	return Short(m.ModelLbl, 40) + agent
 }
 
-func (m Model) renderHeader() string { return headerStyle.Render(m.headerText()) }
+func (m Model) renderHeader() string { return headerStyle.Render(m.headerNative()) }
 
 func (m Model) headerText() string {
 	left := Short(pirpc.Shorten(m.cwd), 48)

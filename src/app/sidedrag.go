@@ -134,6 +134,20 @@ func (m *Model) barClick(msg tea.MouseMsg) (tea.Cmd, bool) {
 	}
 	switch {
 	case msg.Y == 0 && msg.X < m.mainW():
+		if key := m.headerFlagChipAt(msg.X); key != "" {
+			if key == "restart" {
+				m.persistSpawnFlags()
+				return m.RespawnPi(), true
+			}
+			if m.piSpawnFlags == nil {
+				m.piSpawnFlags = map[string]bool{}
+			}
+			m.piSpawnFlags[key] = !m.piSpawnFlags[key]
+			m.applySpawnFlagsToOpts()
+			m.persistSpawnFlags()
+			m.Status = key + " toggled (restart pi to apply)"
+			return nil, true
+		}
 		return m.runSlash("/name"), true
 	case m.inputAt(msg.X, msg.Y) && msg.Y == m.inputFooterY():
 		return m.runSlash("/model"), true

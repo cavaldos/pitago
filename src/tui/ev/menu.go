@@ -5,6 +5,8 @@ type MenuItem struct {
 	ID        string
 	Label     string
 	Shortcut  string
+	Hint      string // dim description after the label
+	Toggle    bool   // picking keeps the menu open (menu bar re-reads items)
 	Disabled  bool
 	Separator bool
 	Submenu   []MenuItem

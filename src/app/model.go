@@ -212,6 +212,7 @@ type Model struct {
 	imgRender           *imageRenderState       // kitty upload/geometry cache (pointer: survives Model value copies)
 	respawning          bool                    // reconnecting pi: skip pi_exited notice
 	spawnOpts           pirpc.Options           // for respawning pi (login)
+	piSpawnFlags        map[string]bool         // toggled pi spawn flags (ne, ns, ...)
 	KeyPath             string                  // keystore API keys
 	AuthPath            string                  // mirrored pi logins (oauth state pitago saves)
 	sessionFile         string                  // respawn keeps the same session
@@ -1104,6 +1105,7 @@ func (m *Model) RespawnPi() tea.Cmd {
 	m.respawning = true
 	m.Status = "reconnecting pi…"
 	m.Refresh()
+	m.applySpawnFlagsToOpts()
 	opts := m.spawnOpts
 	opts.Session = m.sessionFile
 	if opts.NoSession {
@@ -1546,6 +1548,7 @@ func (m *Model) UseBuiltins(b []Builtin, c map[string]ConfirmFunc) {
 // Configure wires spawn options + config paths (call once from main).
 func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.spawnOpts = opts
+	m.piSpawnFlags = map[string]bool{}
 	m.KeyPath = keyPath
 	m.AuthPath = pirpc.AuthStatePath()
 	m.recentPath = pirpc.RecentPath()
@@ -1559,6 +1562,12 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.ThemeName = theme.Get(saved).Name
 	m.prefsPath = PrefsPath()
 	prefs := LoadPrefs(m.prefsPath)
+	if prefs.PiSpawnFlags != nil {
+		m.piSpawnFlags = prefs.PiSpawnFlags
+		m.applySpawnFlagsToOpts()
+	} else {
+		m.syncSpawnFlagsFromOpts()
+	}
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
 	m.SideWidth = prefs.SideWidth

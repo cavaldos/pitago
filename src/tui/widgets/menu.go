@@ -12,6 +12,8 @@ type MenuItem struct {
 	ID        string
 	Label     string
 	Shortcut  string // right-aligned hint, e.g. "⌥X"
+	Hint      string // dim description after the label (only when no Shortcut)
+	Toggle    bool   // picking keeps the menu open (✓ toggles re-read via OnRefresh)
 	Disabled  bool
 	Separator bool       // a rule; every other field is ignored
 	Submenu   []MenuItem // opens to the side on hover, → or Enter
@@ -66,6 +68,9 @@ type ContextMenu struct {
 	// → (on a row without a submenu, at any depth) ask for the neighbouring
 	// menu: dir is -1 or +1. A MenuBar uses it to walk its titles.
 	OnCross func(dir int)
+	// OnRefresh, when set on the root menu, re-reads the items after a
+	// Toggle pick stays open (a MenuBar re-reads its Source).
+	OnRefresh func()
 
 	host       *Overlay
 	parent     *ContextMenu
@@ -151,6 +156,15 @@ func (m *ContextMenu) choose(i int) {
 		return
 	}
 	r := m.root()
+	if it.Toggle {
+		if r.OnSelect != nil {
+			r.OnSelect(it.ID)
+		}
+		if r.OnRefresh != nil {
+			r.OnRefresh()
+		}
+		return
+	}
 	r.Close()
 	if r.OnSelect != nil {
 		r.OnSelect(it.ID)
@@ -184,6 +198,11 @@ func (m *ContextMenu) size() (int, int) {
 		short = max(short, cellwidth.StringWidth(it.Shortcut))
 		if len(it.Submenu) > 0 {
 			arrow = 2
+		}
+	}
+	for _, it := range m.Items {
+		if it.Hint != "" && it.Shortcut == "" {
+			label = max(label, cellwidth.StringWidth(it.Label)+2+cellwidth.StringWidth(it.Hint))
 		}
 	}
 	w := 1 + label + arrow + 1
@@ -254,6 +273,16 @@ func (m *ContextMenu) Draw(scr tcell.Screen) {
 		}
 		fill(scr, Rect{x + 1, ry, inner, 1}, row)
 		printText(scr, x+2, ry, inner-2, it.Label, row)
+		if it.Hint != "" && it.Shortcut == "" && !it.Disabled {
+			// dim description after the label; selected rows dim their own
+			// reverse-video style instead of the muted disabled one
+			hint := st.Disabled
+			if i == m.sel || i == m.subIndex {
+				hint = st.Selected.Dim(true)
+			}
+			hx := x + 2 + cellwidth.StringWidth(it.Label) + 2
+			printText(scr, hx, ry, max(0, x+w-2-hx), it.Hint, hint)
+		}
 		right := x + w - 2 // last inner column is padding
 		if len(it.Submenu) > 0 {
 			scr.SetContent(right-1, ry, '›', nil, row)

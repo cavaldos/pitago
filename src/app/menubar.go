@@ -77,6 +77,7 @@ func (m Model) MenuBar() []tea.Menu {
 			{ID: "cmd:/login", Label: "Login…"},
 		}},
 		{Title: "Quota", Items: m.quotaMenuItems()},
+		{Title: "Restart", Items: m.restartMenuItems()},
 		{Title: "Help", Items: []tea.MenuItem{
 			{ID: "act:commands", Label: "All Commands", Shortcut: "/"},
 			{ID: "cmd:/shortcuts", Label: "Keyboard Shortcuts"},
@@ -214,6 +215,20 @@ func (m Model) runAction(id string, ctx int) (tea.Model, tea.Cmd) {
 		case "commands":
 			if m.inputEmpty() {
 				return m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			}
+		case "pi-restart":
+			m.persistSpawnFlags()
+			return m, m.RespawnPi()
+		default:
+			if key, ok := strings.CutPrefix(arg, "pi-flag-"); ok {
+				if m.piSpawnFlags == nil {
+					m.piSpawnFlags = map[string]bool{}
+				}
+				m.piSpawnFlags[key] = !m.piSpawnFlags[key]
+				m.applySpawnFlagsToOpts()
+				m.persistSpawnFlags()
+				m.Status = key + " toggled — pick Restart pi to apply"
+				m.Refresh()
 			}
 		}
 	}
