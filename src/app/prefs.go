@@ -43,7 +43,6 @@ type Prefs struct {
 	TaskWidgetOff   bool              `json:"taskWidgetOff,omitempty"`   // hide the above-editor task widget
 	ShellBinary     string            `json:"shellBinary,omitempty"`     // shell mode program: "$SHELL" (default) or an absolute path; "" = follow $SHELL
 	SideWidth       int               `json:"sideWidth,omitempty"`       // sidebar width set by dragging its divider (0 = default)
-	PiSpawnFlags    map[string]bool   `json:"piSpawnFlags,omitempty"`    // toggled pi spawn flags
 }
 
 // TaskWidgetVisible reports whether the above-editor task widget should paint.

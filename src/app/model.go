@@ -1562,12 +1562,9 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	m.ThemeName = theme.Get(saved).Name
 	m.prefsPath = PrefsPath()
 	prefs := LoadPrefs(m.prefsPath)
-	if prefs.PiSpawnFlags != nil {
-		m.piSpawnFlags = prefs.PiSpawnFlags
-		m.applySpawnFlagsToOpts()
-	} else {
-		m.syncSpawnFlagsFromOpts()
-	}
+	// Spawn flags are session-only: they come from the command line (or
+	// in-session toggles) and never persist across pitago restarts.
+	m.syncSpawnFlagsFromOpts()
 	m.HideThinking = prefs.HideThinking
 	m.Tidy = prefs.Tidy
 	m.SideWidth = prefs.SideWidth

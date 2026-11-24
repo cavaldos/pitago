@@ -217,7 +217,6 @@ func (m Model) runAction(id string, ctx int) (tea.Model, tea.Cmd) {
 				return m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 			}
 		case "pi-restart":
-			m.persistSpawnFlags()
 			return m, m.RespawnPi()
 		default:
 			if key, ok := strings.CutPrefix(arg, "pi-flag-"); ok {
@@ -226,7 +225,6 @@ func (m Model) runAction(id string, ctx int) (tea.Model, tea.Cmd) {
 				}
 				m.piSpawnFlags[key] = !m.piSpawnFlags[key]
 				m.applySpawnFlagsToOpts()
-				m.persistSpawnFlags()
 				m.Status = key + " toggled — pick Restart pi to apply"
 				m.Refresh()
 			}

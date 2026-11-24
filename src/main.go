@@ -95,17 +95,9 @@ func main() {
 	// and no in-session set_model is needed (respawns reuse these opts).
 	// Explicit -provider/-model flags still win.
 	applyRestoredModel(&opts, app.LoadPrefs(app.PrefsPath()))
-	// Restart-tab state: pi flags passed on the command line win and are
-	// remembered for later plain launches; a plain launch (no pi flags)
-	// reuses the last toggled set from prefs.
-	if len(forwardPiArgs) > 0 || *noExt {
-		p := app.LoadPrefs(app.PrefsPath())
-		p.PiSpawnFlags = app.SpawnFlagsFromOpts(opts)
-		_ = app.SavePrefs(app.PrefsPath(), p)
-	} else if p := app.LoadPrefs(app.PrefsPath()); p.PiSpawnFlags != nil {
-		opts.ExtraArgs = app.ExtraArgsFromSpawnFlags(p.PiSpawnFlags)
-		opts.NoExtensions = p.PiSpawnFlags["ne"]
-	}
+	// Spawn flags are session-only: whatever came on the command line
+	// (or is toggled in the Restart tab) lives until pitago exits; a plain
+	// "pitago" launch always starts clean.
 	// pitago's unsend extension: Esc before the model answers takes the
 	// prompt back. Without the file the cancel stays a plain abort.
 	if ext, err := pirpc.InstallUnsendExt(); err == nil {

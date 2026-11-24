@@ -5,7 +5,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"pitago/src/pirpc"
 	tea "pitago/src/tui/ev"
 )
 
@@ -148,16 +147,6 @@ func ExtraArgsFromSpawnFlags(flags map[string]bool) []string {
 	return out
 }
 
-// SpawnFlagsFromOpts reads the toggles out of spawn options: "ne" from
-// NoExtensions, the rest from ExtraArgs.
-func SpawnFlagsFromOpts(opts pirpc.Options) map[string]bool {
-	out := spawnFlagsFromExtraArgs(opts.ExtraArgs)
-	if opts.NoExtensions {
-		out["ne"] = true
-	}
-	return out
-}
-
 // syncSpawnFlagsFromOpts populates m.piSpawnFlags from spawnOpts (CLI launch).
 func (m *Model) syncSpawnFlagsFromOpts() {
 	if m.piSpawnFlags == nil {
@@ -169,16 +158,6 @@ func (m *Model) syncSpawnFlagsFromOpts() {
 	if m.spawnOpts.NoExtensions {
 		m.piSpawnFlags["ne"] = true
 	}
-}
-
-// persistSpawnFlags saves current toggles to prefs.
-func (m *Model) persistSpawnFlags() {
-	if m.prefsPath == "" {
-		return
-	}
-	p := LoadPrefs(m.prefsPath)
-	p.PiSpawnFlags = m.piSpawnFlags
-	_ = SavePrefs(m.prefsPath, p)
 }
 
 // applySpawnFlagsToOpts updates spawnOpts (NoExtensions + ExtraArgs)
