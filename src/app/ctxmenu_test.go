@@ -155,7 +155,7 @@ func TestMenuBar(t *testing.T) {
 	for _, mm := range bar {
 		titles = append(titles, mm.Title)
 	}
-	if strings.Join(titles, " ") != "File Edit Selection View Options Quota Help" {
+	if strings.Join(titles, " ") != "File Edit Selection View Options Quota Restart Help" {
 		t.Fatalf("titles = %v", titles)
 	}
 	side := func(m Model) string {
