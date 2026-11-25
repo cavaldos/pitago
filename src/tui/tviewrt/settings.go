@@ -331,8 +331,16 @@ func (p *settingsPanel) draw(scr tcell.Screen, x, y, w, h int, v ev.SettingsView
 		}
 		p.layout.AddItem(p.help, 1, 0, false)
 	}
+	if p.filterVisible {
+		// Give the field focus for this draw so tview positions the real
+		// terminal cursor on its caret (IME composition text needs it).
+		p.filter.Focus(nil)
+	}
 	p.layout.SetRect(x, y, w, h)
 	p.layout.Draw(scr)
+	if p.filterVisible {
+		p.filter.Blur()
+	}
 }
 
 func settingsWidths(panes []ev.SettingsPane, width int, model bool) [3]int {

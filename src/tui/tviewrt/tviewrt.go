@@ -396,6 +396,16 @@ func (f *frame) Draw(scr tcell.Screen) {
 	// model.View composes the workspace behind it and the dialog on top.
 	if pd, ok := f.r.model.(ev.PaintedDialogProvider); ok && pd.PaintedDialog() {
 		f.r.paintView(scr, x, y, w, h)
+		// Painted dialogs paint a block caret (▌) for their text input.
+		// IMEs draw composition text at the terminal's real cursor, so
+		// place it there instead of leaving it hidden in the corner.
+		for yy := y; yy < y+h; yy++ {
+			for xx := x; xx < x+w; xx++ {
+				if r, _, _ := scr.Get(xx, yy); r == "▌" {
+					scr.ShowCursor(xx, yy)
+				}
+			}
+		}
 		return
 	}
 	if p, ok := f.r.model.(ev.WorkspaceProvider); f.r.workspace != nil && ok {
