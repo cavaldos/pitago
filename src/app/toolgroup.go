@@ -114,7 +114,11 @@ func (m *Model) toolGroupKey(i int) uint64 {
 
 func (m *Model) groupRunning(head int) bool {
 	for _, k := range m.groupMembers(head) {
-		if format.ToolStatusClass(m.blocks[k].ToolStatus) == format.StatusRunning {
+		bl := m.blocks[k]
+		// Only live tool calls carry a status; thinking text and shell
+		// echoes have none, and an empty status reads as running — without
+		// the kind guard the group dot blinks forever after the turn ends.
+		if bl.Kind == "tool" && format.ToolStatusClass(bl.ToolStatus) == format.StatusRunning {
 			return true
 		}
 	}
@@ -134,11 +138,14 @@ func (m *Model) renderToolGroupSummary(head, w int) string {
 	counts := map[string]*tally{}
 	for _, k := range members {
 		bl := m.blocks[k]
-		switch format.ToolStatusClass(bl.ToolStatus) {
-		case format.StatusRunning:
-			running = true
-		case format.StatusError:
-			failed = true
+		// Same kind guard as groupRunning: only tool calls have a status.
+		if bl.Kind == "tool" {
+			switch format.ToolStatusClass(bl.ToolStatus) {
+			case format.StatusRunning:
+				running = true
+			case format.StatusError:
+				failed = true
+			}
 		}
 		key, label := "tool", "tool"
 		switch {
@@ -190,7 +197,48 @@ func (m *Model) renderToolGroupSummary(head, w int) string {
 	if lipgloss.Width(text) <= avail {
 		row += toolStyle.Render(hint)
 	}
+	// The last command's output tail rides under the counts, so a
+	// collapsed group still shows what the shell actually said.
+	if !m.groupCollapsed(head) {
+		// Open group: the full call renders right below.
+		return row
+	}
+	if tail := m.groupBashTail(head, w); tail != "" {
+		row += "\n" + tail
+	}
 	return row
+}
+
+// groupBashTail returns the last two non-empty lines of the group's most
+// recent command output, dimmed and indented under the summary counts.
+func (m *Model) groupBashTail(head, w int) string {
+	members := m.groupMembers(head)
+	for i := len(members) - 1; i >= 0; i-- {
+		bl := m.blocks[members[i]]
+		out := ""
+		switch {
+		case bl.Kind == "bash":
+			_, after, _ := strings.Cut(bl.Text, "\n")
+			out = after
+		case bl.Kind == "tool" && strings.EqualFold(strings.TrimSpace(bl.ToolName), "bash"):
+			out = bl.ToolResult
+		default:
+			continue
+		}
+		var lines []string
+		for _, ln := range strings.Split(out, "\n") {
+			if t := strings.TrimSpace(stripANSI(ln)); t != "" {
+				lines = append(lines, t)
+			}
+		}
+		lo := max(len(lines)-2, 0)
+		tail := lines[lo:]
+		for j := range tail {
+			tail[j] = statusBarStyle.Render("  " + Short(tail[j], w-4))
+		}
+		return strings.Join(tail, "\n")
+	}
+	return ""
 }
 
 // isGroupSummaryRow reports whether screen row screenY is the summary row

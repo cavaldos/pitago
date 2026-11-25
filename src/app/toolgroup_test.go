@@ -76,3 +76,42 @@ func TestToolGroupSummaryRunning(t *testing.T) {
 		t.Fatalf("running summary wrong:\n%s", out)
 	}
 }
+
+func TestFinishedGroupStopsBlinking(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.vp.Width, m.vp.Height = 120, 20
+	// Thinking and shell-echo blocks carry no status; they must not pin
+	// the group's dot on "running" after every real call has finished.
+	m.blocks = []Block{
+		{Kind: "tool", ToolName: "read", ToolStatus: "done"},
+		{Kind: "bash", Text: "$ echo hi\nhi"},
+		{Kind: "thinking", Text: "considering"},
+		{Kind: "tool", ToolName: "bash", ToolStatus: "done", ToolResult: "line one\nline two\nline three"},
+	}
+	if m.groupRunning(0) {
+		t.Fatal("finished group still reports running")
+	}
+	out := stripANSI(m.renderBlocks())
+	if strings.Contains(out, "…") {
+		t.Fatalf("finished group still shows running ellipsis:\n%s", out)
+	}
+	// Collapsed summary shows the last two lines of the latest command.
+	for _, want := range []string{"line two", "line three"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing output tail %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "line one") {
+		t.Fatalf("summary shows more than the tail:\n%s", out)
+	}
+
+	// Expanding the group hides the tail (the full call is right below).
+	m.blocks[0].GroupOpen = true
+	out = stripANSI(m.renderBlocks())
+	if strings.Contains(out, "line three") && strings.Count(out, "line three") != 1 {
+		t.Fatalf("expanded group duplicates the tail:\n%s", out)
+	}
+	if !strings.Contains(out, "echo hi") {
+		t.Fatalf("expanded group lost the call itself:\n%s", out)
+	}
+}
