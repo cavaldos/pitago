@@ -90,6 +90,7 @@ type Dialog struct {
 	SubSize           int         // subagents overlay: detail size preset (^O cycles)
 	SubLines          []string    // subagents overlay: cached detail transcript lines
 	SubOffset         int         // subagents overlay: detail scroll offset from tail
+	BtwOff            int         // btw window: transcript scroll offset from tail (0 = follow newest)
 	SubHeader         string      // subagents overlay: detail activity header
 	oauth             *oauthState // oauthFlow: in-TUI OAuth login state
 	pickerTag         string      // native picker shown for this dialog under tviewrt ("" = drawn as text)
@@ -155,6 +156,8 @@ type Model struct {
 	extStatusSeq        []string                   // LRU order, most recent last
 	extWidget           map[string]*extWidgetPanel // widgetKey -> persistent panel (setWidget)
 	extWidgetSeq        []string
+	BtwLines            []string        // BTW window transcript (btw widget key, see btw_window.go)
+	btwDismissed        bool            // user hid the BTW window: updates refresh content, only /btw reopens
 	queuedDialogs       [][]byte        // extension_ui_request payloads awaiting a free dialog slot
 	extCmdWait          map[string]bool // in-flight synchronous extension commands ("/team")
 	TeamWidgetLines     []string        // live pi-agents-team dashboard lines
@@ -787,6 +790,11 @@ type extensionCmdAckMsg struct {
 // the model-turn "Working..." state. It always uses prompt (not steer), since
 // the command handler—not a new agent turn—consumes the request.
 func (m *Model) ForwardExtensionCommand(text string) tea.Cmd {
+	// An explicit /btw* run is the user asking the window back after Esc:
+	// updates alone must never reopen a window they deliberately hid.
+	if name, _, ok := splitCommand(text); ok && strings.HasPrefix(strings.ToLower(name), "btw") {
+		m.reopenBtwWindow()
+	}
 	return m.forwardExtensionCommandNamed(text, "")
 }
 

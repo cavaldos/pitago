@@ -3688,7 +3688,9 @@ func (m Model) view() string {
 	// The /mcp screens are a floating window over the transcript, like
 	// every other dialog here (see renderMcpOverlay), so they take the
 	// normal frame composition and never stand in for the editor.
-	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" && !m.nativePickerOpen() {
+	// The BTW window floats over the chat like the free-text prompt instead
+	// of standing in for the frame, so the conversation stays visible.
+	if len(m.Dialogs) > 0 && !m.isInlineUI() && m.Dialogs[0].Kind != "input" && m.Dialogs[0].Kind != "btw" && !m.nativePickerOpen() {
 		if m.Dialogs[0].Kind == "team" {
 			return m.renderFloatingTeamDashboard()
 		}
@@ -3719,6 +3721,12 @@ func (m Model) view() string {
 		if chip, ok := m.jumpLatestChip(chatVp); ok {
 			rows := overlayJumpLatest(strings.Split(chat, "\n"), chip, m.mainW())
 			chat = strings.Join(rows, "\n")
+		}
+		if m.btwOpen() {
+			// The BTW window floats over the chat's tail rows instead of
+			// reserving them: the frame's row arithmetic never shifts
+			// (overlayToasts parity — toast.go).
+			chat = m.overlayBtwBox(chat, m.renderBtwBox())
 		}
 		return chat
 	}

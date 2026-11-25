@@ -2810,6 +2810,12 @@ func (m Model) handleUIRequest(raw []byte) Model {
 			} else {
 				m.setChatProgressWidget(req.WidgetKey, extWidgetText(req.WidgetKey, req.WidgetLines), false)
 			}
+		case strings.TrimSpace(stripANSI(req.WidgetKey)) == btwWindowKey:
+			// BTW side-conversation transcript: rendered inside the btw
+			// window (see btw_window.go), never as an editor panel — a
+			// thread panel above the chat was exactly the noise the
+			// window replaces.
+			m.setBtwWindow(req.WidgetLines)
 		default:
 			// Empty lines is pi's "this widget is gone" signal, and
 			// setExtWidget routes it to clearExtWidget: one key only.
@@ -2965,6 +2971,9 @@ func (m Model) updateDialog(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateTreeSummary(km, d)
 	case treeCustomKind:
 		return m.updateTreeCustom(km, d)
+	}
+	if d.Kind == "btw" {
+		return m.updateBtwDialog(km, d)
 	}
 	if d.Kind == "pet" {
 		return m.updatePetDialog(km, d)

@@ -46,6 +46,8 @@ func (m Model) PaintedDialog() bool {
 	switch m.Dialogs[0].Kind {
 	case "trajectory", "sessions": // trace window + /resume keep the painted two-column look
 		return true
+	case "btw": // the BTW window is a compact painted box (see btw_window.go)
+		return true
 	}
 	return false
 }
@@ -81,6 +83,12 @@ func (m Model) NativeSettings() (tea.SettingsView, bool) {
 		// title/filter header, borderless list | DETAIL columns and the
 		// hint footer — drawn by renderTraceDialog/renderResumeDialog over
 		// the normal frame (keys and wheel reach the model's dialog path).
+		return tea.SettingsView{}, false
+	case "btw":
+		// Painted on purpose: the BTW window is a compact centered box
+		// (renderBtwDialog). The generic native mirror would turn it into
+		// a fullscreen "Options · no matches" view — useless for a window
+		// whose content is a transcript plus an input row.
 		return tea.SettingsView{}, false
 	default:
 		return m.nativeDialog(d, v), true
