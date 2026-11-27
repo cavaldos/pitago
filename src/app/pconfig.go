@@ -664,7 +664,7 @@ func psecRows(m *Model, id string) (opts, descs, payload []string, msg string) {
 		payload = append(payload, "taskwidget")
 	case PsecSide:
 		msg = "Enter shows/hides a sidebar section · MCP + Plugins + Commands start hidden · Esc closes"
-		for _, k := range sideOrder {
+		for _, k := range m.SideOrderKeys() {
 			state := "shown"
 			if !m.SideVisible(k) {
 				state = "hidden"
@@ -1411,6 +1411,32 @@ func isFilterKind(kind string) bool {
 // typing filters the right pane, Enter on the left focuses the right,
 // Enter on the right runs (confirm lives in src/builtin).
 func (m Model) updatePconfigDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
+	if !d.ProvFocus && d.CurPsec() == PsecSide {
+		if km.Type == tea.KeyCtrlUp {
+			if ri := psecCursor(d); ri >= 0 && ri < len(d.Payload) {
+				m.MoveSideSection(strings.TrimPrefix(d.Payload[ri], "side:"), -1)
+				cur := d.Cursor
+				m.LoadPsecRows(d)
+				if cur < len(d.FIdx) {
+					d.Cursor = cur
+				}
+				m.Refresh()
+			}
+			return m, nil
+		}
+		if km.Type == tea.KeyCtrlDown {
+			if ri := psecCursor(d); ri >= 0 && ri < len(d.Payload) {
+				m.MoveSideSection(strings.TrimPrefix(d.Payload[ri], "side:"), 1)
+				cur := d.Cursor
+				m.LoadPsecRows(d)
+				if cur < len(d.FIdx) {
+					d.Cursor = cur
+				}
+				m.Refresh()
+			}
+			return m, nil
+		}
+	}
 	switch km.Type {
 	case tea.KeyUp, tea.KeyDown:
 		if d.ProvFocus {

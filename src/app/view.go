@@ -1537,11 +1537,33 @@ func (m Model) thinkLevelAt(x, y int) (string, bool) {
 func (m Model) buildSidebarContent() string {
 	inner := m.sideInnerW()
 	var b strings.Builder
-	if m.SideVisible(SidePet) {
-		b.WriteString(m.renderPet(inner))
+	for _, key := range m.SideOrderKeys() {
+		if !m.SideVisible(key) {
+			continue
+		}
+		b.WriteString(m.renderSideSection(key, inner))
 	}
-	if m.SideVisible(SideSession) {
-		b.WriteString(sideTitleStyle.Render("SESSION") + "\n")
+	return b.String()
+}
+
+func (m Model) renderSideSection(key string, inner int) string {
+	var b strings.Builder
+	switch key {
+	case SidePet:
+		if SideFolded(SidePet) {
+			b.WriteString(sideTitleStyle.Render("PET "+foldMark(SidePet)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(m.renderPet(inner))
+
+	case SideSession:
+		if SideFolded(SideSession) {
+			b.WriteString(sideTitleStyle.Render("SESSION "+foldMark(SideSession)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(sideTitleStyle.Render("SESSION "+foldMark(SideSession)) + "\n")
 		first := m.firstUser()
 		if first == "" {
 			dot := statusBarStyle.Render("○")
@@ -1566,9 +1588,14 @@ func (m Model) buildSidebarContent() string {
 		}
 		b.WriteString(statusBarStyle.Render(Short(file, inner)) + "\n")
 		b.WriteString(m.sep() + "\n")
-	}
 
-	if m.SideVisible(SideModel) {
+	case SideModel:
+		if SideFolded(SideModel) {
+			b.WriteString(sideTitleStyle.Render("MODEL & CONTEXT "+foldMark(SideModel)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(sideTitleStyle.Render("MODEL & CONTEXT "+foldMark(SideModel)) + "\n")
 		lvl := m.thinkLvl
 		if lvl == "" {
 			lvl = "off"
@@ -1604,10 +1631,14 @@ func (m Model) buildSidebarContent() string {
 		}
 		b.WriteString(statusBarStyle.Render(Short(tokLine, inner)) + "\n")
 		b.WriteString(m.sep() + "\n")
-	}
 
-	if m.SideVisible(SideStats) {
-		b.WriteString(sideTitleStyle.Render(twoCol("Stats", "Tokens", inner)) + "\n")
+	case SideStats:
+		if SideFolded(SideStats) {
+			b.WriteString(sideTitleStyle.Render("STATS "+foldMark(SideStats)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(sideTitleStyle.Render(twoCol("Stats "+foldMark(SideStats), "Tokens", inner)) + "\n")
 		elapsed := "—"
 		if !m.sessStart.IsZero() {
 			elapsed = fmtDur(time.Since(m.sessStart))
@@ -1646,19 +1677,33 @@ func (m Model) buildSidebarContent() string {
 		}
 		b.WriteString(statusBarStyle.Render(Short("cached "+cached+" · uncached "+uncached, inner)) + "\n")
 		b.WriteString(m.sep() + "\n")
-	}
 
-	if m.SideVisible(SideCost) {
+	case SideCost:
+		if SideFolded(SideCost) {
+			if len(m.sideCostRows()) == 0 {
+				return ""
+			}
+			b.WriteString(sideTitleStyle.Render("COST "+foldMark(SideCost)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
 		if rows := m.sideCostRows(); len(rows) > 0 {
-			b.WriteString(sideTitleStyle.Render("COST") + "\n")
+			b.WriteString(sideTitleStyle.Render("COST "+foldMark(SideCost)) + "\n")
 			for _, r := range rows {
 				b.WriteString(statusBarStyle.Render(r) + "\n")
 			}
 			b.WriteString(m.sep() + "\n")
 		}
-	}
 
-	if m.SideVisible(SideQuota) {
+	case SideQuota:
+		if SideFolded(SideQuota) {
+			if len(m.sideQuotaRows()) == 0 {
+				return ""
+			}
+			b.WriteString(sideTitleStyle.Render("QUOTA "+foldMark(SideQuota)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
 		// A real quota panel in the opencode-quota shape: one group line per
 		// provider and one row per window, `name [bar] percent% reset`, the
 		// bar filled by the percent LEFT so the block reads as a fuel gauge.
@@ -1667,16 +1712,20 @@ func (m Model) buildSidebarContent() string {
 		// fetch lands (same rule as COST), so a session without a
 		// quota-tracked key pays no rows and no separator.
 		if rows := m.sideQuotaRows(); len(rows) > 0 {
-			b.WriteString(sideTitleStyle.Render(m.sideQuotaTitle(rows)) + "\n")
+			b.WriteString(sideTitleStyle.Render(m.sideQuotaTitle(rows)+" "+foldMark(SideQuota)) + "\n")
 			for _, r := range rows {
 				b.WriteString(r.Style.Render(r.Text) + "\n")
 			}
 			b.WriteString(m.sep() + "\n")
 		}
-	}
 
-	if m.SideVisible(SideRecent) {
-		b.WriteString(sideTitleStyle.Render("RECENT MODELS") + "\n")
+	case SideRecent:
+		if SideFolded(SideRecent) {
+			b.WriteString(sideTitleStyle.Render("RECENT MODELS "+foldMark(SideRecent)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(sideTitleStyle.Render("RECENT MODELS "+foldMark(SideRecent)) + "\n")
 		if len(m.recentModels) == 0 {
 			b.WriteString(toolStyle.Render("—") + "\n")
 		} else {
@@ -1693,10 +1742,14 @@ func (m Model) buildSidebarContent() string {
 		}
 		b.WriteString(toolStyle.Render(m.recentHint()) + "\n")
 		b.WriteString(m.sep() + "\n")
-	}
 
-	if m.SideVisible(SideCommands) {
-		b.WriteString(sideTitleStyle.Render("COMMANDS") + "\n")
+	case SideCommands:
+		if SideFolded(SideCommands) {
+			b.WriteString(sideTitleStyle.Render("COMMANDS "+foldMark(SideCommands)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
+		b.WriteString(sideTitleStyle.Render("COMMANDS "+foldMark(SideCommands)) + "\n")
 		if len(m.Cmds) == 0 {
 			b.WriteString(toolStyle.Render("—") + "\n")
 		} else {
@@ -1709,22 +1762,30 @@ func (m Model) buildSidebarContent() string {
 			b.WriteString(statusBarStyle.Render(fmt.Sprintf("queue: %d steer · %d follow",
 				len(m.queue.Steering), len(m.queue.FollowUp))) + "\n")
 		}
-	}
-	if m.SideVisible(SidePlugins) {
+
+	case SidePlugins:
 		b.WriteString(m.renderPluginsSection(inner))
-	}
-	if m.SideVisible(SideMCP) {
+
+	case SideMCP:
 		b.WriteString(m.renderMcpSection(inner))
-	}
-	if m.SideVisible(SideTodos) {
+
+	case SideTodos:
 		b.WriteString(m.renderTodosSection(inner))
-	}
-	if m.SideVisible(SideLSP) {
+
+	case SideLSP:
 		b.WriteString(m.renderLspSection(inner))
-	}
-	if m.SideVisible(SideTools) {
+
+	case SideTools:
+		if SideFolded(SideTools) {
+			if len(m.invokedTools()) == 0 {
+				return ""
+			}
+			b.WriteString(sideTitleStyle.Render("TOOLS "+foldMark(SideTools)) + "\n")
+			b.WriteString(m.sep() + "\n")
+			return b.String()
+		}
 		if tools := m.invokedTools(); len(tools) > 0 {
-			b.WriteString(sideTitleStyle.Render("TOOLS") + "\n")
+			b.WriteString(sideTitleStyle.Render("TOOLS "+foldMark(SideTools)) + "\n")
 			for _, bl := range tools {
 				var mark, state string
 				switch bl.ToolStatus {
@@ -1740,18 +1801,18 @@ func (m Model) buildSidebarContent() string {
 			}
 			b.WriteString(m.sep() + "\n")
 		}
-	}
-	if m.SideVisible(SideSkills) {
+
+	case SideSkills:
 		// Renders nothing at all until the agent loads a skill, so a session
 		// that never touches one pays no rows and no separator (sideskills.go).
 		// Drawn after TOOLS to keep the order in sync with sideOrder, which is
 		// the row order of the /pitago-setting Sidebar tab.
 		b.WriteString(m.renderSkillsSection(inner))
-	}
-	if m.SideVisible(SideSubagents) {
+
+	case SideSubagents:
 		b.WriteString(m.renderSubagentsSection(inner))
-	}
-	if m.SideVisible(SideWorkspace) {
+
+	case SideWorkspace:
 		folded := SideFolded(SideWorkspace)
 		b.WriteString(sideTitleStyle.Render(Short("WORKSPACE · "+m.ws.branch+" "+foldMark(SideWorkspace), inner)) + "\n")
 		if !folded && m.ws.ok {
@@ -1773,6 +1834,8 @@ func (m Model) buildSidebarContent() string {
 			}
 		}
 		b.WriteString(toolStyle.Render(Short(pirpc.Shorten(m.cwd), inner)) + "\n")
+	default:
+		return ""
 	}
 	return b.String()
 }

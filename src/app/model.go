@@ -205,6 +205,7 @@ type Model struct {
 	MarketErr           string          // last marketplace fetch error ("" = ok/unloaded)
 	showPlugins         bool            // PLUGINS expanded (click header or /plugins)
 	Side                map[string]bool // sidebar section visibility (nil entry = default; MCP + Plugins + Commands hide)
+	SideOrder           []string        // sidebar section key order (nil/empty = default sideOrder)
 	Dialogs             []*Dialog
 	connErr             string
 	probe               startupProbe            // startup readiness budget (zero = defaultProbe)
@@ -1287,14 +1288,17 @@ func (m *Model) ToggleTidy() bool {
 func (m *Model) TogglePlugins() {
 	if !m.SideVisible(SidePlugins) {
 		m.showPlugins = true
+		pluginsFolded.Store(false)
 		m.setSideVisible(SidePlugins, true)
 	} else {
 		m.showPlugins = !m.showPlugins
+		pluginsFolded.Store(!m.showPlugins)
 	}
 	if !m.ready {
 		return
 	}
 	m.Refresh()
+	m.revealSideSection(SidePlugins)
 }
 
 // ToggleSideFold collapses/expands a foldable sidebar section (MCP servers,
@@ -1302,6 +1306,14 @@ func (m *Model) TogglePlugins() {
 // hidden (Sidebar tab default) the first toggle reveals it expanded instead
 // of flipping blind state — same contract as TogglePlugins.
 func (m *Model) ToggleSideFold(key string) {
+	switch key {
+	case SidePlugins:
+		m.TogglePlugins()
+		return
+	case SideLSP:
+		m.ToggleLspSection()
+		return
+	}
 	f := sideFold(key)
 	if f == nil {
 		return
@@ -1316,6 +1328,7 @@ func (m *Model) ToggleSideFold(key string) {
 		return
 	}
 	m.Refresh()
+	m.revealSideSection(key)
 }
 
 // ToggleLspSection collapses/expands the sidebar LSP diagnostics list (/lsp).
@@ -1332,6 +1345,7 @@ func (m *Model) ToggleLspSection() {
 		return
 	}
 	m.Refresh()
+	m.revealSideSection(SideLSP)
 }
 
 // ToggleMouse flips mouse capture at runtime (/mouse): on = clickable
@@ -1596,6 +1610,7 @@ func (m *Model) Configure(opts pirpc.Options, keyPath string) {
 	}
 	m.savedModel = prefs.CurrentModel
 	m.Side = prefs.Side
+	m.SideOrder = normalizeSideOrder(prefs.SideOrder)
 	m.CmdShortcuts = prefs.CmdShortcuts
 	m.RecentCmds = prefs.RecentCmds
 	m.SuggestPlugins = prefs.SuggestPlugins

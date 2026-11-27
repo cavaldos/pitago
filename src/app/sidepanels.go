@@ -1112,9 +1112,21 @@ func (m Model) renderPluginsSection(inner int) string {
 // header click, mirroring PLUGINS/LSP: folded by default for MCP/WORKSPACE. atomic because View
 // and Update both read them.
 var (
-	mcpFolded  atomic.Bool
-	todoFolded atomic.Bool
-	wsFolded   atomic.Bool
+	petFolded       atomic.Bool
+	sessionFolded   atomic.Bool
+	modelFolded     atomic.Bool
+	statsFolded     atomic.Bool
+	costFolded      atomic.Bool
+	quotaFolded     atomic.Bool
+	recentFolded    atomic.Bool
+	commandsFolded  atomic.Bool
+	pluginsFolded   atomic.Bool
+	mcpFolded       atomic.Bool
+	todoFolded      atomic.Bool
+	toolsFolded     atomic.Bool
+	skillsFolded    atomic.Bool
+	subagentsFolded atomic.Bool
+	wsFolded        atomic.Bool
 )
 
 func init() {
@@ -1126,10 +1138,34 @@ func init() {
 // section has no fold, e.g. SESSION or TOOLS).
 func sideFold(key string) *atomic.Bool {
 	switch key {
+	case SideSession:
+		return &sessionFolded
+	case SideModel:
+		return &modelFolded
+	case SideStats:
+		return &statsFolded
+	case SideCost:
+		return &costFolded
+	case SideQuota:
+		return &quotaFolded
+	case SideRecent:
+		return &recentFolded
+	case SideCommands:
+		return &commandsFolded
+	case SidePlugins:
+		return &pluginsFolded
 	case SideMCP:
 		return &mcpFolded
 	case SideTodos:
 		return &todoFolded
+	case SideLSP:
+		return &lspCollapsed
+	case SideTools:
+		return &toolsFolded
+	case SideSkills:
+		return &skillsFolded
+	case SideSubagents:
+		return &subagentsFolded
 	case SideWorkspace:
 		return &wsFolded
 	}
@@ -1155,8 +1191,19 @@ func foldMark(key string) string {
 // instead of counting the rows above it (those shift with visibility,
 // scroll and section content).
 var foldHeaders = []struct{ key, prefix string }{
+	{SideSession, "SESSION"},
+	{SideModel, "MODEL & CONTEXT"},
+	{SideStats, "Stats"},
+	{SideStats, "STATS"},
+	{SideCost, "COST"},
+	{SideQuota, "QUOTA"},
+	{SideRecent, "RECENT MODELS"},
+	{SideCommands, "COMMANDS"},
 	{SideMCP, "MCP Servers"},
 	{SideTodos, "Todos ("},
+	{SideTools, "TOOLS"},
+	{SideSkills, "SKILLS"},
+	{SideSubagents, "Subagents ("},
 	{SideWorkspace, "WORKSPACE"},
 }
 
@@ -1630,7 +1677,10 @@ func (m Model) renderSubagentsSection(inner int) string {
 	if active > 0 {
 		title = fmt.Sprintf("Subagents (%d active)", active)
 	}
-	b.WriteString(sideTitleStyle.Render(title) + "\n")
+	if SideFolded(SideSubagents) {
+		return sideTitleStyle.Render(title+" "+foldMark(SideSubagents)) + "\n" + m.sep() + "\n"
+	}
+	b.WriteString(sideTitleStyle.Render(title+" "+foldMark(SideSubagents)) + "\n")
 	shown := m.Subagents
 	if len(shown) > subagentsShowMax {
 		shown = shown[:subagentsShowMax]
@@ -1673,4 +1723,130 @@ func (m Model) renderSubagentsSection(inner int) string {
 	}
 	b.WriteString(m.sep() + "\n")
 	return b.String()
+}
+
+func normalizeSideOrder(order []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(sideOrder))
+	for _, k := range order {
+		if !isSideKey(k) || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	for _, k := range sideOrder {
+		if !seen[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func isSideKey(key string) bool {
+	for _, k := range sideOrder {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) SideOrderKeys() []string {
+	if len(m.SideOrder) > 0 {
+		return m.SideOrder
+	}
+	out := make([]string, len(sideOrder))
+	copy(out, sideOrder)
+	return out
+}
+
+func (m Model) sideOrderKeys() []string { return m.SideOrderKeys() }
+
+func (m *Model) SetSideOrder(order []string) {
+	m.SideOrder = normalizeSideOrder(order)
+	if m.prefsPath != "" {
+		prefs := LoadPrefs(m.prefsPath)
+		prefs.SideOrder = m.SideOrder
+		_ = SavePrefs(m.prefsPath, prefs)
+	}
+	if m.ready {
+		m.Refresh()
+	}
+}
+
+func (m *Model) MoveSideSection(key string, delta int) {
+	order := append([]string{}, m.SideOrderKeys()...)
+	i := -1
+	for j, k := range order {
+		if k == key {
+			i = j
+			break
+		}
+	}
+	if i < 0 {
+		return
+	}
+	ni := i + delta
+	if ni < 0 {
+		ni = 0
+	}
+	if ni >= len(order) {
+		ni = len(order) - 1
+	}
+	if ni == i {
+		return
+	}
+	order[i], order[ni] = order[ni], order[i]
+	m.SetSideOrder(order)
+}
+
+func (m *Model) ReorderSideSection(key string, delta int) { m.MoveSideSection(key, delta) }
+func (m *Model) MoveSide(key string, delta int)           { m.MoveSideSection(key, delta) }
+func (m *Model) ReorderSide(key string, delta int)        { m.MoveSideSection(key, delta) }
+
+// revealSideSection scrolls the sidebar viewport so the header of the given
+// foldable section is visible. /todos (and the other fold commands) mutate
+// state that may land outside the current scroll window on the tall sidebar,
+// so without this the toggle looks like it did nothing.
+func (m *Model) revealSideSection(key string) {
+	if !m.ready || !m.showSide() {
+		return
+	}
+	prefix := ""
+	for _, h := range foldHeaders {
+		if h.key == key {
+			prefix = h.prefix
+			break
+		}
+	}
+	if prefix == "" {
+		return
+	}
+	row := -1
+	for i, ln := range strings.Split(m.sideCache, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(stripANSI(ln)), prefix) {
+			row = i
+			break
+		}
+	}
+	if row < 0 {
+		return
+	}
+	m.sideVp.YOffset = row
+	total := m.sideVp.TotalLineCount()
+	h := m.sideVp.Height
+	if h < 1 {
+		h = 1
+	}
+	maxOff := total - h
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if m.sideVp.YOffset > maxOff {
+		m.sideVp.YOffset = maxOff
+	}
+	if m.sideVp.YOffset < 0 {
+		m.sideVp.YOffset = 0
+	}
 }

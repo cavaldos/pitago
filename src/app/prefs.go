@@ -35,6 +35,7 @@ type Prefs struct {
 	PetStyle        string            `json:"petStyle,omitempty"`        // "ascii" (default) | "classic" kaomoji look
 	CurrentModel    *ModelRef         `json:"currentModel,omitempty"`    // last-picked model, restored at spawn only
 	Side            map[string]bool   `json:"side,omitempty"`            // sidebar section key → visible (missing = default)
+	SideOrder       []string          `json:"sideOrder,omitempty"`       // sidebar section key order (missing = default)
 	CmdShortcuts    map[string]string `json:"cmdShortcuts,omitempty"`    // /command name → "alt+x" (hub-assigned, Alt+key fires it)
 	RecentCmds      []string          `json:"recentCmds,omitempty"`      // last-run /command names, most recent first (floated to the top of the "/" popup)
 	SuggestPlugins  []string          `json:"suggestPlugins,omitempty"`  // extra packages suggested in the hub Plugins tab (Ctrl+F), bare npm names

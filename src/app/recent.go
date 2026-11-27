@@ -16,7 +16,7 @@ import (
 // guarded by TestRecentAtMatchesRender.
 const (
 	sideSessionRows = 5 // SESSION header + first + sess + file + sep
-	sideModelRows   = 4 // model + ctx + toks + sep (before the level list)
+	sideModelRows   = 5 // header + model + ctx + toks + sep (before the level list)
 	sideStatsRows   = 9 // header + 7 stat lines + sep
 )
 

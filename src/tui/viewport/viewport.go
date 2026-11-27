@@ -83,6 +83,15 @@ func (m *Model) SetContent(s string) {
 	if m.YOffset > len(m.lines)-1 {
 		m.GotoBottom()
 	}
+	// Keep the scroll position inside the valid range after content shrinks
+	// (e.g. a sidebar section folding) so the viewport never shows a blank
+	// tail instead of the section the user just toggled.
+	if off := m.maxYOffset(); m.YOffset > off {
+		m.YOffset = off
+	}
+	if m.YOffset < 0 {
+		m.YOffset = 0
+	}
 }
 
 func (m Model) maxYOffset() int {

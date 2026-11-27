@@ -457,8 +457,11 @@ func (m Model) renderSkillsSection(inner int) string {
 	// " • " prefix + name column + a single space before the description.
 	gap := inner - 3 - nameW - 1
 
+	if SideFolded(SideSkills) {
+		return sideTitleStyle.Render(fmt.Sprintf("SKILLS (%d) %s", len(used), foldMark(SideSkills))) + "\n" + m.sep() + "\n"
+	}
 	var b strings.Builder
-	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("SKILLS (%d)", len(used))) + "\n")
+	b.WriteString(sideTitleStyle.Render(fmt.Sprintf("SKILLS (%d) %s", len(used), foldMark(SideSkills))) + "\n")
 	for _, n := range shown {
 		// The bullet belongs inside the width budget, so truncANSI sees the
 		// whole row (same shape as the TOOLS section).

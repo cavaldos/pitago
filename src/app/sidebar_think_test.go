@@ -141,7 +141,7 @@ func TestSidebarThinkingLevelsEmptyRendersNothing(t *testing.T) {
 // follows the render.
 func TestSideModelRowsDerivedFromLevels(t *testing.T) {
 	var m Model
-	if n := m.sideModelRows(); n != 4 {
+	if n := m.sideModelRows(); n != 5 {
 		t.Fatalf("empty: got %d, want 4", n)
 	}
 	m.thinkLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -153,7 +153,7 @@ func TestSideModelRowsDerivedFromLevels(t *testing.T) {
 	// The level list is model-specific; switching model without a refetch
 	// keeps the old rows (nothing to render yet) rather than guessing.
 	m.thinkLevels = nil
-	if n := m.sideModelRows(); n != 4 {
+	if n := m.sideModelRows(); n != 5 {
 		t.Fatalf("cleared list: got %d, want 4", n)
 	}
 }

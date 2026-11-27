@@ -99,7 +99,7 @@ func TestSideQuotaPanelGolden(t *testing.T) {
 	}{
 		{
 			name: "default", sideW: 0, inner: 30,
-			want: "QUOTA (2)\n" +
+			want: "QUOTA (2) ▾\n" +
 				"OpenCode Go\n" +
 				"   5h ████┃██░░░  72%  2h10m\n" +
 				" week █████┃███░  94%   3d4h\n" +
@@ -109,7 +109,7 @@ func TestSideQuotaPanelGolden(t *testing.T) {
 		},
 		{
 			name: "minSideW", sideW: 26, inner: 22,
-			want: "QUOTA (2)\n" +
+			want: "QUOTA (2) ▾\n" +
 				"OpenCode Go\n" +
 				"   5h █┃░  72%  2h10m\n" +
 				" week █┃█  94%   3d4h\n" +
