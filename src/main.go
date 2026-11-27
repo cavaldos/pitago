@@ -119,6 +119,26 @@ func main() {
 		fmt.Println("Cannot start pi:", err)
 		os.Exit(1)
 	}
+	// A saved model can reference a provider pi no longer knows (renamed or
+	// removed upstream), which makes pi exit during startup with
+	// "Unknown provider". Drop the stale pick and respawn with pi's own default
+	// instead of leaving the TUI dead-ended on "cannot connect to pi".
+	if _, gerr := pi.GetState(); gerr != nil {
+		tail := pirpc.StderrTail()
+		if strings.Contains(tail, "Unknown provider") || strings.Contains(gerr.Error(), "Unknown provider") {
+			pi.Close()
+			prefs := app.LoadPrefs(app.PrefsPath())
+			prefs.CurrentModel = nil
+			_ = app.SavePrefs(app.PrefsPath(), prefs)
+			opts.Provider = ""
+			opts.Model = ""
+			pi, err = pirpc.Spawn(opts)
+			if err != nil {
+				fmt.Println("Cannot start pi:", err)
+				os.Exit(1)
+			}
+		}
+	}
 	defer pi.Close()
 	defer pimark.Close()
 	if os.Getenv("PITAGO_RENDER") == "pi" {
