@@ -316,7 +316,7 @@ func (m *Model) detachLive() tea.Cmd {
 	// garbage baseline for "last"/speed. The remote plugin status/widget
 	// registry goes with the team widget: it was written by the tapped
 	// setStatus/setWidget of a session we are no longer following.
-	m.turnStart = time.Time{}
+	m.turnStart, m.promptStart = time.Time{}, time.Time{}
 	m.turnOutBase = 0
 	m.pendSpeed = false
 	m.clearTeamWidgetState()

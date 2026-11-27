@@ -186,6 +186,7 @@ type Model struct {
 	session             string
 	sessStart           time.Time // session clock for sidebar "time"
 	turnStart           time.Time // last turn start (for "last" + speed)
+	promptStart         time.Time // agent_start of the run: footer duration anchor (a tool round starts a new turn)
 	turnFrom            int       // block index where the current turn began (bounds its duration stamp)
 	turnOutBase         int       // stats.Out at last turn_start
 	pendSpeed           bool      // compute last/speed on next statsMsg

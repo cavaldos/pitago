@@ -716,7 +716,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.histIdx = -1 // keep sent history across /new, back to live input
 		m.applyPopupH()
 		m.sessStart = time.Now()
-		m.turnStart = time.Time{}
+		m.turnStart, m.promptStart = time.Time{}, time.Time{}
 		m.pendSpeed = false
 		m.lastDur, m.lastSpeed = 0, 0
 		m.RefreshFollow()
@@ -1975,11 +1975,18 @@ func escDisarmCmd(gen int) tea.Cmd {
 
 // stampTurnFoot records the opencode-style footer on the reply that closed
 // the turn: which model answered, at what thinking level, how long the
-// prompt took, and the wall-clock time it finished (issue #15). Only blocks from the turn that just ran are
-// eligible: a turn that produced no prose (tool calls only) has nothing to
-// stamp, and the previous turn's reply keeps the footer it already earned.
+// prompt took, and the wall-clock time it finished (issue #15). The duration
+// anchors on agent_start: a prompt that runs tool rounds spans several
+// turn_start events, and measuring from the last one would report only the
+// final round. Only blocks from the turn that just ran are eligible: a turn
+// that produced no prose (tool calls only) has nothing to stamp, and the
+// previous turn's reply keeps the footer it already earned.
 func (m *Model) stampTurnFoot() {
-	if m.turnStart.IsZero() {
+	start := m.turnStart
+	if !m.promptStart.IsZero() {
+		start = m.promptStart
+	}
+	if start.IsZero() {
 		return
 	}
 	parts := make([]string, 0, 3)
@@ -1989,7 +1996,7 @@ func (m *Model) stampTurnFoot() {
 	if lvl := m.thinkLvl; lvl != "" {
 		parts = append(parts, lvl)
 	}
-	parts = append(parts, fmtTurnDur(time.Since(m.turnStart)))
+	parts = append(parts, fmtTurnDur(time.Since(start)))
 	parts = append(parts, "done "+time.Now().Format("15:04:05"))
 	foot := strings.Join(parts, " · ")
 	for i := len(m.blocks) - 1; i >= m.turnFrom && i >= 0; i-- {
@@ -2018,7 +2025,8 @@ func (m Model) applyEvent(ev pirpc.Event) (tea.Model, tea.Cmd) {
 	switch ev.Type {
 	case "agent_start":
 		m.thinking = true
-		m.escArm = time.Time{} // fresh turn drops a stale cancel arm
+		m.escArm = time.Time{}     // fresh turn drops a stale cancel arm
+		m.promptStart = time.Now() // one anchor per prompt run: tool rounds re-emit turn_start
 		m.Status = "pi is running…"
 		pcmd = m.petAnchor()
 	case "turn_start":

@@ -596,6 +596,20 @@ func TestToolOnlyTurnLeavesEarlierFooterAlone(t *testing.T) {
 	}
 }
 
+// A prompt that runs tool rounds spans several turn_start events; the footer
+// duration must anchor on agent_start, not the last round (issue #15).
+func TestTurnFooterCoversWholePrompt(t *testing.T) {
+	m := Model{ModelLbl: "m1"}
+	m.AddBlock(Block{Kind: "user", Text: "hi"})
+	m.promptStart = time.Now().Add(-10 * time.Minute) // agent_start
+	m.turnStart = time.Now().Add(-time.Second)        // last tool round
+	m.AddBlock(Block{Kind: "assistant", Text: "answer"})
+	m.stampTurnFoot()
+	if foot := m.blocks[1].Foot; !strings.Contains(foot, "10m") {
+		t.Fatalf("footer measured the last round, not the whole prompt: %q", foot)
+	}
+}
+
 // fmtTurnDur keeps sub-second prompts honest: fmtDur alone renders them "0s".
 func TestFmtTurnDurSubSecond(t *testing.T) {
 	if got := fmtTurnDur(400 * time.Millisecond); got != "400ms" {
