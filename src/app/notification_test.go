@@ -159,3 +159,43 @@ func TestNotificationRowKeepsSegmentsIntact(t *testing.T) {
 		t.Fatalf("timestamp missing or malformed in:\n%s", plain)
 	}
 }
+
+// The dialog must take the painted two-column path: as a native picker (or a
+// native single-pane list) the picker swallows Ctrl+Y, which is exactly how
+// copy was lost.
+func TestNotificationUsesPaintedTwoColumnPath(t *testing.T) {
+	var m Model
+	m.winW, m.winH = 100, 30
+	m.pushToast("hi", false)
+	m.OpenNotifications("")
+	if !m.PaintedDialog() {
+		t.Fatal("notification must be painted so Ctrl+Y reaches the dialog")
+	}
+	if v, ok := m.NativeSettings(); ok || v.Kind != "" {
+		t.Fatalf("notification must not use the native single-pane view: %+v", v)
+	}
+	if nativePickerKind(m.Dialogs[0]) {
+		t.Fatal("notification must not open as a native picker (it swallows Ctrl+Y)")
+	}
+}
+
+// Left column = title (truncated), right column = the whole notification: a
+// long message must stay readable even though its row cannot show it.
+func TestNotificationDetailColumnShowsFullText(t *testing.T) {
+	const tail = "zzmarkerzz"
+	var m Model
+	m.winW, m.winH = 100, 30
+	m.pushToast(strings.Repeat("long message about a broken pipe ", 3)+tail, true)
+	m.OpenNotifications("")
+	d := m.Dialogs[0]
+	plain := stripANSI(m.renderNotificationDialog(d))
+	if !strings.Contains(plain, "TITLES") || !strings.Contains(plain, "DETAIL") {
+		t.Fatalf("two-column header missing:\n%s", plain)
+	}
+	if !strings.Contains(plain, tail) {
+		t.Fatalf("detail column dropped the message tail:\n%s", plain)
+	}
+	if !strings.Contains(plain, "…") {
+		t.Fatalf("title column should truncate the long row:\n%s", plain)
+	}
+}

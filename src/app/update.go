@@ -127,11 +127,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if d := m.Dialogs[0]; d.Kind == "notification" &&
 				(mm.Button == tea.MouseButtonWheelUp || mm.Button == tea.MouseButtonWheelDown) {
-				t := tea.KeyUp
-				if mm.Button == tea.MouseButtonWheelDown {
-					t = tea.KeyDown
-				}
-				return m.updateDialog(tea.KeyMsg{Type: t})
+				return m.updateTrajWheel(d, mm)
 			}
 			// Click-to-select on the tree and its "Summarize branch?" step: a
 			// click selects a row, a click on the selected row is Enter. Mouse
@@ -148,7 +144,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Painted two-column trace dialogs: click a list row to
 				// select it, click the selected row to confirm.
-				if d := m.Dialogs[0]; d.Kind == "trajectory" || d.Kind == "sessions" {
+				if d := m.Dialogs[0]; d.Kind == "trajectory" || d.Kind == "sessions" || d.Kind == "notification" {
 					nm, cmd, _ := m.clickTraceDialog(d, mm)
 					return nm, cmd
 				}
@@ -3054,19 +3050,8 @@ func (m Model) updateListDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 	case tea.KeyPgUp, tea.KeyPgDown:
 		if d.Kind == "trajectory" {
 			m.trajPage(d, km.Type == tea.KeyPgDown)
-		} else if d.Kind == "notification" && n > 0 {
-			page := notificationWindow(m.winH)
-			if km.Type == tea.KeyPgDown {
-				d.Cursor += page
-			} else {
-				d.Cursor -= page
-			}
-			if d.Cursor >= n {
-				d.Cursor = n - 1
-			}
-			if d.Cursor < 0 {
-				d.Cursor = 0
-			}
+		} else if d.Kind == "notification" {
+			m.notificationPage(d, km.Type == tea.KeyPgDown)
 		}
 		return m, nil
 	case tea.KeyCtrlC:

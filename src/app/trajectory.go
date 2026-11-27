@@ -68,12 +68,33 @@ func trajContentW(winW int) int {
 	return boxW - 6
 }
 
-// trajDetailAt reports whether screen column x is over the DETAIL column.
+// traceGeom is the painted two-column geometry for the trace-family dialogs
+// (/trajectory, /resume, /notification): column widths and visible rows.
+// /notification keeps its own tighter budget so it also fits a small
+// terminal.
+func (m Model) traceGeom(kind string) (boxW, leftW, rightW, win int) {
+	if kind == "notification" {
+		boxW, _, leftW, rightW, win, _ = notificationGeom(m.winW, m.winH)
+		return boxW, leftW, rightW, win
+	}
+	boxW, leftW, rightW = trajGeom(m.winW)
+	return boxW, leftW, rightW, trajWin(m.winH)
+}
+
+// traceDetailLines is the right column's plain lines for the dialog kind.
+func (m Model) traceDetailLines(d *Dialog, w int) []string {
+	if d.Kind == "notification" {
+		return notificationDetailRows(d, w)
+	}
+	return trajDetailLines(trajSelected(d), w)
+}
+
+// traceDetailAt reports whether screen column x is over the DETAIL column.
 // Box total = boxW + border 2, centered; content starts after border(1) +
 // padding(3); the │ divider sits at leftW+1 inside the content.
-func trajDetailAt(winW, x int) bool {
-	boxW, leftW, _ := trajGeom(winW)
-	contentX := (winW-(boxW+2))/2 + 4
+func (m Model) traceDetailAt(kind string, x int) bool {
+	boxW, leftW, _, _ := m.traceGeom(kind)
+	contentX := (m.winW-(boxW+2))/2 + 4
 	return x >= contentX+leftW+1
 }
 
@@ -198,10 +219,9 @@ func trajScroll(off, total, win int) int {
 // selection anywhere (otherwise hovering a short detail feels broken).
 func (m Model) updateTrajWheel(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd) {
 	down := mm.Button == tea.MouseButtonWheelDown
-	_, _, rightW := trajGeom(m.winW)
-	win := trajWin(m.winH)
-	lines := trajDetailLines(trajSelected(d), rightW-4)
-	if len(lines) <= win || !trajDetailAt(m.winW, mm.X) {
+	_, _, rightW, win := m.traceGeom(d.Kind)
+	lines := m.traceDetailLines(d, rightW-4)
+	if len(lines) <= win || !m.traceDetailAt(d.Kind, mm.X) {
 		t := tea.KeyDown
 		if !down {
 			t = tea.KeyUp
@@ -220,21 +240,24 @@ func (m Model) updateTrajWheel(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd) 
 }
 
 // clickTraceDialog handles a left-column click on a painted two-column
-// dialog (/trajectory, /resume): the click selects the row, a click on the
-// already-selected row is Enter — same rule as clickTreeDialog. The row
-// grid sits directly under the drawn STEPS/SESSIONS title line.
+// dialog (/trajectory, /resume, /notification): the click selects the row, a
+// click on the already-selected row is Enter — same rule as clickTreeDialog.
+// The row grid sits directly under the drawn left-column title line.
 func (m Model) clickTraceDialog(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd, bool) {
 	if mm.Action != tea.MouseActionPress || mm.Button != tea.MouseButtonLeft {
 		return m, nil, false
 	}
-	boxW, _, _ := trajGeom(m.winW)
+	boxW, _, _, win := m.traceGeom(d.Kind)
 	contentX := (m.winW - (boxW + 2)) / 2
-	if mm.X < contentX || trajDetailAt(m.winW, mm.X) {
+	if mm.X < contentX || m.traceDetailAt(d.Kind, mm.X) {
 		return m, nil, true // outside the list column: nothing to pick
 	}
 	title := "STEPS"
-	if d.Kind == "sessions" {
+	switch d.Kind {
+	case "sessions":
 		title = "SESSIONS"
+	case "notification":
+		title = "TITLES"
 	}
 	top := -1
 	for i, ln := range strings.Split(ansi.Strip(m.view()), "\n") {
@@ -246,7 +269,6 @@ func (m Model) clickTraceDialog(d *Dialog, mm tea.MouseMsg) (tea.Model, tea.Cmd,
 	if top < 0 {
 		return m, nil, true
 	}
-	win := trajWin(m.winH)
 	row := mm.Y - top - 1
 	if row < 0 || row >= win {
 		return m, nil, true

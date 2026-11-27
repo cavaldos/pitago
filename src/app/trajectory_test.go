@@ -78,10 +78,11 @@ func trajWheelDialog() *Dialog {
 
 // Hit-testing follows the drawn columns: left of │ = steps, on/right = detail.
 func TestTrajDetailAt(t *testing.T) {
-	if trajDetailAt(120, 10) {
+	m := Model{winW: 120, winH: 40}
+	if m.traceDetailAt("trajectory", 10) {
 		t.Error("x=10 should be over STEPS")
 	}
-	if !trajDetailAt(120, 60) {
+	if !m.traceDetailAt("trajectory", 60) {
 		t.Error("x=60 should be over DETAIL")
 	}
 }

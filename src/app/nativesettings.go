@@ -44,7 +44,7 @@ func (m Model) PaintedDialog() bool {
 		return false
 	}
 	switch m.Dialogs[0].Kind {
-	case "trajectory", "sessions": // trace window + /resume keep the painted two-column look
+	case "trajectory", "sessions", "notification": // trace window, /resume and /notification keep the painted two-column look
 		return true
 	case "btw": // the BTW window is a compact painted box (see btw_window.go)
 		return true
@@ -78,11 +78,12 @@ func (m Model) NativeSettings() (tea.SettingsView, bool) {
 		}
 		v.DetailsTitle = "DETAILS"
 		return m.nativeSettingsHub(d, v), true
-	case "trajectory", "sessions":
+	case "trajectory", "sessions", "notification":
 		// Painted on purpose: these keep the old bubble-tea look —
 		// title/filter header, borderless list | DETAIL columns and the
-		// hint footer — drawn by renderTraceDialog/renderResumeDialog over
-		// the normal frame (keys and wheel reach the model's dialog path).
+		// hint footer — drawn by renderTraceDialog/renderResumeDialog/
+		// renderNotificationDialog over the normal frame (keys and wheel
+		// reach the model's dialog path, so Ctrl+Y copy works).
 		return tea.SettingsView{}, false
 	case "btw":
 		// Painted on purpose: the BTW window is a compact centered box

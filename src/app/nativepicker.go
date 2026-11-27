@@ -18,7 +18,7 @@ import (
 // Multi-pane and special-key dialogs use dedicated views instead.
 func nativePickerKind(d *Dialog) bool {
 	switch d.Kind {
-	case "recent", "yank", "fork", "logout", "thinking", "blockactions", "notification", "palette":
+	case "recent", "yank", "fork", "logout", "thinking", "blockactions", "palette":
 		return len(d.Options) > 0
 	case "ui":
 		return d.Method == "select" && len(d.Options) > 0
