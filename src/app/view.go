@@ -2665,7 +2665,7 @@ func (m Model) renderModelDialog(d *Dialog) string {
 			"  " + sideTitleStyle.Width(rightW-2).Render(sel+" · "+fmt.Sprintf("%d", total)) + " │ " +
 			"  " + sideTitleStyle.Width(detW-2).Render("DETAILS") + "\n")
 
-		detLines := d.detailLines(detW)
+		detLines := d.detailLines(detW, m.Probes)
 		for len(detLines) < win {
 			detLines = append(detLines, "  "+statusBarStyle.Width(detW-2).Render(""))
 		}
@@ -2702,7 +2702,7 @@ func (m Model) renderModelDialog(d *Dialog) string {
 		foot = "↑↓ models · ← providers · Tab switch · type filters here · Enter select · ^F star · ^L login · Esc close"
 	}
 	if !detailCol && len(d.Models) > 0 {
-		b.WriteString("\n" + strings.Join(d.detailLines(boxW-4), "\n") + "\n\n")
+		b.WriteString("\n" + strings.Join(d.detailLines(boxW-4, m.Probes), "\n") + "\n\n")
 	} else {
 		b.WriteString("\n")
 	}

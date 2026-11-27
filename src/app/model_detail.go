@@ -1,14 +1,107 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"pitago/src/pirpc"
+	tea "pitago/src/tui/ev"
 )
+
+// ModelProbeMsg reports one Ctrl+T probe from the model picker.
+type ModelProbeMsg struct {
+	Key   string // probe key: provider + "/" + id
+	Label string
+	Err   error
+	Dur   time.Duration
+}
+
+// ModelProbe is one Ctrl+T probe result, shown under the picker details.
+type ModelProbe struct {
+	Ok      bool
+	Pending bool // probe in flight: the details column shows "calling…"
+	Err     string
+	Dur     time.Duration
+}
+
+// probeKey builds the Model.Probes key for a model.
+func probeKey(prov, id string) string {
+	return prov + "/" + id
+}
+
+// probeModelCmd runs `pi -p -ne -ns -np -nc --no-mcp --no-tools
+// --no-session --system-prompt "" --model provider/id -- "Reply with
+// exactly: ok"`: a throwaway subprocess with the coding setup stripped,
+// so the probe exercises the real endpoint cheaply without touching the
+// live session (no transcript entry, no model switch, no session file).
+func (m Model) probeModelCmd(prov, id, label string) tea.Cmd {
+	bin := m.piBin()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		args := []string{"-p", "-ne", "-ns", "-np", "-nc", "--no-mcp", "--no-tools",
+			"--no-session", "--system-prompt", "", "--model", prov + "/" + id,
+			"--", "Reply with exactly: ok"}
+		start := time.Now()
+		cmd := exec.CommandContext(ctx, bin, args...)
+		out, err := cmd.CombinedOutput()
+		dur := time.Since(start)
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				err = fmt.Errorf("timed out after 60s")
+			}
+			return ModelProbeMsg{Key: probeKey(prov, id), Label: label, Dur: dur,
+				Err: fmt.Errorf("%w: %s", err, oneLineTail(string(out)))}
+		}
+		return ModelProbeMsg{Key: probeKey(prov, id), Label: label, Dur: dur}
+	}
+}
+
+// oneLineTail keeps the last non-empty output line: pi print errors are
+// short ("no auth for provider …"), a full capture would flood the toast.
+func oneLineTail(s string) string {
+	s = strings.TrimRight(s, " \t\n\r")
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
+}
+
+// fmtProbeDur renders a probe duration for the details column.
+func fmtProbeDur(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// modelProbeTarget resolves the highlighted picker row to a probe target.
+// ri < 0 when nothing is highlighted (empty or fully filtered list).
+func (d *Dialog) modelProbeTarget() (prov, id, label string) {
+	ri := -1
+	if len(d.FIdx) > 0 && d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
+		ri = d.FIdx[d.Cursor]
+	}
+	mi, ok := d.modelAt(ri)
+	if !ok {
+		return "", "", ""
+	}
+	prov, id = mi.Provider, mi.ID
+	if prov == "" || id == "" {
+		return "", "", ""
+	}
+	label = id
+	if mi.Name != "" {
+		label = mi.Name
+	}
+	return prov, id, label
+}
 
 // modelAt reads the full specs for option i (false when the dialog was
 // built without Models, e.g. tests or non-model pickers).
@@ -103,9 +196,10 @@ func orDash(s string) string {
 
 // detailLines builds the highlighted model's spec lines, each exactly w
 // cells wide: title + Name · Provider · API · Host · Context · Max output ·
-// In/Out · Cache · Thinking · Input · Key. One dim placeholder when the
-// dialog carries no specs, so callers can pad to a fixed height.
-func (d *Dialog) detailLines(w int) []string {
+// In/Out · Cache · Thinking · Input · Key · Test. One dim placeholder when
+// the dialog carries no specs, so callers can pad to a fixed height.
+// probes is the picker's last Ctrl+T results (nil ok).
+func (d *Dialog) detailLines(w int, probes map[string]ModelProbe) []string {
 	ri := -1
 	if len(d.FIdx) > 0 && d.Cursor >= 0 && d.Cursor < len(d.FIdx) {
 		ri = d.FIdx[d.Cursor]
@@ -175,5 +269,19 @@ func (d *Dialog) detailLines(w int) []string {
 	if d.ProvConn[normProv(prov)] {
 		keyVal, keyStyle = "ready", okStyle
 	}
-	return append(lines, "  "+keyLab+" "+keyStyle.Render(Fit(keyVal, valW)))
+	lines = append(lines, "  "+keyLab+" "+keyStyle.Render(Fit(keyVal, valW)))
+	if pr, ok := probes[probeKey(prov, mi.ID)]; ok {
+		lab := toolStyle.Render(Fit("Test", lw))
+		val, style := "", warnStyle
+		switch {
+		case pr.Pending:
+			val, style = "calling…", warnStyle
+		case pr.Ok:
+			val, style = "ok "+fmtProbeDur(pr.Dur), okStyle
+		default:
+			val, style = "failed: "+pr.Err, warnStyle
+		}
+		lines = append(lines, "  "+lab+" "+style.Render(Fit(Short(val, valW), valW)))
+	}
+	return lines
 }

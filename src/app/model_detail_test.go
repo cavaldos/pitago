@@ -70,7 +70,7 @@ func TestModelThinking(t *testing.T) {
 func TestRenderModelDetail(t *testing.T) {
 	d := testDialog()
 	d.Reindex()
-	out := strings.Join(d.detailLines(100), "\n")
+	out := strings.Join(d.detailLines(100, nil), "\n")
 	for _, want := range []string{"claude-opus-4-5", "Name", "Provider", "API", "Host",
 		"opencode.ai", "Context", "Max output", "In / Out", "$5 / $25 per 1M",
 		"Cache r/w", "$0.5 / $6.25 per 1M", "Thinking", "Input", "text, image", "Key", "ready"} {
@@ -82,14 +82,14 @@ func TestRenderModelDetail(t *testing.T) {
 	d.ProvCursor = 0 // All scope so both models are visible
 	d.Reindex()
 	d.Cursor = 1
-	out = strings.Join(d.detailLines(100), "\n")
+	out = strings.Join(d.detailLines(100, nil), "\n")
 	if !strings.Contains(out, "missing") {
 		t.Fatalf("expected missing key:\n%s", out)
 	}
 	// no specs → placeholder, never an empty panel
 	empty := &Dialog{Kind: "model"}
 	empty.Reindex()
-	if ph := empty.detailLines(100); len(ph) == 0 || !strings.Contains(ph[0], "no specs") {
+	if ph := empty.detailLines(100, nil); len(ph) == 0 || !strings.Contains(ph[0], "no specs") {
 		t.Fatalf("expected placeholder, got %q", ph)
 	}
 }

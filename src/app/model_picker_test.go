@@ -1,9 +1,13 @@
 package app
 
 import (
+	"errors"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
+	"pitago/src/pirpc"
 	tea "pitago/src/tui/ev"
 )
 
@@ -232,6 +236,136 @@ func TestModelPickerFavorites(t *testing.T) {
 }
 
 // Ctrl+L in the model picker closes it and opens provider login.
+// Ctrl+T probes the highlighted model: status says testing…, the returned
+// cmd carries the probe, and the picker itself stays open.
+func TestModelPickerCtrlTProbe(t *testing.T) {
+	m := New(nil, t.TempDir())
+	d := &Dialog{
+		Kind: "model", Title: "Select model",
+		Options: []string{"kimi-k2"}, Providers: []string{"moonshot"},
+		Provs:  []string{"All", "moonshot"},
+		Models: []pirpc.ModelInfo{{ID: "kimi-k2", Name: "Kimi K2", Provider: "moonshot"}},
+	}
+	d.Reindex()
+	m.Dialogs = []*Dialog{d}
+	um, cmd := m.updateDialog(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = um.(Model)
+	// the probe is marked in flight: the details column shows "calling…"
+	if pr := m.Probes[probeKey("moonshot", "kimi-k2")]; !pr.Pending || pr.Ok {
+		t.Fatalf("probe must be pending, got %+v", pr)
+	}
+	if cmd == nil {
+		t.Fatal("Ctrl+T must return a probe cmd")
+	}
+	if len(m.Dialogs) != 1 || m.Dialogs[0].Kind != "model" {
+		t.Fatal("the picker must stay open across a probe")
+	}
+	// nothing highlighted (empty list): no probe, no status churn
+	d.FIdx = nil
+	m.Status = "ready"
+	um, cmd = m.updateDialog(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = um.(Model)
+	if cmd != nil || m.Status != "ready" {
+		t.Fatal("Ctrl+T on an empty list must be a no-op")
+	}
+}
+
+// A probe result must land even while the model picker is open: the
+// dialog-capture path swallows async messages, and swallowing ModelProbeMsg
+// stranded the details column on "calling…" forever.
+func TestModelProbeMsgReachesUpdateWithDialogOpen(t *testing.T) {
+	m := New(nil, t.TempDir())
+	d := &Dialog{
+		Kind: "model", Options: []string{"kimi-k2"}, Providers: []string{"moonshot"},
+		Provs:  []string{"All", "moonshot"},
+		Models: []pirpc.ModelInfo{{ID: "kimi-k2", Name: "Kimi K2", Provider: "moonshot"}},
+	}
+	d.Reindex()
+	m.Dialogs = []*Dialog{d}
+	key := probeKey("moonshot", "kimi-k2")
+	m.Probes = map[string]ModelProbe{key: {Pending: true}}
+
+	um, _ := m.Update(ModelProbeMsg{Key: key, Label: "kimi-k2", Dur: time.Second})
+	m = um.(Model)
+	pr := m.Probes[key]
+	if pr.Pending {
+		t.Fatal("the pending marker must be replaced by the result")
+	}
+	if !pr.Ok || pr.Err != "" {
+		t.Fatalf("probe = %+v, want ok", pr)
+	}
+}
+
+// ModelProbeMsg lands as a toast (ok / failed) and resets the status line.
+func TestModelProbeMsgToast(t *testing.T) {
+	m := New(nil, t.TempDir())
+	key := probeKey("moonshot", "kimi-k2")
+	m.Status = "ready"
+	um, _ := m.Update(ModelProbeMsg{Key: key, Label: "kimi-k2"})
+	m = um.(Model)
+	if m.Status != "ready" || len(m.toasts) != 1 || strings.Contains(m.toasts[0].Text, "failed") {
+		t.Fatalf("ok probe → 1 info toast, got %q / %v", m.Status, m.toasts)
+	}
+	if pr := m.Probes[key]; !pr.Ok || pr.Err != "" {
+		t.Fatalf("probes[key] = %+v, want ok probe", pr)
+	}
+	m.Status = "ready"
+	um, _ = m.Update(ModelProbeMsg{Key: key, Label: "kimi-k2", Err: errors.New("no auth")})
+	m = um.(Model)
+	if m.Status != "ready" || len(m.toasts) != 2 || !m.toasts[1].Err {
+		t.Fatalf("failed probe → 1 error toast, got %q / %v", m.Status, m.toasts)
+	}
+	if pr := m.Probes[key]; pr.Ok || pr.Err != "no auth" {
+		t.Fatalf("probes[key] = %+v, want failed probe", pr)
+	}
+}
+
+// the probe result is appended as a Test row under the details column.
+func TestModelProbeDetailRow(t *testing.T) {
+	d := &Dialog{
+		Kind: "model", Options: []string{"kimi-k2"}, Providers: []string{"moonshot"},
+		Provs:  []string{"All", "moonshot"},
+		Models: []pirpc.ModelInfo{{ID: "kimi-k2", Name: "Kimi K2", Provider: "moonshot"}},
+	}
+	d.Reindex()
+	m := New(nil, t.TempDir())
+	out := strings.Join(d.detailLines(100, m.Probes), "\n")
+	if strings.Contains(out, "Test") {
+		t.Fatal("no Test row before any probe")
+	}
+	m.Probes = map[string]ModelProbe{
+		probeKey("moonshot", "kimi-k2"): {Ok: true, Dur: 1200 * time.Millisecond},
+	}
+	out = strings.Join(d.detailLines(100, m.Probes), "\n")
+	if !strings.Contains(out, "Test") || !strings.Contains(out, "ok 1.2s") {
+		t.Fatalf("ok probe row missing, got:\n%s", out)
+	}
+	// in-flight probe shows "calling…"
+	m.Probes[probeKey("moonshot", "kimi-k2")] = ModelProbe{Pending: true}
+	out = strings.Join(d.detailLines(100, m.Probes), "\n")
+	if !strings.Contains(out, "calling…") {
+		t.Fatalf("pending probe row missing, got:\n%s", out)
+	}
+	m.Probes[probeKey("moonshot", "kimi-k2")] = ModelProbe{Err: "no auth for provider"}
+	out = strings.Join(d.detailLines(100, m.Probes), "\n")
+	if !strings.Contains(out, "failed: no auth") {
+		t.Fatalf("failed probe row missing, got:\n%s", out)
+	}
+}
+
+// modelProbeTarget stays strict: a row without specs (no Models entry)
+// is never probeable — the real picker always carries GetModels specs.
+func TestModelProbeTargetNeedsSpecs(t *testing.T) {
+	d := &Dialog{
+		Kind: "model", Options: []string{"openai/gpt-4o"},
+		Providers: []string{"openai"}, Provs: []string{"All", "openai"},
+	}
+	d.Reindex()
+	if prov, id, label := d.modelProbeTarget(); prov != "" || id != "" || label != "" {
+		t.Fatalf("spec-less row must not probe, got %q / %q / %q", prov, id, label)
+	}
+}
+
 func TestModelPickerCtrlLLogin(t *testing.T) {
 	m := New(nil, t.TempDir())
 	m.UseBuiltins([]Builtin{{Name: "login", Run: func(mm *Model, arg string) tea.Cmd {

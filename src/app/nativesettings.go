@@ -268,11 +268,11 @@ func (m Model) nativeModelPicker(d *Dialog, v tea.SettingsView) tea.SettingsView
 		models.Rows = append(models.Rows, tea.SettingsRow{Index: i, Label: ansi.Strip(d.Options[i]), Suffix: star})
 	}
 	v.Panes = []tea.SettingsPane{providers, models}
-	v.Details = settingsDetails(d.detailLines(60))
+	v.Details = settingsDetails(d.detailLines(60, m.Probes))
 	v.WideDetails, v.ScrollDetails = true, true
-	v.Help = "↑↓ models · ← providers · Tab switch · type filters here · Enter select · ^F star · ^L login · Esc close"
+	v.Help = "↑↓ models · ← providers · Tab switch · type filters here · Enter select · ^F star · ^T test · ^L login · Esc close"
 	if d.ProvFocus {
-		v.Help = "↑↓ providers · → models · type to search all · Enter open · ^F star · ^L login · Esc close"
+		v.Help = "↑↓ providers · → models · type to search all · Enter open · ^F star · ^T test · ^L login · Esc close"
 	}
 	return v
 }

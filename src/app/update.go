@@ -214,7 +214,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			MarketStarsMsg, MarketSortMsg, PluginChangeMsg, PluginTickMsg,
 			LoginSyncedMsg, LoginReloadMsg, OAuthGoneMsg, SettingWrittenMsg,
 			LoginSwitchMsg, LoginDeleteMsg, LoginRenameOpenMsg, LogoutDoneMsg,
-			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg, QuotaMsg:
+			LogoutListMsg, McpMsg, McpActionMsg, McpConfigMsg, QuotaMsg,
+			// The model picker's Ctrl+T probe result: the picker is open
+			// while it runs, so swallowing it would strand the details
+			// column on "calling…" forever.
+			ModelProbeMsg:
 		default:
 			return m, nil
 		}
@@ -763,6 +767,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.thinkLevels = msg.Levels // empty is a real answer: model has none
 			m.Refresh()
 		}
+		return m, nil
+
+	case ModelProbeMsg:
+		// Ctrl+T from the model picker: probe finished; stored so the
+		// picker's details column shows the last result under the specs.
+		pr := ModelProbe{Dur: msg.Dur}
+		if msg.Err != nil {
+			pr.Err = msg.Err.Error()
+			m.NotifyErr("model test failed: " + msg.Label + ": " + msg.Err.Error())
+		} else {
+			pr.Ok = true
+			m.Notify("model test ok: " + msg.Label)
+		}
+		if m.Probes == nil {
+			m.Probes = map[string]ModelProbe{}
+		}
+		m.Probes[msg.Key] = pr
+		m.Refresh()
 		return m, nil
 
 	case PickerMsg:
@@ -3154,6 +3176,20 @@ func (m Model) updateListDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 func (m Model) updateModelDialog(km tea.KeyMsg, d *Dialog) (tea.Model, tea.Cmd) {
 	n := len(d.FIdx)
 	switch km.Type {
+	case tea.KeyCtrlT:
+		// quick probe of the highlighted model (throwaway pi subprocess,
+		// result arrives as ModelProbeMsg; the picker stays open).
+		// The details column shows "calling…" while it runs — no status
+		// line churn, the footer already lists the keys.
+		if prov, id, label := d.modelProbeTarget(); prov != "" {
+			if m.Probes == nil {
+				m.Probes = map[string]ModelProbe{}
+			}
+			m.Probes[probeKey(prov, id)] = ModelProbe{Pending: true}
+			m.Refresh()
+			return m, m.probeModelCmd(prov, id, label)
+		}
+		return m, nil
 	case tea.KeyUp:
 		if d.ProvFocus {
 			if len(d.Provs) > 0 {
