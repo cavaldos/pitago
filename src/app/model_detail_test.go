@@ -13,7 +13,7 @@ func testDialog() *Dialog {
 	return &Dialog{
 		Kind:      "model",
 		Options:   []string{"claude-opus-4-5", "llama-3.1-8b-instant"},
-		Descs:     []string{"Claude Opus 4.5 · opencode", "Llama 3.1 8B · groq"},
+		Descs:     []string{"Claude Opus 4.5", "Llama 3.1 8B"},
 		Providers: []string{"opencode", "groq"},
 		Models: []pirpc.ModelInfo{
 			{
@@ -120,10 +120,14 @@ func TestModelDialogNarrowFooter(t *testing.T) {
 	m.winW, m.winH = 100, 40
 	d := testDialog()
 	d.Title = "Select model"
+	d.ProvCursor = 0 // show both providers in the model list
 	d.Reindex()
 	out := m.renderModelDialog(d)
 	if strings.Contains(out, "DETAILS") {
 		t.Fatalf("narrow dialog must not have a details column:\n%s", out)
+	}
+	if !strings.Contains(out, "llama-3.1-8b-instant") || strings.Contains(out, "Llama 3.1 8B · groq") {
+		t.Fatalf("model rows must not repeat the provider:\n%s", out)
 	}
 	if !strings.Contains(out, "In / Out") {
 		t.Fatalf("narrow dialog must keep the footer specs:\n%s", out)

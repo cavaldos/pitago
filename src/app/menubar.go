@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strconv"
 	"strings"
 
 	tea "pitago/src/tui/ev"
@@ -76,6 +77,7 @@ func (m Model) MenuBar() []tea.Menu {
 			{ID: "cmd:/mcp", Label: "MCP Servers…"},
 			{ID: "cmd:/login", Label: "Login…"},
 		}},
+		{Title: "Favorite", Items: m.favoriteMenuItems()},
 		{Title: "Quota", Items: m.quotaMenuItems()},
 		{Title: "Restart", Items: m.restartMenuItems()},
 		{Title: "Help", Items: []tea.MenuItem{
@@ -90,6 +92,21 @@ func (m Model) MenuBar() []tea.Menu {
 
 // quotaMenuItems opens /quota, with the active provider's windows listed
 // (disabled, read-only) above it when a snapshot exists.
+func (m Model) favoriteMenuItems() []tea.MenuItem {
+	if len(m.favModels) == 0 {
+		return []tea.MenuItem{{Label: "No favorite models", Disabled: true}}
+	}
+	items := make([]tea.MenuItem, 0, len(m.favModels))
+	for i, f := range m.favModels {
+		label := f.Label
+		if label == "" {
+			label = f.ID
+		}
+		items = append(items, tea.MenuItem{ID: "fav:" + strconv.Itoa(i), Label: label, Hint: f.Provider})
+	}
+	return items
+}
+
 func (m Model) quotaMenuItems() []tea.MenuItem {
 	var items []tea.MenuItem
 	if q, ok := m.currentQuota(); ok {
@@ -183,6 +200,10 @@ func (m Model) runAction(id string, ctx int) (tea.Model, tea.Cmd) {
 		}
 	case "cmd":
 		return m, m.runSlash(arg)
+	case "fav":
+		if i, err := strconv.Atoi(arg); err == nil {
+			return m, m.SwitchToFavorite(i)
+		}
 	case "copy":
 		cmd := m.RunBlockAction(&Dialog{BlockIdx: ctx, Payload: []string{arg}}, 0)
 		return m, cmd

@@ -128,10 +128,27 @@ func (m *Model) SwitchToRecent(idx int) tea.Cmd {
 		return nil
 	}
 	r := m.recentModels[idx]
+	return m.switchToModel(r.Provider, r.ID, r.DispLabel())
+}
+
+// SwitchToFavorite switches to one of the starred models.
+func (m *Model) SwitchToFavorite(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(m.favModels) {
+		return nil
+	}
+	f := m.favModels[idx]
+	label := f.Label
+	if label == "" {
+		label = f.ID
+	}
+	return m.switchToModel(f.Provider, f.ID, label)
+}
+
+func (m *Model) switchToModel(provider, modelID, label string) tea.Cmd {
 	m.Status = "switching model…"
 	m.Refresh()
 	return func() tea.Msg {
-		prov, id := r.Provider, r.ID
+		prov, id := provider, modelID
 		if prov == "" {
 			models, err := m.Pi.GetModels()
 			if err != nil {
@@ -139,7 +156,7 @@ func (m *Model) SwitchToRecent(idx int) tea.Cmd {
 			}
 			found := false
 			for _, mi := range models {
-				if mi.ID == r.ID || mi.Name == r.ID || mi.Name == r.DispLabel() {
+				if mi.ID == modelID || mi.Name == modelID || mi.Name == label {
 					prov, id = mi.Provider, mi.ID
 					if id == "" {
 						id = mi.Name
@@ -149,11 +166,11 @@ func (m *Model) SwitchToRecent(idx int) tea.Cmd {
 				}
 			}
 			if !found {
-				return ModelCycleMsg{Err: fmt.Errorf("model %q not in pi model list", r.DispLabel())}
+				return ModelCycleMsg{Err: fmt.Errorf("model %q not in pi model list", label)}
 			}
 		}
-		label, err := m.Pi.SetModelByID(prov, id)
-		return ModelCycleMsg{Label: label, Provider: prov, ID: id, Err: err}
+		name, err := m.Pi.SetModelByID(prov, id)
+		return ModelCycleMsg{Label: name, Provider: prov, ID: id, Err: err}
 	}
 }
 

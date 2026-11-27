@@ -155,7 +155,7 @@ func TestMenuBar(t *testing.T) {
 	for _, mm := range bar {
 		titles = append(titles, mm.Title)
 	}
-	if strings.Join(titles, " ") != "File Edit Selection View Options Quota Restart Help" {
+	if strings.Join(titles, " ") != "File Edit Selection View Options Favorite Quota Restart Help" {
 		t.Fatalf("titles = %v", titles)
 	}
 	side := func(m Model) string {
@@ -168,6 +168,19 @@ func TestMenuBar(t *testing.T) {
 	}
 	if side(m) != "✓ Sidebar" {
 		t.Fatalf("sidebar label %q", side(m))
+	}
+	favMenu := bar[5].Items
+	if len(favMenu) != 1 || !favMenu[0].Disabled || favMenu[0].Label != "No favorite models" {
+		t.Fatalf("empty favorite menu = %+v", favMenu)
+	}
+	m.favModels = []FavEntry{{Provider: "openai", ID: "gpt-4o", Label: "GPT-4o"}}
+	favMenu = m.MenuBar()[5].Items
+	if len(favMenu) != 1 || favMenu[0].ID != "fav:0" || favMenu[0].Label != "GPT-4o" || favMenu[0].Hint != "openai" {
+		t.Fatalf("favorite menu = %+v", favMenu)
+	}
+	picked, cmd := m.Update(tea.MenuResultMsg{Tag: tea.MenuBarTag, ID: "fav:0"})
+	if cmd == nil || picked.(Model).Status != "switching model…" {
+		t.Fatal("favorite pick did not start switching")
 	}
 	tm, _ = m.Update(tea.MenuResultMsg{Tag: tea.MenuBarTag, ID: "key:ctrl+e"})
 	m = tm.(Model)

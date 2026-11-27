@@ -1334,7 +1334,7 @@ func All() []app.Builtin {
 				provs := make([]string, 0, len(models))
 				for _, mi := range models {
 					opts = append(opts, mi.ID)
-					descs = append(descs, mi.Name+" · "+mi.Provider)
+					descs = append(descs, mi.Name)
 					provs = append(provs, mi.Provider)
 				}
 				return app.PickerMsg{Kind: "model", Options: opts, Descs: descs, Providers: provs, Models: models, Current: m.ModelLbl}

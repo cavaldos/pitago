@@ -81,6 +81,7 @@ type ContextMenu struct {
 	anchorKind anchorKind
 	armed      bool // a press or motion happened inside: releases may select
 	closed     bool
+	offset     int
 }
 
 // NewContextMenu builds a menu; styles default to DefaultMenuStyles.
@@ -227,6 +228,7 @@ func (m *ContextMenu) Place(bounds Rect) {
 		r = placeAtPoint(m.anchor.X, m.anchor.Y, w, h, bounds)
 	}
 	m.SetRect(r.X, r.Y, r.W, r.H)
+	m.keepVisible(m.sel)
 }
 
 // Draw implements tview.Primitive.
@@ -251,11 +253,20 @@ func (m *ContextMenu) Draw(scr tcell.Screen) {
 	scr.SetContent(x+w-1, y+h-1, tview.Borders.BottomRight, nil, st.Border)
 
 	inner := w - 2
-	for i, it := range m.Items {
-		ry := y + 1 + i
-		if ry >= y+h-1 {
+	visible := h - 2
+	if m.offset > 0 {
+		scr.SetContent(x+w/2, y, '▲', nil, st.Border)
+	}
+	if m.offset+visible < len(m.Items) {
+		scr.SetContent(x+w/2, y+h-1, '▼', nil, st.Border)
+	}
+	for row := 0; row < visible; row++ {
+		i := m.offset + row
+		if i >= len(m.Items) {
 			break
 		}
+		it := m.Items[i]
+		ry := y + 1 + row
 		if it.Separator {
 			scr.SetContent(x, ry, tview.Borders.LeftT, nil, st.Border)
 			scr.SetContent(x+w-1, ry, tview.Borders.RightT, nil, st.Border)
@@ -301,7 +312,7 @@ func (m *ContextMenu) itemAt(x, y int) int {
 	if x <= rx || x >= rx+rw-1 || y <= ry || y >= ry+rh-1 {
 		return -1
 	}
-	i := y - ry - 1
+	i := m.offset + y - ry - 1
 	if i >= len(m.Items) {
 		return -1
 	}
@@ -313,6 +324,14 @@ func (m *ContextMenu) itemAt(x, y int) int {
 func (m *ContextMenu) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
 	return m.WrapMouseHandler(func(a tview.MouseAction, e *tcell.EventMouse, _ func(tview.Primitive)) (bool, tview.Primitive) {
 		x, y := e.Position()
+		if a == tview.MouseScrollUp || a == tview.MouseScrollDown {
+			if a == tview.MouseScrollUp {
+				m.scroll(-3)
+			} else {
+				m.scroll(3)
+			}
+			return true, nil
+		}
 		i := m.itemAt(x, y)
 		switch a {
 		case actMove:
@@ -346,12 +365,16 @@ func (m *ContextMenu) InputHandler() func(*tcell.EventKey, func(tview.Primitive)
 		switch e.Key() {
 		case tcell.KeyUp, tcell.KeyBacktab:
 			m.sel = m.step(m.sel, -1)
+			m.keepVisible(m.sel)
 		case tcell.KeyDown, tcell.KeyTab:
 			m.sel = m.step(m.sel, 1)
+			m.keepVisible(m.sel)
 		case tcell.KeyHome:
 			m.sel = m.step(-1, 1)
+			m.keepVisible(m.sel)
 		case tcell.KeyEnd:
 			m.sel = m.step(len(m.Items), -1)
+			m.keepVisible(m.sel)
 		case tcell.KeyEnter:
 			if m.sel >= 0 {
 				m.choose(m.sel)
@@ -376,6 +399,25 @@ func (m *ContextMenu) InputHandler() func(*tcell.EventKey, func(tview.Primitive)
 
 // step moves from i in direction d to the next selectable row, wrapping;
 // it returns i (or -1) when there is none.
+func (m *ContextMenu) scroll(delta int) {
+	_, _, _, h := m.GetRect()
+	m.offset = max(0, min(m.offset+delta, len(m.Items)-max(1, h-2)))
+}
+
+func (m *ContextMenu) keepVisible(i int) {
+	if i < 0 {
+		return
+	}
+	_, _, _, h := m.GetRect()
+	visible := max(1, h-2)
+	if i < m.offset {
+		m.offset = i
+	} else if i >= m.offset+visible {
+		m.offset = i - visible + 1
+	}
+	m.scroll(0) // clamp after the menu or screen size changes
+}
+
 func (m *ContextMenu) step(i, d int) int {
 	n := len(m.Items)
 	for k := 1; k <= n; k++ {

@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -169,6 +170,26 @@ func TestMenuKeyboard(t *testing.T) {
 	f.h.key(tcell.KeyEsc) // menu closed: keys reach the base again
 	if len(f.base.keys) != 1 {
 		t.Errorf("base keys %v", f.base.keys)
+	}
+}
+
+func TestMenuScrollsLongLists(t *testing.T) {
+	f := newMenuFixture(t, 30, 8)
+	f.m.Items = nil
+	for i := 0; i < 12; i++ {
+		f.m.Items = append(f.m.Items, MenuItem{ID: "item", Label: fmt.Sprintf("Model %02d", i)})
+	}
+	f.openAt(2, 2)
+	if f.rect().H != 8 || !strings.Contains(f.h.row(1), "Model 00") || !strings.Contains(f.h.row(7), "▼") {
+		t.Fatalf("initial clipped menu:\n%s", f.h.screen())
+	}
+	f.h.wheel(5, 3)
+	if f.m.offset <= 0 || !strings.Contains(f.h.row(1), fmt.Sprintf("Model %02d", f.m.offset)) || !strings.Contains(f.h.row(0), "▲") {
+		t.Fatalf("wheel did not scroll menu:\n%s", f.h.screen())
+	}
+	f.h.key(tcell.KeyEnd)
+	if f.m.Selected() != 11 || f.m.offset != 6 || !strings.Contains(f.h.row(6), "Model 11") {
+		t.Fatalf("End did not reveal last item:\n%s", f.h.screen())
 	}
 }
 
