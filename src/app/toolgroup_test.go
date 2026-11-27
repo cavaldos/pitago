@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	tea "pitago/src/tui/ev"
 )
 
 func TestConsecutiveActivityFoldsIntoSummary(t *testing.T) {
@@ -33,6 +35,73 @@ func TestConsecutiveActivityFoldsIntoSummary(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("open group missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestConsecutiveCompactToolRowsHaveNoGap(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.vp.Width, m.vp.Height = 120, 20
+	m.blocks = []Block{
+		{Kind: "tool", ToolName: "bash", ToolArgs: "go test", ToolStatus: "done", GroupOpen: true},
+		{Kind: "assistant", Text: "\n"},
+		{Kind: "tool", ToolName: "ctx_execute", ToolArgs: "echo hi", ToolStatus: "done"},
+		{Kind: "tool", ToolName: "edit", ToolArgs: "main.go", ToolStatus: "done"},
+		{Kind: "thinking", Text: "checking"},
+	}
+	for range 2 { // cold render and cache hit
+		out := stripANSI(m.renderBlocks())
+		if !strings.Contains(out, "Bash(go test)\n● Ctx_execute(echo hi)\n● Edit(main.go)\n\n○ checking") {
+			t.Fatalf("expected adjacent tool rows with a gap before thinking:\n%s", out)
+		}
+		for i, want := range map[int]string{2: "Ctx_execute", 3: "Edit", 4: "checking"} {
+			row := m.blockRows[i]
+			if m.blockLine[i] != row || !strings.Contains(stripANSI(m.chatLines[row]), want) {
+				t.Fatalf("wrong row for block %d: %d", i, row)
+			}
+		}
+	}
+}
+
+func TestCollapseToolGroupFromFooter(t *testing.T) {
+	m := New(nil, t.TempDir())
+	m.ready, m.Mouse, m.hideSide = true, true, true
+	m.winW, m.winH = 120, 32
+	m.vp.Width, m.vp.Height = 120, 5
+	m.blocks = []Block{
+		{Kind: "tool", ToolName: "bash", ToolArgs: "go test", ToolStatus: "done", GroupOpen: true, Expanded: true, ToolResult: strings.Repeat("test output\n", 12)},
+		{Kind: "tool", ToolName: "bash", ToolArgs: "git status", ToolStatus: "done"},
+	}
+	for range 8 {
+		m.blocks = append(m.blocks, Block{Kind: "assistant", Text: "later message"})
+	}
+	m.Refresh()
+	footer := -1
+	for row, text := range m.chatLines {
+		if stripANSI(text) == "[Collapse]" {
+			footer = row
+			break
+		}
+	}
+	if footer <= m.blockRows[1] || footer >= m.blockRows[2] {
+		t.Fatalf("collapse button should be after the last tool and before the next message; row=%d", footer)
+	}
+	m.vp.SetYOffset(footer - 2)
+	painted := m.chatViewport()
+	if painted.YOffset <= m.blockRows[0] {
+		t.Fatal("precondition: group header is scrolled offscreen")
+	}
+	y := footer - painted.YOffset + 1
+	msg := tea.MouseMsg{X: 2, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	updated, _ := m.Update(msg)
+	msg.Action = tea.MouseActionRelease
+	updated, _ = updated.Update(msg)
+	m = updated.(Model)
+	out := stripANSI(m.chatContent)
+	if m.blocks[0].GroupOpen || strings.Contains(out, "[Collapse]") || strings.Contains(out, "Bash(git status)") {
+		t.Fatalf("the button did not collapse the group:\n%s", out)
+	}
+	if m.chatViewport().YOffset > m.blockRows[0] {
+		t.Fatal("collapsed summary is still scrolled offscreen")
 	}
 }
 

@@ -143,19 +143,10 @@ func (m *Model) renderBlocks() string {
 	cursor := ly(b.String())
 	line := strings.Count(b.String(), "\n")
 	m.computeToolGroups()
+	clear(m.toolGroupFooters)
+	groupEnd := -1
+	toolGap := false
 	for i, bl := range m.blocks {
-		// The jump mark lives outside renderOneBlock on purpose: it is a
-		// scroll anchor, not block content, and putting it in the cached
-		// string would fold it into blockKey's input for every other block.
-		if i == m.jumpBlock {
-			b.WriteString(toolStyle.Render(jumpMark) + "\n")
-			cursor++
-			line++
-		}
-		// Hidden/skipped blocks render as "", so they record the line the
-		// next visible block will use and the table never drifts.
-		m.blockRows[i] = cursor
-		m.blockLine[i] = line
 		// Image-bearing blocks bypass the cache: their first render embeds a
 		// one-time upload, and a cached replay would resend the payload on
 		// every frame. Re-rendering them is a few string concats.
@@ -171,37 +162,66 @@ func (m *Model) renderBlocks() string {
 		if head >= 0 {
 			key ^= m.toolGroupKey(i)
 		}
-		if len(bl.Images) == 0 && m.renderCacheKey[i] == key {
-			s := m.renderCache[i]
-			b.WriteString(s)
-			cursor += ly(s)
-			line += strings.Count(s, "\n")
-			continue
+		if head == i && !expand && bl.GroupOpen {
+			members := m.groupMembers(i)
+			groupEnd = members[len(members)-1]
 		}
-		var s string
-		switch {
-		case head >= 0 && m.groupCollapsed(head) && i != head:
-			s = "" // folded into the group's summary row
-		case head == i && m.groupCollapsed(head):
-			s = m.renderToolGroupSummary(head, cw) + "\n\n"
-		default:
-			var skip bool
-			s, skip = m.renderOneBlock(bl, cw)
-			if skip {
-				s = ""
+		s := m.renderCache[i]
+		if len(bl.Images) > 0 || m.renderCacheKey[i] != key {
+			switch {
+			case head >= 0 && m.groupCollapsed(head) && i != head:
+				s = "" // folded into the group's summary row
+			case head == i && m.groupCollapsed(head):
+				s = m.renderToolGroupSummary(head, cw) + "\n\n"
+			default:
+				var skip bool
+				s, skip = m.renderOneBlock(bl, cw)
+				if skip {
+					s = ""
+				}
+				if head == i {
+					// Open group: the summary stays on top as the fold toggle.
+					s = m.renderToolGroupSummary(head, cw) + "\n" + s
+				}
 			}
-			if head == i {
-				// Open group: the summary stays on top as the fold toggle.
-				s = m.renderToolGroupSummary(head, cw) + "\n" + s
-			}
+			m.renderCacheKey[i], m.renderCache[i] = key, s
 		}
-		// Stored for gutter/selection bookkeeping below, but never
-		// loaded back for image blocks (see the load guard above).
-		m.renderCacheKey[i] = key
-		m.renderCache[i] = s
+		compact := s != "" && bl.Kind == "tool" && !expand && !bl.Expanded && len(bl.Images) == 0 &&
+			(head != i || !m.groupCollapsed(head))
+		// Keep each compact tool's trailing blank only if the next visible
+		// row is not another compact tool. Spacing is not part of the cache.
+		if toolGap && (i == m.jumpBlock || (s != "" && !compact)) {
+			b.WriteByte('\n')
+			cursor++
+			line++
+			toolGap = false
+		}
+		if i == m.jumpBlock {
+			b.WriteString(toolStyle.Render(jumpMark) + "\n")
+			cursor++
+			line++
+		}
+		m.blockRows[i], m.blockLine[i] = cursor, line
+		if compact || i == groupEnd {
+			s = strings.TrimSuffix(s, "\n")
+			toolGap = true
+		}
 		b.WriteString(s)
 		cursor += ly(s)
 		line += strings.Count(s, "\n")
+		if i == groupEnd {
+			if m.toolGroupFooters == nil {
+				m.toolGroupFooters = make(map[int]int)
+			}
+			m.toolGroupFooters[cursor] = head
+			b.WriteString(toolNameStyle.Render("[Collapse]") + "\n\n")
+			cursor += 2
+			line += 2
+			toolGap = false
+		}
+	}
+	if toolGap {
+		b.WriteByte('\n')
 	}
 	// pi renders the compaction indicator in the input border only, so a
 	// mid-turn auto-compaction must not also paint a status row in the chat.

@@ -307,6 +307,8 @@ type Model struct {
 	lastPaint           time.Time // last chat viewport paint (streaming coalesces to streamFrame)
 	pendingPaint        bool      // a coalesced paint is waiting on its flush tick
 
+	toolGroupFooters map[int]int // absolute Collapse button row → group head
+
 	// unsend is the prompt a double-Esc cancel can still take back (nil =
 	// none). It is replaced, never mutated: Model copies share the pointer.
 	unsend *pendingUnsend

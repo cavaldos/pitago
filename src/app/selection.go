@@ -145,15 +145,23 @@ func (m Model) updateSelection(msg tea.MouseMsg) (Model, tea.Cmd, bool) {
 			if i := m.chatRowToBlock(msg.Y); i >= 0 && i < len(m.blocks) &&
 				(m.blocks[i].Kind == "tool" || m.blocks[i].Kind == "thinking" ||
 					m.blocks[i].Kind == "bash") {
-				if m.blocks[i].Kind != "bash" && m.isGroupSummaryRow(i, msg.Y) {
+				head, footer := m.toolGroupFooters[p.Line]
+				switch {
+				case footer:
+					m.blocks[head].GroupOpen = false
+				case m.isGroupSummaryRow(i, msg.Y):
 					m.blocks[i].GroupOpen = !m.blocks[i].GroupOpen
-				} else {
+				default:
 					m.blocks[i].Expanded = !m.blocks[i].Expanded
 				}
 				m.sel = Selection{}
 				// Refresh, not RefreshFollow: keep the reader where they
 				// clicked instead of jumping to the newest message.
 				m.Refresh()
+				if footer {
+					// The rows above the click disappeared; keep the summary in view.
+					m.vp.SetYOffset(min(m.vp.YOffset, m.blockRows[head]))
+				}
 				return m, nil, true
 			}
 		}
