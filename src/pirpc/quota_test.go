@@ -1,6 +1,7 @@
 package pirpc
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,17 @@ func quotaTestEndpoints(t *testing.T, goURL, zenURL string) {
 	})
 }
 
+// quotaNeutralEnv clears EVERY provider env var. A developer's shell often
+// exports real keys (OPENROUTER_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, …),
+// and the env fallback would then turn a quota test into a real API call —
+// for Groq even a real request of the reported budget.
+func quotaNeutralEnv(t *testing.T) {
+	t.Helper()
+	for _, p := range ProviderEnvsAll() {
+		t.Setenv(p.Env, "")
+	}
+}
+
 // quotaTestKeys writes one provider key into a temp keystore and points pi's
 // auth.json at an empty temp dir: the lookup must find the pitago key and
 // never the developer's real one.
@@ -40,8 +52,7 @@ func quotaTestKeys(t *testing.T, provider, key string) string {
 	// Neutralise ambient provider keys: the env fallback (B2) would otherwise
 	// feed the twin the developer's shell variable and make these assertions
 	// depend on who runs the suite.
-	t.Setenv("OPENCODE_API_KEY", "")
-	t.Setenv("OPENCODE_GO_API_KEY", "")
+	quotaNeutralEnv(t)
 	env := LookupEnv(provider)
 	if env == "" {
 		t.Fatalf("no keystore slot for provider %q", provider)
@@ -60,10 +71,18 @@ func resetQuotaCache(t *testing.T) {
 	quotaCache.mu.Lock()
 	quotaCache.keyPath, quotaCache.at, quotaCache.snap = "", time.Time{}, nil
 	quotaCache.mu.Unlock()
+	groqProbeCache.mu.Lock()
+	groqProbeCache.key, groqProbeCache.model = "", ""
+	groqProbeCache.at, groqProbeCache.q = time.Time{}, ProviderQuota{}
+	groqProbeCache.mu.Unlock()
 	t.Cleanup(func() {
 		quotaCache.mu.Lock()
 		quotaCache.keyPath, quotaCache.at, quotaCache.snap = "", time.Time{}, nil
 		quotaCache.mu.Unlock()
+		groqProbeCache.mu.Lock()
+		groqProbeCache.key, groqProbeCache.model = "", ""
+		groqProbeCache.at, groqProbeCache.q = time.Time{}, ProviderQuota{}
+		groqProbeCache.mu.Unlock()
 	})
 }
 
@@ -106,7 +125,7 @@ func TestQuotaGoUsageWindows(t *testing.T) {
 		"monthly":{"status":"ok","percent":52,"resetsAt":"2026-12-01T00:00:00.000Z"}}}`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if q.Err != "" {
 		t.Fatalf("unexpected err: %q", q.Err)
 	}
@@ -143,7 +162,7 @@ func TestQuotaGoFloatPercent(t *testing.T) {
 	srv := quotaJSONServer(t, `{"usage":{"rolling":{"status":"ok","percent":23.6}}}`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if q.Err != "" {
 		t.Fatalf("float percent must parse, got err %q", q.Err)
 	}
@@ -160,7 +179,7 @@ func TestQuotaGoRateLimited(t *testing.T) {
 	srv := quotaJSONServer(t, `{"usage":{"rolling":{"status":"rate-limited","percent":41,"resetsAt":"2026-11-23T10:02:56.000Z"}}}`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if q.Err != "" {
 		t.Fatalf("rate-limited is a status, not an error: %q", q.Err)
 	}
@@ -177,7 +196,7 @@ func TestQuotaGoExpiredKey(t *testing.T) {
 	srv := quotaStatusServer(t, http.StatusUnauthorized, `{"error":{"code":"api_key_expired"}}`)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if !strings.Contains(q.Err, "re-login") {
 		t.Fatalf("401 must tell the user to re-login, got %q", q.Err)
 	}
@@ -196,7 +215,7 @@ func TestQuotaGoEntitlement(t *testing.T) {
 	srv := quotaStatusServer(t, http.StatusForbidden, `{"error":"EntitlementError"}`)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if !strings.Contains(q.Err, "subscription") {
 		t.Fatalf("403 must mention the missing subscription, got %q", q.Err)
 	}
@@ -211,7 +230,7 @@ func TestQuotaZenBudgets(t *testing.T) {
 		{"ruleID":"r2","limitDollars":"25.0","spentDollars":"5.5","resetsAt":""}]`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode", keys)
+	q := FetchProviderQuota("opencode", keys, "")
 	if q.Err != "" {
 		t.Fatalf("unexpected err: %q", q.Err)
 	}
@@ -237,7 +256,7 @@ func TestQuotaZenForbiddenIsTolerated(t *testing.T) {
 	srv := quotaStatusServer(t, http.StatusForbidden, "Forbidden")
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode", keys)
+	q := FetchProviderQuota("opencode", keys, "")
 	if q.Note != "budget not visible for this key" || q.Err != "" {
 		t.Fatalf("403 budget note = %q err = %q", q.Note, q.Err)
 	}
@@ -245,7 +264,7 @@ func TestQuotaZenForbiddenIsTolerated(t *testing.T) {
 		t.Fatalf("a gated key must still identify its provider: %+v", q)
 	}
 	// QuotaSnapshot keeps the row: a hidden provider reads as "quota went away".
-	snap := QuotaSnapshot(keys)
+	snap := QuotaSnapshot(keys, "")
 	if len(snap) != 1 || snap[0].Provider != "opencode" || snap[0].Note == "" {
 		t.Fatalf("snapshot must keep the gated row: %+v", snap)
 	}
@@ -261,7 +280,7 @@ func TestQuotaSnapshotSkipsUnconfigured(t *testing.T) {
 	zenSrv := quotaJSONServer(t, `[]`, &zenHits)
 	quotaTestEndpoints(t, goSrv.URL, zenSrv.URL)
 
-	snap := QuotaSnapshot(keys)
+	snap := QuotaSnapshot(keys, "")
 	if len(snap) != 1 || snap[0].Provider != "opencode-go" {
 		t.Fatalf("want only the configured provider, got %+v", snap)
 	}
@@ -282,18 +301,18 @@ func TestQuotaTTLCache(t *testing.T) {
 	srv := quotaJSONServer(t, `{"usage":{"rolling":{"status":"ok","percent":7}}}`, &hits)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	first := QuotaCached(keys)
+	first := QuotaCached(keys, "")
 	if len(first) != 1 || first[0].Windows[0].UsedPct != 7 {
 		t.Fatalf("first snapshot = %+v", first)
 	}
 	if !QuotaFresh(keys) {
 		t.Fatal("a just-fetched snapshot must be fresh")
 	}
-	QuotaCached(keys)
+	QuotaCached(keys, "")
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Fatalf("cached call hit the endpoint: %d requests", got)
 	}
-	QuotaForce(keys)
+	QuotaForce(keys, "")
 	if got := atomic.LoadInt32(&hits); got != 2 {
 		t.Fatalf("force must refetch: %d requests", got)
 	}
@@ -304,13 +323,13 @@ func TestQuotaTTLCache(t *testing.T) {
 	if QuotaFresh(keys) {
 		t.Fatal("an aged snapshot must not count as fresh")
 	}
-	QuotaCached(keys)
+	QuotaCached(keys, "")
 	if got := atomic.LoadInt32(&hits); got != 3 {
 		t.Fatalf("expired cache must refetch: %d requests", got)
 	}
 	// A different keystore can never be served from another one's cache.
 	other := quotaTestKeys(t, "opencode-go", "cache-other-key")
-	QuotaCached(other)
+	QuotaCached(other, "")
 	if got := atomic.LoadInt32(&hits); got != 4 {
 		t.Fatalf("other keystore must refetch: %d requests", got)
 	}
@@ -340,7 +359,7 @@ func TestQuotaUnknownProvider(t *testing.T) {
 	srv := quotaJSONServer(t, `{}`, &hits)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("groq", keys)
+	q := FetchProviderQuota("not-a-provider", keys, "")
 	if q.Err != "quota tracking not supported yet" {
 		t.Fatalf("unknown provider err = %q", q.Err)
 	}
@@ -364,7 +383,7 @@ func TestQuotaGoMissingPercent(t *testing.T) {
 			srv := quotaJSONServer(t, tc.body, nil)
 			quotaTestEndpoints(t, srv.URL, srv.URL)
 
-			q := FetchProviderQuota("opencode-go", keys)
+			q := FetchProviderQuota("opencode-go", keys, "")
 			if q.Err != "usage payload had no usable percent" {
 				t.Fatalf("err = %q, want the missing-percent sentence", q.Err)
 			}
@@ -386,7 +405,7 @@ func TestQuotaGoPartialPercent(t *testing.T) {
 		"weekly":{"status":"ok"}}}`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode-go", keys)
+	q := FetchProviderQuota("opencode-go", keys, "")
 	if q.Err != "" {
 		t.Fatalf("one known percent must keep the row: %q", q.Err)
 	}
@@ -426,7 +445,7 @@ func TestQuotaResetsAtShapes(t *testing.T) {
 			srv := quotaJSONServer(t, body, nil)
 			quotaTestEndpoints(t, srv.URL, srv.URL)
 
-			q := FetchProviderQuota("opencode-go", keys)
+			q := FetchProviderQuota("opencode-go", keys, "")
 			if q.Err != "" {
 				t.Fatalf("a numeric resetsAt must not fail the payload: %q", q.Err)
 			}
@@ -455,7 +474,7 @@ func TestQuotaZenResetsAtNumber(t *testing.T) {
 	srv := quotaJSONServer(t, `[{"limitDollars":100,"spentDollars":12.4,"resetsAt":1795000000000}]`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	q := FetchProviderQuota("opencode", keys)
+	q := FetchProviderQuota("opencode", keys, "")
 	if q.Err != "" || len(q.Budgets) != 1 {
 		t.Fatalf("budget payload = %+v", q)
 	}
@@ -493,7 +512,7 @@ func TestQuotaStatusSentences(t *testing.T) {
 			srv := quotaStatusServer(t, tc.status, tc.body)
 			quotaTestEndpoints(t, srv.URL, srv.URL)
 
-			q := FetchProviderQuota(provider, keys)
+			q := FetchProviderQuota(provider, keys, "")
 			if tc.wantNote != "" {
 				if q.Note != tc.wantNote || q.Err != "" {
 					t.Fatalf("note = %q err = %q, want note %q", q.Note, q.Err, tc.wantNote)
@@ -523,8 +542,7 @@ func TestQuotaEnvFallback(t *testing.T) {
 		agent := t.TempDir()
 		t.Setenv("PI_CODING_AGENT_DIR", agent)
 		writePiAuth(t, agent, map[string]any{})
-		t.Setenv("OPENCODE_API_KEY", "")
-		t.Setenv("OPENCODE_GO_API_KEY", "")
+		quotaNeutralEnv(t)
 		return filepath.Join(t.TempDir(), "keys.json")
 	}
 
@@ -537,7 +555,7 @@ func TestQuotaEnvFallback(t *testing.T) {
 		zenSrv := quotaJSONServer(t, `[]`, &zenHits)
 		quotaTestEndpoints(t, goSrv.URL, zenSrv.URL)
 
-		snap := QuotaSnapshot(keys)
+		snap := QuotaSnapshot(keys, "")
 		if len(snap) != 1 || snap[0].Provider != "opencode-go" {
 			t.Fatalf("env-only Go key should yield one Go row: %+v", snap)
 		}
@@ -558,7 +576,7 @@ func TestQuotaEnvFallback(t *testing.T) {
 		zenSrv := quotaJSONServer(t, `[{"limitDollars":100,"spentDollars":12.4}]`, &zenHits)
 		quotaTestEndpoints(t, goSrv.URL, zenSrv.URL)
 
-		snap := QuotaSnapshot(keys)
+		snap := QuotaSnapshot(keys, "")
 		if len(snap) != 1 || snap[0].Provider != "opencode" {
 			t.Fatalf("the shared env var belongs to Zen, got %+v", snap)
 		}
@@ -576,7 +594,7 @@ func TestQuotaEnvFallback(t *testing.T) {
 		var hits int32
 		srv := quotaJSONServer(t, `{}`, &hits)
 		quotaTestEndpoints(t, srv.URL, srv.URL)
-		if snap := QuotaSnapshot(keys); len(snap) != 0 {
+		if snap := QuotaSnapshot(keys, ""); len(snap) != 0 {
 			t.Fatalf("no credential should yield no row: %+v", snap)
 		}
 		if atomic.LoadInt32(&hits) != 0 {
@@ -638,7 +656,7 @@ func TestQuotaSnapshotIsDeepCopy(t *testing.T) {
 	srv := quotaJSONServer(t, `{"usage":{"rolling":{"status":"ok","percent":7}}}`, nil)
 	quotaTestEndpoints(t, srv.URL, srv.URL)
 
-	first := QuotaForce(keys)
+	first := QuotaForce(keys, "")
 	if len(first) != 1 || len(first[0].Windows) != 1 {
 		t.Fatalf("snapshot = %+v", first)
 	}
@@ -646,7 +664,7 @@ func TestQuotaSnapshotIsDeepCopy(t *testing.T) {
 	first[0].Label = "poisoned"
 	first[0].Windows = append(first[0].Windows, QuotaWindow{Name: "x"})
 
-	second := QuotaCached(keys)
+	second := QuotaCached(keys, "")
 	if second[0].Windows[0].UsedPct != 7 || second[0].Label == "poisoned" || len(second[0].Windows) != 1 {
 		t.Fatalf("the cache was poisoned by the caller's copy: %+v", second)
 	}
@@ -667,7 +685,7 @@ func TestQuotaCacheConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if snap := QuotaCached(keys); len(snap) > 0 {
+				if snap := QuotaCached(keys, ""); len(snap) > 0 {
 					snap[0].Windows[0].UsedPct = 42 // caller-owned copy
 				}
 			}
@@ -675,7 +693,7 @@ func TestQuotaCacheConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				QuotaForce(keys)
+				QuotaForce(keys, "")
 			}
 		}()
 		go func() {
@@ -703,7 +721,7 @@ func TestFetchCodexQuota(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", dir)
 	os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"openai-codex":{"type":"oauth","access":"tok","accountId":"acc"}}`), 0o600)
 
-	q := FetchProviderQuota("openai-codex", "")
+	q := FetchProviderQuota("openai-codex", "", "")
 	if q.Err != "" || len(q.Windows) != 2 || q.Plan != "plus" {
 		t.Fatalf("q = %+v", q)
 	}
@@ -737,5 +755,175 @@ func TestFetchAnthropicAndOpenRouterQuota(t *testing.T) {
 	r := fetchOpenRouterQuota(ProviderQuota{Provider: "openrouter"}, "k")
 	if r.Err != "" || len(r.Budgets) != 1 || r.Budgets[0].SpentUSD != 1.25 || r.Budgets[0].LimitUSD != 10 {
 		t.Fatalf("openrouter = %+v", r)
+	}
+}
+
+// The Gemini API has no quota endpoint at all: no usage payload, no
+// rate-limit header. The row must therefore VERIFY the key and say where the
+// numbers live — never print a percent nobody sent.
+func TestQuotaGeminiRowIsASentence(t *testing.T) {
+	resetQuotaCache(t)
+	keys := quotaTestKeys(t, "google", "gemini-key")
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if got := r.Header.Get("x-goog-api-key"); got != "gemini-key" {
+			t.Errorf("x-goog-api-key = %q, want the key in the header", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-3.8-flash"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	old := quotaGeminiModelsURL
+	quotaGeminiModelsURL = srv.URL
+	t.Cleanup(func() { quotaGeminiModelsURL = old })
+
+	q := FetchProviderQuota("google", keys, "")
+	if q.Err != "" {
+		t.Fatalf("unexpected err: %q", q.Err)
+	}
+	if len(q.Windows) != 0 || len(q.Budgets) != 0 {
+		t.Fatalf("Gemini must not invent numbers: %+v", q)
+	}
+	if !strings.Contains(q.Note, "no quota API") {
+		t.Fatalf("note = %q, want it to name the missing quota API", q.Note)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("hits = %d, want 1", hits)
+	}
+}
+
+// An invalid Gemini key answers 400 + "API key not valid", not 401: it is a
+// dead key, never "0% used".
+func TestQuotaGeminiInvalidKey(t *testing.T) {
+	resetQuotaCache(t)
+	keys := quotaTestKeys(t, "google", "gemini-key")
+	srv := quotaStatusServer(t, http.StatusBadRequest,
+		`{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}`)
+	old := quotaGeminiModelsURL
+	quotaGeminiModelsURL = srv.URL
+	t.Cleanup(func() { quotaGeminiModelsURL = old })
+
+	q := FetchProviderQuota("google", keys, "")
+	if !strings.Contains(q.Err, "key rejected") {
+		t.Fatalf("err = %q, want a rejected-key sentence", q.Err)
+	}
+	if len(q.Windows) != 0 {
+		t.Fatalf("a failed lookup must not keep windows: %+v", q.Windows)
+	}
+}
+
+// groqQuotaServer serves the two calls the probe makes: the key's model list
+// and one minimal completion that answers with rate-limit headers.
+func groqQuotaServer(t *testing.T, hits *int32, probed *string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			_, _ = io.WriteString(w, `{"data":[
+				{"id":"whisper-large-v3","output_modalities":["audio"]},
+				{"id":"openai/gpt-oss-120b","output_modalities":["text"]}]}`)
+		case "/chat/completions":
+			if hits != nil {
+				atomic.AddInt32(hits, 1)
+			}
+			var body struct {
+				Model string `json:"model"`
+			}
+			raw, _ := io.ReadAll(io.LimitReader(r.Body, quotaBodyLimit))
+			_ = json.Unmarshal(raw, &body)
+			if probed != nil {
+				*probed = body.Model
+			}
+			w.Header().Set("x-ratelimit-limit-requests", "1000")
+			w.Header().Set("x-ratelimit-remaining-requests", "900")
+			w.Header().Set("x-ratelimit-reset-requests", "1m26.4s")
+			w.Header().Set("x-ratelimit-limit-tokens", "8000")
+			w.Header().Set("x-ratelimit-remaining-tokens", "4000")
+			w.Header().Set("x-ratelimit-reset-tokens", "90ms")
+			_, _ = io.WriteString(w, `{"id":"chatcmpl-1"}`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// The Groq rate limit lives in the response headers of an inference call:
+// the row is the used share of the request and token budgets.
+func TestQuotaGroqReadsRateLimitHeaders(t *testing.T) {
+	resetQuotaCache(t)
+	keys := quotaTestKeys(t, "groq", "groq-key")
+	var hits int32
+	var probed string
+	srv := groqQuotaServer(t, &hits, &probed)
+	oldM, oldC := quotaGroqModelsURL, quotaGroqChatURL
+	quotaGroqModelsURL, quotaGroqChatURL = srv.URL+"/models", srv.URL+"/chat/completions"
+	t.Cleanup(func() { quotaGroqModelsURL, quotaGroqChatURL = oldM, oldC })
+
+	q := FetchProviderQuota("groq", keys, "openai/gpt-oss-120b")
+	if q.Err != "" {
+		t.Fatalf("unexpected err: %q", q.Err)
+	}
+	if probed != "openai/gpt-oss-120b" {
+		t.Fatalf("probed model = %q, want the model in use", probed)
+	}
+	if len(q.Windows) != 2 {
+		t.Fatalf("want 2 windows, got %+v", q.Windows)
+	}
+	if q.Windows[0].Name != "requests" || q.Windows[0].UsedPct != 10 || !q.Windows[0].PercentKnown {
+		t.Fatalf("requests window = %+v", q.Windows[0])
+	}
+	if q.Windows[1].Name != "tokens" || q.Windows[1].UsedPct != 50 {
+		t.Fatalf("tokens window = %+v", q.Windows[1])
+	}
+	if q.Windows[0].ResetsAt.IsZero() {
+		t.Fatal("the reset clock must be read from the header")
+	}
+	// The limit belongs to a MODEL: the row has to say which one it measured.
+	if q.Plan != "openai/gpt-oss-120b" {
+		t.Fatalf("plan = %q, want the probed model", q.Plan)
+	}
+}
+
+// The probe spends one request of the budget it reports, so the automatic
+// snapshot reuses it; only the explicit refresh probes again.
+func TestQuotaGroqProbeIsCached(t *testing.T) {
+	resetQuotaCache(t)
+	keys := quotaTestKeys(t, "groq", "groq-key")
+	var hits int32
+	srv := groqQuotaServer(t, &hits, nil)
+	oldM, oldC := quotaGroqModelsURL, quotaGroqChatURL
+	quotaGroqModelsURL, quotaGroqChatURL = srv.URL+"/models", srv.URL+"/chat/completions"
+	t.Cleanup(func() { quotaGroqModelsURL, quotaGroqChatURL = oldM, oldC })
+
+	QuotaSnapshot(keys, "openai/gpt-oss-120b")
+	QuotaSnapshot(keys, "openai/gpt-oss-120b")
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("probe hits = %d, want 1 (the snapshot must reuse the probe)", got)
+	}
+	// The explicit refresh is the user asking "what now?": it probes again.
+	FetchProviderQuota("groq", keys, "openai/gpt-oss-120b")
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("probe hits = %d, want 2 (an explicit refresh must re-probe)", got)
+	}
+}
+
+// Without a hint the probe still needs a model: it takes the first one that
+// can answer a text prompt (an audio-only model cannot).
+func TestQuotaGroqProbeFallsBackToATextModel(t *testing.T) {
+	resetQuotaCache(t)
+	keys := quotaTestKeys(t, "groq", "groq-key")
+	var hits int32
+	var probed string
+	srv := groqQuotaServer(t, &hits, &probed)
+	oldM, oldC := quotaGroqModelsURL, quotaGroqChatURL
+	quotaGroqModelsURL, quotaGroqChatURL = srv.URL+"/models", srv.URL+"/chat/completions"
+	t.Cleanup(func() { quotaGroqModelsURL, quotaGroqChatURL = oldM, oldC })
+
+	FetchProviderQuota("groq", keys, "")
+	if probed != "openai/gpt-oss-120b" {
+		t.Fatalf("probed model = %q, want the text model", probed)
 	}
 }

@@ -72,12 +72,13 @@ func (m *Model) RefreshQuota(stale bool) tea.Cmd {
 	if stale && pirpc.QuotaFresh(keyPath) {
 		return nil
 	}
+	model := m.quotaModel()
 	return func() tea.Msg {
 		var snap []pirpc.ProviderQuota
 		if stale {
-			snap = pirpc.QuotaCached(keyPath)
+			snap = pirpc.QuotaCached(keyPath, model)
 		} else {
-			snap = pirpc.QuotaForce(keyPath)
+			snap = pirpc.QuotaForce(keyPath, model)
 		}
 		return QuotaMsg{Quotas: snap, At: quotaSnapshotAt(snap)}
 	}
@@ -89,8 +90,11 @@ func (m *Model) RefreshQuota(stale bool) tea.Cmd {
 func (m *Model) RefreshQuotaProvider(provider string) tea.Cmd {
 	keyPath := m.KeyPath
 	snap := append([]pirpc.ProviderQuota(nil), m.quota...)
+	// Read the hint on the event loop, not inside the Cmd: the goroutine must
+	// not touch the model while the loop is writing it.
+	model := m.quotaModel()
 	return func() tea.Msg {
-		q := pirpc.FetchProviderQuota(provider, keyPath)
+		q := pirpc.FetchProviderQuota(provider, keyPath, model)
 		merged := false
 		for i := range snap {
 			if snap[i].Provider == provider {
@@ -103,6 +107,17 @@ func (m *Model) RefreshQuotaProvider(provider string) tea.Cmd {
 		}
 		return QuotaMsg{Quotas: snap, At: quotaSnapshotAt(snap)}
 	}
+}
+
+// quotaModel is the model the user is actually running, and only that: it is
+// the hint the Groq probe uses, because Groq's rate limit is per model and a
+// probe with another model answers a different question. For every other
+// provider it stays empty — their endpoints do not care which model is loaded.
+func (m Model) quotaModel() string {
+	if m.ModelProv != "groq" {
+		return ""
+	}
+	return m.ModelLbl
 }
 
 // quotaKeyChanged drops the cached snapshot and refetches. Every credential
@@ -227,6 +242,11 @@ func quotaRowText(q pirpc.ProviderQuota) string {
 	}
 	parts := make([]string, 0, len(q.Windows)+len(q.Budgets)+1)
 	parts = append(parts, q.Label)
+	// The plan (a tier, or the model a Groq probe measured) belongs to the
+	// row: without it the numbers answer "whose quota?" with nothing.
+	if plan := strings.TrimSpace(q.Plan); plan != "" {
+		parts = append(parts, plan)
+	}
 	for _, w := range q.Windows {
 		if !w.PercentKnown {
 			// No invented number: the row says the window exists and the
@@ -272,6 +292,14 @@ func quotaRowDesc(q pirpc.ProviderQuota, fetchedAt time.Time) string {
 	}
 	if age := quotaAge(fetchedAt); age != "" {
 		parts = append(parts, "snapshot "+age)
+	}
+	// A row that was measured earlier than the rest of the snapshot says so:
+	// the Groq probe is reused for minutes (it spends a request of the very
+	// budget it reports), and a stale number must not read as a live one.
+	if q.FetchedAt.Before(fetchedAt.Add(-time.Minute)) {
+		if age := quotaAge(q.FetchedAt); age != "" {
+			parts = append(parts, "probed "+age)
+		}
 	}
 	if len(parts) == 0 {
 		return "no reset time reported"

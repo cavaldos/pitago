@@ -109,8 +109,10 @@ type QuotaBudget struct {
 // failed lookup can never render as "0%". The split exists because painting
 // a tolerated 403 red contradicts the fetch code's own comment.
 //
-// Plan is the provider's plan name when an adapter learns one (no adapter
-// reports one yet). The row builder appends it to the group line, so the day
+// Plan is the provider's plan name when an adapter learns one (the ChatGPT
+// Codex tier), and the MODEL a probe measured when the limit belongs to a
+// model (Groq's rate limit is per model: the numbers of another model would
+// be another quota). The row builder appends it to the group line, so the day
 // a response carries the plan the UI needs no new plumbing.
 type ProviderQuota struct {
 	Provider  string
@@ -125,7 +127,7 @@ type ProviderQuota struct {
 
 // quotaProviders is the supported set and its display/fetch order: stable so
 // the rows never shuffle between refreshes.
-var quotaProviders = []string{"opencode-go", "opencode", "openai-codex", "anthropic", "openrouter"}
+var quotaProviders = []string{"opencode-go", "opencode", "openai-codex", "anthropic", "openrouter", "google", "groq"}
 
 // quotaEndpoints are package vars, not consts, so tests can point them at an
 // httptest server. No test may touch the real provider APIs, and redirecting
@@ -150,6 +152,17 @@ var (
 	quotaAnthropicURL = "https://api.anthropic.com/api/oauth/usage"
 	// openrouter: GET /api/v1/key returns {data:{usage,limit,limit_reset,…}}.
 	quotaOpenRouterURL = "https://openrouter.ai/api/v1/key"
+	// google (Gemini): the API has NO quota endpoint — no usage payload, no
+	// rate-limit headers (checked against the v1beta discovery document and
+	// the Gemini API docs: the limits are per project and only visible in AI
+	// Studio, behind a Google login). The row therefore verifies the key
+	// against the free models.list call and points at AI Studio.
+	quotaGeminiModelsURL = "https://generativelanguage.googleapis.com/v1beta/models"
+	// groq: the rate limit rides on the HEADERS of an inference response, so
+	// reading it costs one minimal completion (max_tokens=1). /models lists
+	// what the key may use and costs no request of its own.
+	quotaGroqModelsURL = "https://api.groq.com/openai/v1/models"
+	quotaGroqChatURL   = "https://api.groq.com/openai/v1/chat/completions"
 )
 
 const (
@@ -164,6 +177,11 @@ const (
 	// payload is a few hundred bytes, and an HTML error page must not be
 	// buffered whole.
 	quotaBodyLimit = 1 << 20
+	// groqProbeTTL is how long a Groq rate-limit probe is reused. The probe
+	// spends one request from the very budget it reports, so it must not run
+	// on every 90s snapshot: at that cadence it would burn about a thousand
+	// requests a day, which is the whole daily request budget.
+	groqProbeTTL = 10 * time.Minute
 )
 
 // quotaHTTP has an explicit timeout because the default client has none:
@@ -219,7 +237,11 @@ func quotaDurationLabel(secs int) string {
 // resolved the credential situation already or accept the Err row: a
 // provider that is simply not configured belongs to QuotaSnapshot's skip
 // list, not here.
-func FetchProviderQuota(provider, keyPath string) ProviderQuota {
+//
+// model is the model the user is running (see quotaModelHint); only Groq
+// reads it. This entry point is the EXPLICIT refresh (Enter on a /quota
+// row), so it forces a fresh probe where the automatic snapshot reuses one.
+func FetchProviderQuota(provider, keyPath, model string) ProviderQuota {
 	q, supported := newProviderQuota(provider)
 	if !supported {
 		return q
@@ -229,7 +251,7 @@ func FetchProviderQuota(provider, keyPath string) ProviderQuota {
 		q.Err = "no saved key — /login " + provider
 		return q
 	}
-	return fetchProviderQuota(q, key)
+	return fetchProviderQuota(q, key, model, true)
 }
 
 // newProviderQuota seeds one row and answers the supported question. It is
@@ -249,7 +271,9 @@ func newProviderQuota(provider string) (ProviderQuota, bool) {
 }
 
 // fetchProviderQuota dispatches one already-credentialed row to its adapter.
-func fetchProviderQuota(q ProviderQuota, key string) ProviderQuota {
+// model is the model in play (Groq's limit is per model); force asks for a
+// fresh read even when a cached one exists.
+func fetchProviderQuota(q ProviderQuota, key, model string, force bool) ProviderQuota {
 	switch q.Provider {
 	case "opencode-go":
 		return fetchGoQuota(q, key)
@@ -261,6 +285,10 @@ func fetchProviderQuota(q ProviderQuota, key string) ProviderQuota {
 		return fetchAnthropicQuota(q, key)
 	case "openrouter":
 		return fetchOpenRouterQuota(q, key)
+	case "google":
+		return fetchGeminiQuota(q, key)
+	case "groq":
+		return fetchGroqQuota(q, key, model, force)
 	}
 	return q
 }
@@ -269,7 +297,9 @@ func fetchProviderQuota(q ProviderQuota, key string) ProviderQuota {
 // credential, in quotaProviders order. Providers without a key are skipped
 // entirely: an error row for a provider the user never touched would be
 // permanent noise for everyone who does not use OpenCode.
-func QuotaSnapshot(keyPath string) []ProviderQuota {
+//
+// model is the model the user is running; only Groq reads it.
+func QuotaSnapshot(keyPath, model string) []ProviderQuota {
 	out := make([]ProviderQuota, 0, len(quotaProviders))
 	for _, provider := range quotaProviders {
 		// Resolve the key once: the old shape read the keystore here and
@@ -282,7 +312,7 @@ func QuotaSnapshot(keyPath string) []ProviderQuota {
 		if !supported {
 			continue
 		}
-		out = append(out, fetchProviderQuota(q, key))
+		out = append(out, fetchProviderQuota(q, key, model, false))
 	}
 	return out
 }
@@ -584,7 +614,7 @@ var quotaCache struct {
 
 // QuotaCached returns the snapshot for keyPath, fetching only when the cache
 // is empty, belongs to another keystore, or is older than quotaTTL.
-func QuotaCached(keyPath string) []ProviderQuota {
+func QuotaCached(keyPath, model string) []ProviderQuota {
 	quotaCache.mu.Lock()
 	if quotaCache.keyPath == keyPath && !quotaCache.at.IsZero() &&
 		time.Since(quotaCache.at) < quotaTTL {
@@ -596,7 +626,7 @@ func QuotaCached(keyPath string) []ProviderQuota {
 		return snap
 	}
 	quotaCache.mu.Unlock()
-	return QuotaForce(keyPath)
+	return QuotaForce(keyPath, model)
 }
 
 // QuotaInvalidate drops the cached snapshot. Credential changes call this:
@@ -607,13 +637,19 @@ func QuotaInvalidate() {
 	quotaCache.mu.Lock()
 	quotaCache.keyPath, quotaCache.at, quotaCache.snap = "", time.Time{}, nil
 	quotaCache.mu.Unlock()
+	// The Groq probe belongs to the key it measured: a switched key must
+	// not keep showing the previous key's rate limit.
+	groqProbeCache.mu.Lock()
+	groqProbeCache.key, groqProbeCache.model = "", ""
+	groqProbeCache.at, groqProbeCache.q = time.Time{}, ProviderQuota{}
+	groqProbeCache.mu.Unlock()
 }
 
 // QuotaForce refetches every configured provider and replaces the cache. It
 // is the dialog-open path: the user asking "what now?" is exactly the reason
 // to spend two HTTP calls.
-func QuotaForce(keyPath string) []ProviderQuota {
-	snap := QuotaSnapshot(keyPath)
+func QuotaForce(keyPath, model string) []ProviderQuota {
+	snap := QuotaSnapshot(keyPath, model)
 	quotaCache.mu.Lock()
 	quotaCache.keyPath, quotaCache.at, quotaCache.snap = keyPath, time.Now(), snap
 	quotaCache.mu.Unlock()
@@ -888,4 +924,272 @@ func fetchOpenRouterQuota(q ProviderQuota, key string) ProviderQuota {
 	b.ResetsAt = quotaTime(payload.Data.LimitReset)
 	q.Budgets = []QuotaBudget{b}
 	return q
+}
+
+// fetchGeminiQuota reports what the Gemini API can actually say about quota.
+//
+// It says nothing: there is no usage endpoint, no quota endpoint, and not one
+// rate-limit header on any response (checked against the v1beta discovery
+// document and the Gemini API docs — the limits are per PROJECT and only
+// visible in AI Studio, behind a Google login). So the row does the only
+// thing the API allows: it verifies the key with the free models.list call
+// and says where the real numbers live. Printing a percentage nobody sent
+// would be the one unforgivable thing a quota panel can do.
+func fetchGeminiQuota(q ProviderQuota, key string) ProviderQuota {
+	req, err := http.NewRequest(http.MethodGet, quotaGeminiModelsURL, nil)
+	if err != nil {
+		q.Err = fmt.Sprintf("usage request: %v", err)
+		return q
+	}
+	// The key travels in the header, not the query string: a URL ends up in
+	// logs and in error messages.
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-goog-api-key", key)
+	res, err := quotaHTTP.Do(req)
+	if err != nil {
+		q.Err = fmt.Sprintf("usage endpoint unreachable: %v", err)
+		return q
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, quotaBodyLimit))
+	switch res.StatusCode {
+	case http.StatusOK:
+	case http.StatusBadRequest:
+		// Gemini answers an invalid key with 400 + "API key not valid",
+		// not with 401.
+		if strings.Contains(string(body), "API_KEY_INVALID") ||
+			strings.Contains(string(body), "API key not valid") {
+			q.Err = "key rejected — re-login with /login google"
+			return q
+		}
+		q.Err = quotaStatusErr(q.Provider, res.StatusCode)
+		return q
+	case http.StatusUnauthorized, http.StatusForbidden:
+		q.Err = quotaAuthErr(q.Provider, body)
+		return q
+	default:
+		q.Err = quotaStatusErr(q.Provider, res.StatusCode)
+		return q
+	}
+	q.Note = "key ok — Gemini has no quota API (limits are per project, RPM/TPM/RPD): aistudio.google.com/rate-limit"
+	return q
+}
+
+// fetchGroqQuota reads Groq's rate limit.
+//
+// Groq has no usage endpoint: the limit rides on the HEADERS of an inference
+// response (x-ratelimit-limit/remaining/reset-requests|tokens), so reading it
+// costs one minimal completion (max_tokens=1). The probe therefore has its
+// own cache (groqProbeTTL): on the 90s snapshot cadence it would spend about
+// a thousand requests a day — the very budget the panel reports.
+//
+// model is the model in play: Groq's limits are per model, so a probe with
+// another model answers a different question. It is a hint, not a
+// requirement — the key's own model list decides what can be probed.
+func fetchGroqQuota(q ProviderQuota, key, model string, force bool) ProviderQuota {
+	if !force {
+		if hit, ok := groqProbeGet(key, model); ok {
+			return hit
+		}
+	}
+	res := groqProbe(q, key, model)
+	groqProbePut(key, model, res)
+	return res
+}
+
+// groqProbeCache holds the last Groq probe. One entry is enough: the panel
+// shows one Groq row, and a model switch simply misses and re-probes.
+var groqProbeCache struct {
+	mu    sync.Mutex
+	key   string
+	model string
+	at    time.Time
+	q     ProviderQuota
+}
+
+// groqProbeGet returns the cached probe when it is fresh AND belongs to this
+// key and model: another key's or another model's numbers would answer a
+// different question.
+func groqProbeGet(key, model string) (ProviderQuota, bool) {
+	groqProbeCache.mu.Lock()
+	defer groqProbeCache.mu.Unlock()
+	if groqProbeCache.key != key || groqProbeCache.model != model {
+		return ProviderQuota{}, false
+	}
+	if time.Since(groqProbeCache.at) >= groqProbeTTL {
+		return ProviderQuota{}, false
+	}
+	return groqProbeCache.q, true
+}
+
+// groqProbePut stores a probe result.
+func groqProbePut(key, model string, q ProviderQuota) {
+	groqProbeCache.mu.Lock()
+	groqProbeCache.key, groqProbeCache.model = key, model
+	groqProbeCache.at = time.Now()
+	groqProbeCache.q = q
+	groqProbeCache.mu.Unlock()
+}
+
+// groqProbe measures the rate limit: it lists what the key may use, then
+// sends one minimal completion and reads the limit off the response headers.
+func groqProbe(q ProviderQuota, key, model string) ProviderQuota {
+	status, body, err := quotaGet(quotaGroqModelsURL, key)
+	if err != nil {
+		q.Err = err.Error()
+		return q
+	}
+	switch status {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		q.Err = quotaAuthErr(q.Provider, body)
+		return q
+	default:
+		q.Err = quotaStatusErr(q.Provider, status)
+		return q
+	}
+	id := groqPickModel(body, model)
+	if id == "" {
+		q.Err = "no model available to probe"
+		return q
+	}
+	payload := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_tokens":1}`, id)
+	req, err := http.NewRequest(http.MethodPost, quotaGroqChatURL, strings.NewReader(payload))
+	if err != nil {
+		q.Err = fmt.Sprintf("usage request: %v", err)
+		return q
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	res, err := quotaHTTP.Do(req)
+	if err != nil {
+		q.Err = fmt.Sprintf("usage endpoint unreachable: %v", err)
+		return q
+	}
+	defer res.Body.Close()
+	rbody, _ := io.ReadAll(io.LimitReader(res.Body, quotaBodyLimit))
+	switch res.StatusCode {
+	case http.StatusOK:
+	case http.StatusTooManyRequests:
+		// A 429 still carries the rate-limit headers, and "the limit is
+		// exhausted" IS the quota answer: it is read below and only turned
+		// into an error when no window could be built from it.
+	case http.StatusUnauthorized, http.StatusForbidden:
+		q.Err = quotaAuthErr(q.Provider, rbody)
+		return q
+	default:
+		q.Err = quotaStatusErr(q.Provider, res.StatusCode)
+		return q
+	}
+	now := time.Now()
+	for _, spec := range []struct{ name, limit, remaining, reset string }{
+		{"requests", "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests", "x-ratelimit-reset-requests"},
+		{"tokens", "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens"},
+	} {
+		limit, ok := quotaHeaderInt(res.Header, spec.limit)
+		if !ok || limit <= 0 {
+			continue
+		}
+		w := QuotaWindow{Name: spec.name, Status: "ok"}
+		if rem, ok := quotaHeaderInt(res.Header, spec.remaining); ok {
+			used := limit - rem
+			if used < 0 {
+				used = 0
+			}
+			if used > limit {
+				used = limit
+			}
+			w.UsedPct = used * 100 / limit
+			w.PercentKnown = true
+		}
+		if d, ok := quotaHeaderDuration(res.Header, spec.reset); ok {
+			w.ResetsAt = now.Add(d)
+		}
+		q.Windows = append(q.Windows, w)
+	}
+	if len(q.Windows) == 0 {
+		q.Err = "no rate-limit headers in the response"
+		return q
+	}
+	// The limit is the MODEL's, so the row has to say which model it
+	// measured — the numbers of another model would be a different quota.
+	q.Plan = id
+	return q
+}
+
+// groqPickModel picks the model to probe: the one in use when its id is in
+// the key's list, else the first model that can answer a text prompt.
+func groqPickModel(body []byte, hint string) string {
+	var payload struct {
+		Data []struct {
+			ID               string   `json:"id"`
+			OutputModalities []string `json:"output_modalities"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	want := groqModelKey(hint)
+	if want != "" {
+		for _, m := range payload.Data {
+			if groqModelKey(m.ID) == want {
+				return m.ID
+			}
+		}
+	}
+	for _, m := range payload.Data {
+		for _, mod := range m.OutputModalities {
+			if mod == "text" {
+				return m.ID
+			}
+		}
+	}
+	if len(payload.Data) > 0 {
+		return payload.Data[0].ID
+	}
+	return ""
+}
+
+// groqModelKey reduces a model id to its comparable tail: pi reports
+// "chat:openai/gpt-oss-120b" while Groq's own list says
+// "openai/gpt-oss-120b", so the vendor prefix and the api-kind prefix are
+// both noise for a match.
+func groqModelKey(id string) string {
+	s := strings.ToLower(strings.TrimSpace(id))
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		s = s[i+1:]
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
+}
+
+// quotaHeaderInt reads a numeric response header.
+func quotaHeaderInt(h http.Header, name string) (int, bool) {
+	v := strings.TrimSpace(h.Get(name))
+	if v == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, false
+	}
+	return int(f), true
+}
+
+// quotaHeaderDuration reads a reset clock header. Groq writes Go durations
+// ("1m26.4s", "90ms"); a bare number is seconds.
+func quotaHeaderDuration(h http.Header, name string) (time.Duration, bool) {
+	v := strings.TrimSpace(h.Get(name))
+	if v == "" {
+		return 0, false
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d, true
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return time.Duration(f * float64(time.Second)), true
+	}
+	return 0, false
 }

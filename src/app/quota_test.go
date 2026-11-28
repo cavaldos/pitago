@@ -553,14 +553,17 @@ func TestSideRowsBeforeRecentHonoursQuotaVisibility(t *testing.T) {
 // switching from key A to key B the panel must not keep key A's numbers.
 func TestQuotaKeyChangedInvalidatesCache(t *testing.T) {
 	// No credential anywhere, so the snapshot is empty and nothing touches the
-	// network (QuotaSnapshot skips providers without a key).
+	// network (QuotaSnapshot skips providers without a key). Every provider
+	// env var is cleared: a developer's shell often exports real keys, and
+	// one of them would turn this into a live API call.
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
-	t.Setenv("OPENCODE_API_KEY", "")
-	t.Setenv("OPENCODE_GO_API_KEY", "")
+	for _, p := range pirpc.ProviderEnvsAll() {
+		t.Setenv(p.Env, "")
+	}
 	t.Cleanup(pirpc.QuotaInvalidate)
 
 	m := Model{KeyPath: t.TempDir() + "/keys.json"}
-	pirpc.QuotaForce(m.KeyPath)
+	pirpc.QuotaForce(m.KeyPath, "")
 	if !pirpc.QuotaFresh(m.KeyPath) {
 		t.Fatal("the seed snapshot must be fresh")
 	}
@@ -596,5 +599,18 @@ func TestQuotaPanelFollowsModelProvider(t *testing.T) {
 	m.ModelProv = "anthropic"
 	if rows := m.sideQuotaRows(); len(rows) != 0 {
 		t.Fatalf("unsupported provider must render nothing, got %+v", rows)
+	}
+}
+
+// The model hint is Groq's alone: its rate limit is per model, so the probe
+// has to measure the model in play. Every other provider gets no hint.
+func TestQuotaModelHintIsGroqOnly(t *testing.T) {
+	m := Model{ModelProv: "groq", ModelLbl: "openai/gpt-oss-120b"}
+	if got := m.quotaModel(); got != "openai/gpt-oss-120b" {
+		t.Fatalf("groq hint = %q", got)
+	}
+	m = Model{ModelProv: "google", ModelLbl: "gemini-3.8-flash"}
+	if got := m.quotaModel(); got != "" {
+		t.Fatalf("hint for a provider that ignores it = %q, want empty", got)
 	}
 }
